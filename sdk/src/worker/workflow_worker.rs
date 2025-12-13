@@ -599,7 +599,7 @@ impl WorkflowExecutorWorker {
         // Convert commands to protobuf and submit
         let proto_commands: Vec<flovyn_v1::WorkflowCommand> = output_commands
             .iter()
-            .map(|cmd| Self::convert_command_to_proto(cmd))
+            .map(Self::convert_command_to_proto)
             .collect();
 
         let proto_status = match status {

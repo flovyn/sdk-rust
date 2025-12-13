@@ -3,10 +3,10 @@
 //! This workflow demonstrates the DAG (Directed Acyclic Graph) pattern for ETL processing.
 //! It processes data through multiple steps:
 //!
-//! 1. [Sequential] Data Ingestion - Load data from source
-//! 2. [Sequential] Data Validation - Validate loaded records
-//! 3. [Parallel] Data Transformations - Run multiple transformations concurrently
-//! 4. [Sequential] Aggregation - Combine and output results
+//! 1. \[Sequential\] Data Ingestion - Load data from source
+//! 2. \[Sequential\] Data Validation - Validate loaded records
+//! 3. \[Parallel\] Data Transformations - Run multiple transformations concurrently
+//! 4. \[Sequential\] Aggregation - Combine and output results
 //!
 //! The parallel step demonstrates running multiple tasks concurrently.
 
@@ -83,7 +83,7 @@ impl WorkflowDefinition for DataPipelineWorkflow {
         let ingestion_input = IngestionTaskInput {
             pipeline_id: input.pipeline_id.clone(),
             data_source_url: input.data_source_url.clone(),
-            data_format: input.data_format.clone(),
+            data_format: input.data_format,
         };
         let ingestion_input_value = serde_json::to_value(&ingestion_input)?;
 

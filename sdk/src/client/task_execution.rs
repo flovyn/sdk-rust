@@ -31,6 +31,7 @@ impl TaskExecutionClient {
     }
 
     /// Submit a task for execution
+    #[allow(clippy::too_many_arguments)]
     pub async fn submit_task(
         &mut self,
         tenant_id: &str,
@@ -339,6 +340,7 @@ pub struct TaskExecutionInfo {
 }
 
 #[cfg(test)]
+#[allow(clippy::useless_vec)]
 mod tests {
     use super::*;
 

@@ -48,23 +48,15 @@ pub enum TaskExecutionResult {
 }
 
 /// Callbacks for task execution status
+#[derive(Default)]
 pub struct TaskExecutorCallbacks {
     /// Called when progress is reported
+    #[allow(clippy::type_complexity)]
     pub on_progress: Option<Box<dyn Fn(f64, Option<String>) + Send + Sync>>,
     /// Called when a log message is sent
     pub on_log: Option<Box<dyn Fn(String, String) + Send + Sync>>,
     /// Called for heartbeat
     pub on_heartbeat: Option<Box<dyn Fn() + Send + Sync>>,
-}
-
-impl Default for TaskExecutorCallbacks {
-    fn default() -> Self {
-        Self {
-            on_progress: None,
-            on_log: None,
-            on_heartbeat: None,
-        }
-    }
 }
 
 impl std::fmt::Debug for TaskExecutorCallbacks {

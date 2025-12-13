@@ -141,9 +141,9 @@ impl WorkflowRegistry {
             let workflow = Arc::clone(&workflow);
             Box::pin(async move {
                 let typed_input: I =
-                    serde_json::from_value(input).map_err(|e| FlovynError::Serialization(e))?;
+                    serde_json::from_value(input).map_err(FlovynError::Serialization)?;
                 let output = workflow.execute(ctx.as_ref(), typed_input).await?;
-                serde_json::to_value(output).map_err(|e| FlovynError::Serialization(e))
+                serde_json::to_value(output).map_err(FlovynError::Serialization)
             })
         });
 

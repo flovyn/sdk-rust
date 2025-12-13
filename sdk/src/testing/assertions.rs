@@ -47,12 +47,11 @@ pub fn assert_workflow_completed_with(result: &Result<Value>, expected: &Value) 
 ///
 /// Panics if the result is successful.
 pub fn assert_workflow_failed(result: &Result<Value>) {
-    match result {
-        Ok(output) => panic!(
+    if let Ok(output) = result {
+        panic!(
             "Expected workflow to fail, but got success with output: {}",
             serde_json::to_string_pretty(output).unwrap()
-        ),
-        Err(_) => {}
+        )
     }
 }
 
@@ -137,12 +136,11 @@ pub fn assert_task_succeeded_with(result: &Result<Value>, expected: &Value) {
 ///
 /// Panics if the result is successful.
 pub fn assert_task_failed(result: &Result<Value>) {
-    match result {
-        Ok(output) => panic!(
+    if let Ok(output) = result {
+        panic!(
             "Expected task to fail, but got success with output: {}",
             serde_json::to_string_pretty(output).unwrap()
-        ),
-        Err(_) => {}
+        )
     }
 }
 

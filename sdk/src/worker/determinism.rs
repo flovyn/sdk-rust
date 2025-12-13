@@ -390,6 +390,7 @@ impl DeterminismValidator {
 }
 
 #[cfg(test)]
+#[allow(clippy::useless_vec)]
 mod tests {
     use super::*;
     use chrono::Utc;

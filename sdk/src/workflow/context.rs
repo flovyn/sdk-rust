@@ -127,7 +127,7 @@ pub trait WorkflowContextExt: WorkflowContext {
     /// Get the workflow input as the specified type
     fn input<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
         serde_json::from_value(self.input_raw().clone())
-            .map_err(|e| crate::error::FlovynError::Serialization(e))
+            .map_err(crate::error::FlovynError::Serialization)
     }
 
     /// Get a value from workflow state
@@ -142,7 +142,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             match self.get_raw(key).await? {
                 Some(v) => serde_json::from_value(v)
                     .map(Some)
-                    .map_err(|e| crate::error::FlovynError::Serialization(e)),
+                    .map_err(crate::error::FlovynError::Serialization),
                 None => Ok(None),
             }
         }
@@ -158,8 +158,8 @@ pub trait WorkflowContextExt: WorkflowContext {
         Self: Sync,
     {
         async move {
-            let v = serde_json::to_value(value)
-                .map_err(|e| crate::error::FlovynError::Serialization(e))?;
+            let v =
+                serde_json::to_value(value).map_err(crate::error::FlovynError::Serialization)?;
             self.set_raw(key, v).await
         }
     }

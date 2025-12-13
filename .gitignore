@@ -16,3 +16,5 @@
 # Environment
 .env
 .env.local
+
+.claude/**/*.local.json

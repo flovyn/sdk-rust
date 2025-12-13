@@ -83,15 +83,6 @@ impl WorkflowHook for CompositeWorkflowHook {
         input: &Value,
     ) {
         for hook in &self.hooks {
-            if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // We can't easily catch async panics, so we just log errors
-                let _ = hook.on_workflow_started(workflow_execution_id, workflow_kind, input);
-            })) {
-                tracing::warn!("Hook exception in on_workflow_started: {:?}", e);
-            }
-        }
-        // Execute hooks properly
-        for hook in &self.hooks {
             hook.on_workflow_started(workflow_execution_id, workflow_kind, input)
                 .await;
         }

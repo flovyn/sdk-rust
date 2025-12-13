@@ -159,10 +159,12 @@ impl TestWorkflowEnvironment {
         let started_at = self.inner.time_controller.current_time_millis();
 
         // Get the workflow from the registry
-        let registry = self.inner.workflow_registry.read();
-        let workflow = registry
-            .get(kind)
-            .ok_or_else(|| FlovynError::Other(format!("Workflow not registered: {}", kind)))?;
+        let workflow = {
+            let registry = self.inner.workflow_registry.read();
+            registry
+                .get(kind)
+                .ok_or_else(|| FlovynError::Other(format!("Workflow not registered: {}", kind)))?
+        };
 
         // Create mock context with task results
         let mut builder = MockWorkflowContext::builder()
@@ -208,10 +210,12 @@ impl TestWorkflowEnvironment {
         let started_at = self.inner.time_controller.current_time_millis();
 
         // Get the task from the registry
-        let registry = self.inner.task_registry.read();
-        let task = registry
-            .get(kind)
-            .ok_or_else(|| FlovynError::Other(format!("Task not registered: {}", kind)))?;
+        let task = {
+            let registry = self.inner.task_registry.read();
+            registry
+                .get(kind)
+                .ok_or_else(|| FlovynError::Other(format!("Task not registered: {}", kind)))?
+        };
 
         // Create mock context
         let ctx = Arc::new(

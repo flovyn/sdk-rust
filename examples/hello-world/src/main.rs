@@ -58,12 +58,10 @@ impl WorkflowDefinition for GreetingWorkflow {
         // Execute a side effect - the result is cached for replay
         // On subsequent replays, this won't re-execute but return the cached result
         let greeting = format!("Hello, {}!", input.name);
-        let greeting_value =
-            serde_json::to_value(&greeting).map_err(|e| FlovynError::Serialization(e))?;
+        let greeting_value = serde_json::to_value(&greeting).map_err(FlovynError::Serialization)?;
 
         let result = ctx.run_raw("create-greeting", greeting_value).await?;
-        let message: String =
-            serde_json::from_value(result).map_err(|e| FlovynError::Serialization(e))?;
+        let message: String = serde_json::from_value(result).map_err(FlovynError::Serialization)?;
 
         info!(message = %message, timestamp = %timestamp, "Greeting created");
 

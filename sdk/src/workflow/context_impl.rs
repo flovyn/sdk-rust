@@ -65,7 +65,7 @@ impl DeterministicRandom for SeededRandom {
     }
 
     fn next_bool(&self) -> bool {
-        self.next_u64() % 2 == 0
+        self.next_u64().is_multiple_of(2)
     }
 }
 
@@ -629,17 +629,17 @@ mod tests {
 
         for _ in 0..100 {
             let val = random.next_int(10, 20);
-            assert!(val >= 10 && val < 20);
+            assert!((10..20).contains(&val));
         }
 
         for _ in 0..100 {
             let val = random.next_long(100, 200);
-            assert!(val >= 100 && val < 200);
+            assert!((100..200).contains(&val));
         }
 
         for _ in 0..100 {
             let val = random.next_double();
-            assert!(val >= 0.0 && val < 1.0);
+            assert!((0.0..1.0).contains(&val));
         }
     }
 

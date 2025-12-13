@@ -416,7 +416,7 @@ mod tests {
 
         assert_eq!(events.len(), 2);
         // Task result should be in context
-        assert!(ctx.was_task_scheduled("task1") == false); // Not yet scheduled via context
+        assert!(!ctx.was_task_scheduled("task1")); // Not yet scheduled via context
     }
 
     #[test]

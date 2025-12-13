@@ -102,6 +102,7 @@ impl WorkerLifecycleClient {
     /// * `space_id` - Optional space ID (None = tenant-level)
     /// * `workflows` - List of workflow metadata to register
     /// * `tasks` - List of task metadata to register
+    #[allow(clippy::too_many_arguments)]
     pub async fn register_worker(
         &mut self,
         worker_name: &str,

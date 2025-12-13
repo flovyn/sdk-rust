@@ -4,6 +4,8 @@
 //! enabling Rust applications to define workflows, execute tasks, and
 //! communicate with the Flovyn server via gRPC.
 
+#![allow(clippy::result_large_err)]
+
 pub mod client;
 pub mod common;
 pub mod config;
