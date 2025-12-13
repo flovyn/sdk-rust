@@ -270,8 +270,6 @@ impl FlovynClientBuilder {
         };
 
         Ok(super::FlovynClient {
-            server_host: self.server_host,
-            server_port: self.server_port,
             tenant_id: self.tenant_id,
             worker_id: self.worker_id,
             task_queue: self.task_queue,

@@ -100,8 +100,6 @@ impl StartWorkflowOptions {
 
 /// Main client for interacting with the Flovyn server
 pub struct FlovynClient {
-    pub(crate) server_host: String,
-    pub(crate) server_port: u16,
     pub(crate) tenant_id: Uuid,
     pub(crate) worker_id: String,
     pub(crate) task_queue: String,
