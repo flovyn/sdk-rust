@@ -74,6 +74,22 @@ flovyn-sdk = { path = "./sdk", features = ["testing"] }
 
 Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `TimeController`, test builders.
 
+## Documentation
+
+### Location
+- **Design documents**: `.dev/docs/design/` - Architecture, API design, technical decisions
+- **Implementation plans**: `.dev/docs/plans/` - Step-by-step implementation plans
+
+### Plan Guidelines
+- Plans should NOT repeat content already in design documents - reference them instead
+- Plans MUST include a TODO list with concrete tasks
+- No "deferred" or "optional" items unless explicitly marked as non-goal or out of scope
+- Each TODO item should be actionable and specific
+
+### Testing
+- Use test first approach
+- Write test one by one. Verify one test work first before moving on the next.
+
 ## Prerequisites
 
 - Rust 1.82+

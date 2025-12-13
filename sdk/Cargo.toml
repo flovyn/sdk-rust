@@ -50,8 +50,12 @@ hostname = "0.4"
 tokio-test = "0.4"
 proptest = "1"
 
-# Test containers for E2E (disabled until needed)
-# testcontainers = "0.15"
+# E2E test dependencies
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+reqwest = { version = "0.12", features = ["json"] }
+jsonwebtoken = "9"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-build = "0.11"
