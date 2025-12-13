@@ -19,10 +19,10 @@ cargo test --test e2e -p flovyn-sdk
 # Run tests with testing utilities feature
 cargo test --features testing
 
-# Code quality (matches CI)
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo doc --no-deps --workspace
+# Code quality
+cargo fmt --all                                       # Format code
+cargo clippy --workspace --all-targets -- -D warnings # Lint
+cargo doc --no-deps --workspace                       # Build docs
 
 # Run examples
 cargo run -p hello-world-sample
