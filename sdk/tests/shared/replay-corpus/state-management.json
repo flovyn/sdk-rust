@@ -1,0 +1,64 @@
+{
+  "name": "state-management",
+  "description": "Workflow state get/set/clear operations",
+  "workflow_execution_id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "stateful-workflow",
+  "input": {
+    "user_id": "user-123"
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "user_id": "user-123" }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "StateSet",
+      "data": {
+        "key": "counter",
+        "value": 1
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "StateSet",
+      "data": {
+        "key": "counter",
+        "value": 2
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "StateSet",
+      "data": {
+        "key": "last_user",
+        "value": "user-123"
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "StateCleared",
+      "data": {
+        "key": "counter"
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "final_state": { "last_user": "user-123" } }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "SetState", "key": "counter", "value": 1 },
+    { "type": "SetState", "key": "counter", "value": 2 },
+    { "type": "SetState", "key": "last_user", "value": "user-123" },
+    { "type": "ClearState", "key": "counter" },
+    { "type": "CompleteWorkflow", "output": { "final_state": { "last_user": "user-123" } } }
+  ]
+}

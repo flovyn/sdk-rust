@@ -1,0 +1,63 @@
+{
+  "name": "task-scheduling",
+  "description": "Workflow that schedules external tasks via ctx.schedule",
+  "workflow_execution_id": "d4e5f6a7-b8c9-0123-def0-234567890123",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "task-workflow",
+  "input": {
+    "order_id": "order-456"
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "order_id": "order-456" }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "TaskScheduled",
+      "data": {
+        "task_type": "validate-order",
+        "input": { "order_id": "order-456" }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "TaskCompleted",
+      "data": {
+        "task_type": "validate-order",
+        "result": { "valid": true }
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "TaskScheduled",
+      "data": {
+        "task_type": "process-payment",
+        "input": { "order_id": "order-456", "amount": 99.99 }
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "TaskCompleted",
+      "data": {
+        "task_type": "process-payment",
+        "result": { "transaction_id": "txn-789", "status": "completed" }
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "order_id": "order-456", "status": "completed", "transaction_id": "txn-789" }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "ScheduleTask", "task_type": "validate-order", "input": { "order_id": "order-456" } },
+    { "type": "ScheduleTask", "task_type": "process-payment", "input": { "order_id": "order-456", "amount": 99.99 } },
+    { "type": "CompleteWorkflow", "output": { "order_id": "order-456", "status": "completed", "transaction_id": "txn-789" } }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "name": "simple-operation",
+  "description": "Single operation (ctx.run) that records and replays a result",
+  "workflow_execution_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "simple-workflow",
+  "input": {
+    "value": 42
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "value": 42 }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "OperationCompleted",
+      "data": {
+        "operation_name": "compute-result",
+        "result": { "computed": 84 }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "result": 84 }
+      }
+    }
+  ],
+  "expected_commands": [
+    {
+      "type": "RecordOperation",
+      "name": "compute-result",
+      "result": { "computed": 84 }
+    },
+    {
+      "type": "CompleteWorkflow",
+      "output": { "result": 84 }
+    }
+  ]
+}

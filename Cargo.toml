@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "sdk",
+    "examples/hello-world",
+    "examples/ecommerce",
+    "examples/data-pipeline",
+    "examples/patterns",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/flovyn/sdk-rust"
+rust-version = "1.82.0"
+
+[workspace.dependencies]
+# Flovyn SDK
+flovyn-sdk = { path = "./sdk" }
+
+# Async runtime
+tokio = { version = "1.37", features = ["full"] }
+tokio-stream = "0.1"
+
+# gRPC
+tonic = "0.11"
+prost = "0.12"
+prost-types = "0.12"
+
+# Async traits
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# UUID
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+
+# Error handling
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Random number generation
+rand = "0.8"
+rand_chacha = "0.3"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Concurrency primitives
+parking_lot = "0.12"
+
+# System info
+hostname = "0.4"

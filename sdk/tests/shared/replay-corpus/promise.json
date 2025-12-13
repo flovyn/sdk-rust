@@ -1,0 +1,54 @@
+{
+  "name": "promise",
+  "description": "Workflow with durable promise (ctx.promise - external signal)",
+  "workflow_execution_id": "f6a7b8c9-d0e1-2345-0123-456789012345",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "promise-workflow",
+  "input": {
+    "request_id": "req-001"
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "request_id": "req-001" }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "OperationCompleted",
+      "data": {
+        "operation_name": "send-notification",
+        "result": { "sent": true }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "PromiseCreated",
+      "data": {
+        "promise_name": "user-approval"
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "PromiseResolved",
+      "data": {
+        "promise_name": "user-approval",
+        "value": { "approved": true, "approver": "admin" }
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "request_id": "req-001", "approved": true, "approver": "admin" }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "RecordOperation", "name": "send-notification", "result": { "sent": true } },
+    { "type": "CreatePromise", "promise_name": "user-approval" },
+    { "type": "CompleteWorkflow", "output": { "request_id": "req-001", "approved": true, "approver": "admin" } }
+  ]
+}

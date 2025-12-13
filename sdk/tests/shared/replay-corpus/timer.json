@@ -1,0 +1,63 @@
+{
+  "name": "timer",
+  "description": "Workflow with durable timer (ctx.sleep)",
+  "workflow_execution_id": "e5f6a7b8-c9d0-1234-ef01-345678901234",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "timer-workflow",
+  "input": {
+    "delay_ms": 5000
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "delay_ms": 5000 }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "OperationCompleted",
+      "data": {
+        "operation_name": "before-sleep",
+        "result": { "timestamp": 1700000000000 }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "TimerStarted",
+      "data": {
+        "timer_id": "timer-1",
+        "duration_ms": 5000
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "TimerFired",
+      "data": {
+        "timer_id": "timer-1"
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "OperationCompleted",
+      "data": {
+        "operation_name": "after-sleep",
+        "result": { "timestamp": 1700000005000 }
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "elapsed_ms": 5000 }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "RecordOperation", "name": "before-sleep", "result": { "timestamp": 1700000000000 } },
+    { "type": "StartTimer", "timer_id": "timer-1", "duration_ms": 5000 },
+    { "type": "RecordOperation", "name": "after-sleep", "result": { "timestamp": 1700000005000 } },
+    { "type": "CompleteWorkflow", "output": { "elapsed_ms": 5000 } }
+  ]
+}

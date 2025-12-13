@@ -1,0 +1,85 @@
+{
+  "name": "child-workflow",
+  "description": "Parent workflow that schedules a child workflow",
+  "workflow_execution_id": "a7b8c9d0-e1f2-3456-1234-567890123456",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "parent-workflow",
+  "input": {
+    "items": ["item-1", "item-2"]
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "items": ["item-1", "item-2"] }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "ChildWorkflowInitiated",
+      "data": {
+        "child_workflow_name": "process-item",
+        "child_workflow_kind": "item-processor",
+        "child_execution_id": "child-exec-001",
+        "input": { "item": "item-1" }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "ChildWorkflowStarted",
+      "data": {
+        "child_workflow_name": "process-item",
+        "child_execution_id": "child-exec-001"
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "ChildWorkflowCompleted",
+      "data": {
+        "child_workflow_name": "process-item",
+        "child_execution_id": "child-exec-001",
+        "result": { "processed": "item-1", "status": "done" }
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "ChildWorkflowInitiated",
+      "data": {
+        "child_workflow_name": "process-item",
+        "child_workflow_kind": "item-processor",
+        "child_execution_id": "child-exec-002",
+        "input": { "item": "item-2" }
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "ChildWorkflowStarted",
+      "data": {
+        "child_workflow_name": "process-item",
+        "child_execution_id": "child-exec-002"
+      }
+    },
+    {
+      "sequence_number": 7,
+      "event_type": "ChildWorkflowCompleted",
+      "data": {
+        "child_workflow_name": "process-item",
+        "child_execution_id": "child-exec-002",
+        "result": { "processed": "item-2", "status": "done" }
+      }
+    },
+    {
+      "sequence_number": 8,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "processed_items": ["item-1", "item-2"] }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "ScheduleChildWorkflow", "name": "process-item", "kind": "item-processor", "input": { "item": "item-1" } },
+    { "type": "ScheduleChildWorkflow", "name": "process-item", "kind": "item-processor", "input": { "item": "item-2" } },
+    { "type": "CompleteWorkflow", "output": { "processed_items": ["item-1", "item-2"] } }
+  ]
+}

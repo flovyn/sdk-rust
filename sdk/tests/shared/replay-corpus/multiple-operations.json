@@ -1,0 +1,56 @@
+{
+  "name": "multiple-operations",
+  "description": "Multiple operations (ctx.run) in sequence",
+  "workflow_execution_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "multi-operation-workflow",
+  "input": {
+    "items": ["a", "b", "c"]
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "items": ["a", "b", "c"] }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "OperationCompleted",
+      "data": {
+        "operation_name": "process-item-0",
+        "result": { "processed": "A" }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "OperationCompleted",
+      "data": {
+        "operation_name": "process-item-1",
+        "result": { "processed": "B" }
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "OperationCompleted",
+      "data": {
+        "operation_name": "process-item-2",
+        "result": { "processed": "C" }
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "results": ["A", "B", "C"] }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "RecordOperation", "name": "process-item-0", "result": { "processed": "A" } },
+    { "type": "RecordOperation", "name": "process-item-1", "result": { "processed": "B" } },
+    { "type": "RecordOperation", "name": "process-item-2", "result": { "processed": "C" } },
+    { "type": "CompleteWorkflow", "output": { "results": ["A", "B", "C"] } }
+  ]
+}

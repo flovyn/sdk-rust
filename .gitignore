@@ -1,0 +1,18 @@
+# Rust build artifacts
+/target/
+**/target/
+
+# Backup files
+**/*.rs.bk
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Environment
+.env
+.env.local

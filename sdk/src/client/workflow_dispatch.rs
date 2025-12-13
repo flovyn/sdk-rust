@@ -1,0 +1,361 @@
+//! WorkflowDispatch client wrapper
+
+use crate::error::{FlovynError, Result};
+use crate::generated::flovyn_v1;
+use crate::generated::flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient;
+use serde_json::Value;
+use std::time::Duration;
+use tonic::transport::Channel;
+use uuid::Uuid;
+
+/// Client for workflow dispatch operations
+#[derive(Debug, Clone)]
+pub struct WorkflowDispatch {
+    inner: WorkflowDispatchClient<Channel>,
+}
+
+impl WorkflowDispatch {
+    /// Connect to the server at the given endpoint
+    pub async fn connect(endpoint: &str) -> Result<Self> {
+        let client = WorkflowDispatchClient::connect(endpoint.to_string())
+            .await
+            .map_err(|e| FlovynError::NetworkError(e.to_string()))?;
+        Ok(Self { inner: client })
+    }
+
+    /// Create from an existing channel
+    pub fn new(channel: Channel) -> Self {
+        Self {
+            inner: WorkflowDispatchClient::new(channel),
+        }
+    }
+
+    /// Poll for workflows to execute
+    pub async fn poll_workflow(
+        &mut self,
+        worker_id: &str,
+        tenant_id: &str,
+        task_queue: &str,
+        timeout: Duration,
+    ) -> Result<Option<WorkflowExecutionInfo>> {
+        let request = flovyn_v1::PollRequest {
+            worker_id: worker_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            task_queue: task_queue.to_string(),
+            timeout_seconds: timeout.as_secs() as i64,
+            worker_pool_id: None,
+        };
+
+        let response = self
+            .inner
+            .poll_workflow(request)
+            .await
+            .map_err(FlovynError::Grpc)?;
+
+        let poll_response = response.into_inner();
+        Ok(poll_response
+            .workflow_execution
+            .map(|we| WorkflowExecutionInfo {
+                id: we.id.parse().unwrap_or_default(),
+                kind: we.kind,
+                tenant_id: we.tenant_id.parse().unwrap_or_default(),
+                input: serde_json::from_slice(&we.input).unwrap_or(Value::Null),
+                task_queue: we.task_queue,
+                current_sequence: we.current_sequence,
+                workflow_task_time_millis: we.workflow_task_time_millis,
+                workflow_version: we.workflow_version,
+                workflow_definition_snapshot: we.workflow_definition_snapshot,
+            }))
+    }
+
+    /// Subscribe to work-available notifications
+    pub async fn subscribe_to_notifications(
+        &mut self,
+        worker_id: &str,
+        tenant_id: &str,
+        task_queue: &str,
+    ) -> Result<tonic::codec::Streaming<flovyn_v1::WorkAvailableEvent>> {
+        let request = flovyn_v1::SubscriptionRequest {
+            worker_id: worker_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            task_queue: task_queue.to_string(),
+        };
+
+        let response = self
+            .inner
+            .subscribe_to_notifications(request)
+            .await
+            .map_err(FlovynError::Grpc)?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Start a workflow programmatically
+    pub async fn start_workflow(
+        &mut self,
+        tenant_id: &str,
+        workflow_kind: &str,
+        input: Value,
+        task_queue: Option<&str>,
+        workflow_version: Option<&str>,
+        idempotency_key: Option<&str>,
+    ) -> Result<StartWorkflowResult> {
+        let input_bytes = serde_json::to_vec(&input)?;
+
+        let request = flovyn_v1::StartWorkflowRequest {
+            tenant_id: tenant_id.to_string(),
+            workflow_kind: workflow_kind.to_string(),
+            input: input_bytes,
+            labels: std::collections::HashMap::new(),
+            task_queue: task_queue.unwrap_or("default").to_string(),
+            priority_seconds: 0,
+            workflow_definition_id: None,
+            parent_workflow_execution_id: None,
+            workflow_version: workflow_version.map(|s| s.to_string()),
+            idempotency_key: idempotency_key.map(|s| s.to_string()),
+            idempotency_key_ttl_seconds: None,
+        };
+
+        let response = self
+            .inner
+            .start_workflow(request)
+            .await
+            .map_err(FlovynError::Grpc)?;
+
+        let resp = response.into_inner();
+        Ok(StartWorkflowResult {
+            workflow_execution_id: resp.workflow_execution_id.parse().unwrap_or_default(),
+            idempotency_key_used: resp.idempotency_key_used,
+            idempotency_key_new: resp.idempotency_key_new,
+        })
+    }
+
+    /// Get events for a workflow execution
+    pub async fn get_events(
+        &mut self,
+        workflow_execution_id: Uuid,
+        _from_sequence: Option<i32>,
+    ) -> Result<Vec<WorkflowEvent>> {
+        let request = flovyn_v1::GetEventsRequest {
+            workflow_execution_id: workflow_execution_id.to_string(),
+        };
+
+        let response = self
+            .inner
+            .get_events(request)
+            .await
+            .map_err(FlovynError::Grpc)?;
+
+        let events = response
+            .into_inner()
+            .events
+            .into_iter()
+            .map(|e| WorkflowEvent {
+                sequence: e.sequence_number,
+                event_type: e.event_type,
+                payload: serde_json::from_slice(&e.event_data).unwrap_or(Value::Null),
+            })
+            .collect();
+
+        Ok(events)
+    }
+
+    /// Submit workflow commands with status
+    pub async fn submit_workflow_commands(
+        &mut self,
+        workflow_execution_id: Uuid,
+        commands: Vec<flovyn_v1::WorkflowCommand>,
+        status: flovyn_v1::WorkflowStatus,
+    ) -> Result<()> {
+        let request = flovyn_v1::SubmitWorkflowCommandsRequest {
+            workflow_execution_id: workflow_execution_id.to_string(),
+            commands,
+            status: status as i32,
+        };
+
+        self.inner
+            .submit_workflow_commands(request)
+            .await
+            .map_err(FlovynError::Grpc)?;
+
+        Ok(())
+    }
+
+    /// Complete a workflow execution
+    pub async fn complete_workflow(
+        &mut self,
+        workflow_execution_id: Uuid,
+        output: Value,
+        commands: Vec<flovyn_v1::WorkflowCommand>,
+    ) -> Result<()> {
+        let output_bytes = serde_json::to_vec(&output)?;
+
+        // Add the complete workflow command
+        let mut all_commands = commands;
+        let next_seq = all_commands
+            .iter()
+            .map(|c| c.sequence_number)
+            .max()
+            .unwrap_or(0)
+            + 1;
+
+        all_commands.push(flovyn_v1::WorkflowCommand {
+            command_type: flovyn_v1::CommandType::CompleteWorkflow as i32,
+            sequence_number: next_seq,
+            command_data: Some(flovyn_v1::workflow_command::CommandData::CompleteWorkflow(
+                flovyn_v1::CompleteWorkflowCommand {
+                    output: output_bytes,
+                },
+            )),
+        });
+
+        self.submit_workflow_commands(
+            workflow_execution_id,
+            all_commands,
+            flovyn_v1::WorkflowStatus::Completed,
+        )
+        .await
+    }
+
+    /// Fail a workflow execution
+    pub async fn fail_workflow(
+        &mut self,
+        workflow_execution_id: Uuid,
+        error_message: &str,
+        failure_type: &str,
+        commands: Vec<flovyn_v1::WorkflowCommand>,
+    ) -> Result<()> {
+        let mut all_commands = commands;
+        let next_seq = all_commands
+            .iter()
+            .map(|c| c.sequence_number)
+            .max()
+            .unwrap_or(0)
+            + 1;
+
+        all_commands.push(flovyn_v1::WorkflowCommand {
+            command_type: flovyn_v1::CommandType::FailWorkflow as i32,
+            sequence_number: next_seq,
+            command_data: Some(flovyn_v1::workflow_command::CommandData::FailWorkflow(
+                flovyn_v1::FailWorkflowCommand {
+                    error: error_message.to_string(),
+                    stack_trace: String::new(),
+                    failure_type: failure_type.to_string(),
+                },
+            )),
+        });
+
+        self.submit_workflow_commands(
+            workflow_execution_id,
+            all_commands,
+            flovyn_v1::WorkflowStatus::Failed,
+        )
+        .await
+    }
+
+    /// Suspend a workflow execution (waiting for external event)
+    pub async fn suspend_workflow(
+        &mut self,
+        workflow_execution_id: Uuid,
+        commands: Vec<flovyn_v1::WorkflowCommand>,
+    ) -> Result<()> {
+        self.submit_workflow_commands(
+            workflow_execution_id,
+            commands,
+            flovyn_v1::WorkflowStatus::Suspended,
+        )
+        .await
+    }
+}
+
+/// Information about a workflow execution received from polling
+#[derive(Debug, Clone)]
+pub struct WorkflowExecutionInfo {
+    /// Unique execution ID
+    pub id: Uuid,
+    /// Workflow kind/type
+    pub kind: String,
+    /// Tenant ID
+    pub tenant_id: Uuid,
+    /// Input data
+    pub input: Value,
+    /// Task queue
+    pub task_queue: String,
+    /// Current sequence number
+    pub current_sequence: i32,
+    /// Workflow task time (for deterministic time)
+    pub workflow_task_time_millis: i64,
+    /// Locked workflow version
+    pub workflow_version: Option<String>,
+    /// Workflow definition snapshot (for visual workflows)
+    pub workflow_definition_snapshot: Option<String>,
+}
+
+/// A workflow event
+#[derive(Debug, Clone)]
+pub struct WorkflowEvent {
+    /// Sequence number
+    pub sequence: i32,
+    /// Event type
+    pub event_type: String,
+    /// Event payload
+    pub payload: Value,
+}
+
+/// Result of starting a workflow
+#[derive(Debug, Clone)]
+pub struct StartWorkflowResult {
+    /// Workflow execution ID
+    pub workflow_execution_id: Uuid,
+    /// Whether an idempotency key was used
+    pub idempotency_key_used: bool,
+    /// Whether a new execution was created (false means existing returned)
+    pub idempotency_key_new: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_workflow_execution_info_debug() {
+        let info = WorkflowExecutionInfo {
+            id: Uuid::new_v4(),
+            kind: "test-workflow".to_string(),
+            tenant_id: Uuid::new_v4(),
+            input: serde_json::json!({"key": "value"}),
+            task_queue: "default".to_string(),
+            current_sequence: 0,
+            workflow_task_time_millis: 1234567890,
+            workflow_version: Some("1.0.0".to_string()),
+            workflow_definition_snapshot: None,
+        };
+
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("test-workflow"));
+    }
+
+    #[test]
+    fn test_workflow_event_debug() {
+        let event = WorkflowEvent {
+            sequence: 1,
+            event_type: "OperationCompleted".to_string(),
+            payload: serde_json::json!({"result": 42}),
+        };
+
+        let debug_str = format!("{:?}", event);
+        assert!(debug_str.contains("OperationCompleted"));
+    }
+
+    #[test]
+    fn test_start_workflow_result() {
+        let result = StartWorkflowResult {
+            workflow_execution_id: Uuid::new_v4(),
+            idempotency_key_used: true,
+            idempotency_key_new: false,
+        };
+
+        assert!(result.idempotency_key_used);
+        assert!(!result.idempotency_key_new);
+    }
+}

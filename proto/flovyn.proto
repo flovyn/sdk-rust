@@ -1,0 +1,673 @@
+syntax = "proto3";
+
+package flovyn.v1;
+
+option java_package = "ai.flovyn.protocol";
+option java_multiple_files = true;
+
+import "google/protobuf/empty.proto";
+
+// ============================================================================
+// Workflow Dispatch Service
+// ============================================================================
+
+service WorkflowDispatch {
+  // Poll for workflows (unary RPC with long polling)
+  // Worker calls this repeatedly to receive work
+  rpc PollWorkflow(PollRequest) returns (PollResponse);
+
+  // Subscribe to work-available notifications (server-to-client stream)
+  // Worker maintains this stream to receive instant notifications
+  rpc SubscribeToNotifications(SubscriptionRequest) returns (stream WorkAvailableEvent);
+
+  // Start workflow programmatically
+  rpc StartWorkflow(StartWorkflowRequest) returns (StartWorkflowResponse);
+
+  // Get visual workflow definition by ID (for lazy loading)
+  rpc GetVisualWorkflowDefinitionById(GetVisualWorkflowDefinitionByIdRequest) returns (GetVisualWorkflowDefinitionByIdResponse);
+
+  // Start a child workflow
+  rpc StartChildWorkflow(StartChildWorkflowRequest) returns (StartChildWorkflowResponse);
+
+  // Resolve a durable promise
+  rpc ResolvePromise(ResolvePromiseRequest) returns (google.protobuf.Empty);
+
+  // Reject a durable promise
+  rpc RejectPromise(RejectPromiseRequest) returns (google.protobuf.Empty);
+
+  // Get workflow events (for replay)
+  rpc GetEvents(GetEventsRequest) returns (GetEventsResponse);
+
+  // Submit workflow commands after execution
+  rpc SubmitWorkflowCommands(SubmitWorkflowCommandsRequest) returns (google.protobuf.Empty);
+}
+
+// ============================================================================
+// Messages
+// ============================================================================
+
+message PollRequest {
+  // Unique identifier for this worker
+  string worker_id = 1;
+
+   // Tenant ID to poll workflows from
+  string tenant_id = 2;
+
+  // Task queue to poll from (e.g., "default", "gpu-workers")
+  string task_queue = 3;
+
+  // Long polling timeout in seconds (e.g., 60)
+  int64 timeout_seconds = 4;
+
+  // Worker pool ID to poll from (NULL = default shared pool)
+  optional string worker_pool_id = 5;
+}
+
+message SubscriptionRequest {
+  // Unique identifier for this worker
+  string worker_id = 1;
+
+  // Tenant ID to subscribe to
+  string tenant_id = 2;
+
+  // Task queue to subscribe to
+  string task_queue = 3;
+}
+
+message PollResponse {
+  // Workflow to execute (null if no work available)
+  WorkflowExecution workflow_execution = 1;
+}
+
+message WorkflowExecution {
+  // Unique workflow execution ID
+  string id = 1;
+
+  // Workflow kind/type
+  string kind = 2;
+
+  // Tenant ID
+  string tenant_id = 3;
+
+  // Input data (serialized bytes)
+  bytes input = 4;
+
+  // Task queue for worker routing (e.g., "default", "gpu-workers")
+  string task_queue = 5;
+
+  // Time-offset priority in milliseconds (priority score = created_at - priority_ms)
+  int64 priority_ms = 6;
+
+  // Creation timestamp (milliseconds since epoch)
+  int64 created_at_ms = 7;
+
+  // Current sequence number for event sourcing
+  int32 current_sequence = 8;
+
+  // Visual workflow definition ID (if this is a visual workflow)
+  optional string workflow_definition_id = 9;
+
+  // Space ID (if workflow is scoped to a space)
+  optional string space_id = 10;
+
+  // Worker pool ID (denormalized for dispatch efficiency)
+  optional string worker_pool_id = 11;
+
+  // Locked workflow version (Phase 9: Version Locking)
+  // For code-first: semantic version (e.g., "1.0.0")
+  // For visual: version number as string (e.g., "1", "2")
+  optional string workflow_version = 12;
+
+  // Workflow definition snapshot (Phase 9: Version Locking)
+  // Cached JSON definition for version isolation (visual workflows only)
+  optional string workflow_definition_snapshot = 13;
+
+  // Time when this workflow task was created (milliseconds since epoch)
+  // Used for deterministic ctx.currentTimeMillis()
+  // This value is consistent across replays for the same workflow task
+  int64 workflow_task_time_millis = 14;
+}
+
+message WorkAvailableEvent {
+  // Tenant ID where work is available
+  string tenant_id = 1;
+
+  // Task queue where work is available
+  string task_queue = 2;
+
+  // Timestamp of notification (milliseconds since epoch)
+  int64 timestamp_ms = 3;
+}
+
+message StartWorkflowRequest {
+  string tenant_id = 1;
+  string workflow_kind = 2;
+  bytes input = 3;
+  map<string, string> labels = 4;
+
+  // Task queue routing (default: "default")
+  string task_queue = 5;
+
+  // Time-offset priority in seconds (default: 0)
+  int32 priority_seconds = 6;
+
+  optional string workflow_definition_id = 7;
+  optional string parent_workflow_execution_id = 8;
+
+  // Workflow version selection (Phase 9: Version Locking)
+  // For code-first: semantic version (e.g., "1.0.0"), empty = latest/default
+  // For visual: version number as string (e.g., "1", "2"), empty = latest
+  optional string workflow_version = 9;
+
+  // Idempotency key for preventing duplicate executions
+  // If provided, subsequent requests with the same key return the existing execution
+  optional string idempotency_key = 10;
+
+  // Time-to-live for the idempotency key in seconds
+  // Default: 86400 (1 day), Maximum: 2592000 (30 days)
+  optional int64 idempotency_key_ttl_seconds = 11;
+}
+
+message StartWorkflowResponse {
+  string workflow_execution_id = 1;
+
+  // Whether an idempotency key was used for this request
+  bool idempotency_key_used = 2;
+
+  // Whether a new execution was created (false means existing execution was returned)
+  bool idempotency_key_new = 3;
+}
+
+message GetVisualWorkflowDefinitionByIdRequest {
+  string workflow_definition_id = 1;
+}
+
+message GetVisualWorkflowDefinitionByIdResponse {
+  string workflow_definition_id = 1;
+  string kind = 2;
+  string name = 3;
+  string description = 4;
+  string definition = 5;
+  int32 version = 6;
+}
+
+message StartChildWorkflowRequest {
+  string parent_workflow_execution_id = 1;
+  string child_execution_name = 2;
+  string tenant_id = 3;
+
+  oneof workflow_execution_identifier {
+    string workflow_kind = 4;
+    string workflow_definition_id = 5;
+  }
+
+  bytes input = 6;
+
+  // Task queue (inherits parent if empty)
+  string task_queue = 7;
+
+  // Time-offset priority in seconds (default: 0)
+  int32 priority_seconds = 8;
+}
+
+message StartChildWorkflowResponse {
+  string child_workflow_execution_id = 1;
+}
+
+message ResolvePromiseRequest {
+  string promise_id = 1;
+  bytes value = 2;
+}
+
+message RejectPromiseRequest {
+  string promise_id = 1;
+  string error = 2;
+}
+
+message GetEventsRequest {
+  // Workflow execution ID
+  string workflow_execution_id = 1;
+}
+
+message GetEventsResponse {
+  repeated WorkflowEvent events = 1;
+}
+
+message WorkflowEvent {
+  // Sequence number
+  int32 sequence_number = 1;
+
+  // Event type (e.g., "TASK_SCHEDULED", "TASK_COMPLETED")
+  string event_type = 2;
+
+  // Event data (JSON structure)
+  bytes event_data = 3;
+}
+
+// ============================================================================
+// Workflow Query Service
+// ============================================================================
+
+service WorkflowQuery {
+  // Query workflow state
+  rpc QueryWorkflow(QueryWorkflowRequest) returns (QueryWorkflowResponse);
+}
+
+message QueryWorkflowRequest {
+  string workflow_execution_id = 1;
+  string query_name = 2;
+  bytes params = 3;
+}
+
+message QueryWorkflowResponse {
+  bytes result = 1;
+  optional string error = 2;
+}
+
+// ============================================================================
+// Task Execution Service
+// ============================================================================
+
+service TaskExecution {
+  // Submit a task for execution
+  rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+
+  // Poll for tasks to execute (long polling)
+  rpc PollTask(PollTaskRequest) returns (PollTaskResponse);
+
+  // Complete a task
+  rpc CompleteTask(CompleteTaskRequest) returns (google.protobuf.Empty);
+
+  // Fail a task
+  rpc FailTask(FailTaskRequest) returns (google.protobuf.Empty);
+
+  // Report task progress
+  rpc ReportProgress(ReportProgressRequest) returns (google.protobuf.Empty);
+
+  // Send heartbeat
+  rpc Heartbeat(HeartbeatRequest) returns (google.protobuf.Empty);
+
+  // Cancel a task
+  rpc CancelTask(CancelTaskRequest) returns (google.protobuf.Empty);
+
+  // Log a message
+  rpc LogMessage(LogMessageRequest) returns (google.protobuf.Empty);
+
+  // Get task state value
+  rpc GetState(GetStateRequest) returns (GetStateResponse);
+
+  // Set task state value
+  rpc SetState(SetStateRequest) returns (google.protobuf.Empty);
+
+  // Clear task state value
+  rpc ClearState(ClearStateRequest) returns (google.protobuf.Empty);
+
+  // Clear all task state
+  rpc ClearAllState(ClearAllStateRequest) returns (google.protobuf.Empty);
+
+  // Get all state keys
+  rpc GetStateKeys(GetStateKeysRequest) returns (GetStateKeysResponse);
+
+  // Stream task data (tokens, progress, etc.)
+  rpc StreamTaskData(StreamTaskDataRequest) returns (StreamTaskDataResponse);
+}
+
+message SubmitTaskRequest {
+  string workflow_execution_id = 1;  // Optional for standalone tasks (empty string = standalone)
+  string tenant_id = 2;
+  string task_type = 3;
+  bytes input = 4;
+  map<string, string> labels = 5;
+  int32 max_retries = 6;
+  int64 timeout_ms = 7;
+  // Idempotency key to prevent duplicate task executions
+  optional string idempotency_key = 8;
+  // TTL for the idempotency key in seconds (default: 1 day, max: 30 days)
+  optional int64 idempotency_key_ttl_seconds = 9;
+  // Queue for task routing (default: "default")
+  string queue = 10;
+  // Worker pool ID for tenant isolation (empty = any pool)
+  optional string worker_pool_id = 11;
+}
+
+message SubmitTaskResponse {
+  string task_execution_id = 1;
+  // Whether an idempotency key was used for this request
+  bool idempotency_key_used = 2;
+  // Whether a new task execution was created (false if existing execution was returned)
+  bool idempotency_key_new = 3;
+}
+
+message PollTaskRequest {
+  string worker_id = 1;
+  string tenant_id = 2;
+  map<string, string> worker_labels = 3;
+  int64 timeout_seconds = 4;
+  // Queue to poll tasks from (default: "default")
+  string queue = 5;
+  // Worker pool ID for tenant isolation (empty = any pool)
+  optional string worker_pool_id = 6;
+}
+
+message PollTaskResponse {
+  TaskExecutionInfo task = 1;
+}
+
+message TaskExecutionInfo {
+  string task_execution_id = 1;
+  string task_type = 2;
+  bytes input = 3;
+  string workflow_execution_id = 4;  // Empty string for standalone tasks
+  int32 execution_count = 5;
+  // Queue this task belongs to
+  string queue = 6;
+  // Worker pool ID (empty = shared pool)
+  optional string worker_pool_id = 7;
+}
+
+message CompleteTaskRequest {
+  string task_execution_id = 1;
+  bytes output = 2;
+}
+
+message FailTaskRequest {
+  string task_execution_id = 1;
+  string error = 2;
+}
+
+message ReportProgressRequest {
+  string task_execution_id = 1;
+  double progress = 2;
+  string details = 3;
+}
+
+message HeartbeatRequest {
+  string task_execution_id = 1;
+}
+
+message CancelTaskRequest {
+  string task_execution_id = 1;
+}
+
+message LogMessageRequest {
+  string task_execution_id = 1;
+  string level = 2;
+  string message = 3;
+}
+
+// ============================================================================
+// Task State Management Messages
+// ============================================================================
+
+message GetStateRequest {
+  string task_execution_id = 1;
+  string key = 2;
+}
+
+message GetStateResponse {
+  // Value as JSON (null if not found)
+  bytes value = 1;
+  bool found = 2;
+}
+
+message SetStateRequest {
+  string task_execution_id = 1;
+  string key = 2;
+  bytes value = 3;
+}
+
+message ClearStateRequest {
+  string task_execution_id = 1;
+  string key = 2;
+}
+
+message ClearAllStateRequest {
+  string task_execution_id = 1;
+}
+
+message GetStateKeysRequest {
+  string task_execution_id = 1;
+}
+
+message GetStateKeysResponse {
+  repeated string keys = 1;
+}
+
+// ============================================================================
+// Task Streaming Messages
+// ============================================================================
+
+enum StreamEventType {
+  STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  TOKEN = 1;
+  PROGRESS = 2;
+  DATA = 3;
+  ERROR = 4;
+}
+
+message StreamTaskDataRequest {
+  string task_execution_id = 1;
+  string workflow_execution_id = 2;
+  int32 sequence = 3;
+  StreamEventType type = 4;
+  string payload = 5;
+  int64 timestamp_ms = 6;
+}
+
+message StreamTaskDataResponse {
+  bool acknowledged = 1;
+}
+
+// ============================================================================
+// Command Pattern Messages (Temporal alignment)
+// ============================================================================
+
+enum CommandType {
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  RECORD_OPERATION = 1;
+  SET_STATE = 2;
+  CLEAR_STATE = 3;
+  SCHEDULE_TASK = 4;
+  COMPLETE_WORKFLOW = 5;
+  FAIL_WORKFLOW = 6;
+  SUSPEND_WORKFLOW = 7;
+  CANCEL_WORKFLOW = 8;
+  CREATE_PROMISE = 9;
+  RESOLVE_PROMISE = 10;
+  SCHEDULE_CHILD_WORKFLOW = 11;
+  START_TIMER = 12;
+  CANCEL_TIMER = 13;
+}
+
+message WorkflowCommand {
+  CommandType command_type = 1;
+  int32 sequence_number = 2;
+
+  oneof command_data {
+    RecordOperationCommand record_operation = 10;
+    SetStateCommand set_state = 11;
+    ClearStateCommand clear_state = 12;
+    ScheduleTaskCommand schedule_task = 13;
+    CompleteWorkflowCommand complete_workflow = 14;
+    FailWorkflowCommand fail_workflow = 15;
+    SuspendWorkflowCommand suspend_workflow = 16;
+    CancelWorkflowCommand cancel_workflow = 17;
+    CreatePromiseCommand create_promise = 18;
+    ResolvePromiseCommand resolve_promise = 19;
+    ScheduleChildWorkflowCommand schedule_child_workflow = 20;
+    StartTimerCommand start_timer = 21;
+    CancelTimerCommand cancel_timer = 22;
+  }
+}
+
+message RecordOperationCommand {
+  string operation_name = 1;
+  bytes result = 2;
+}
+
+message SetStateCommand {
+  string key = 1;
+  bytes value = 2;
+}
+
+message ClearStateCommand {
+  string key = 1;
+}
+
+message ScheduleTaskCommand {
+  string task_type = 1;
+  bytes input = 2;
+  string task_execution_id = 3;  // Unique ID for this task execution, used to match completions
+}
+
+message CompleteWorkflowCommand {
+  bytes output = 1;
+}
+
+message FailWorkflowCommand {
+  string error = 1;
+  string stack_trace = 2;
+  string failure_type = 3; // CODE_BUG, WORKER_CRASH, TRANSIENT_ERROR, BUSINESS_LOGIC, MAX_RETRIES, DETERMINISM_VIOLATION
+}
+
+message SuspendWorkflowCommand {
+  string reason = 1;
+}
+
+message CancelWorkflowCommand {
+  string reason = 1;
+}
+
+message CreatePromiseCommand {
+  string promise_id = 1;
+  optional int64 timeout_ms = 2;
+}
+
+message ResolvePromiseCommand {
+  string promise_id = 1;
+  bytes value = 2;
+}
+
+message ScheduleChildWorkflowCommand {
+  string child_execution_name = 1;
+  optional string workflow_kind = 2;
+  optional string workflow_definition_id = 3;
+  string child_workflow_execution_id = 4;
+  bytes input = 5;
+  string task_queue = 6;
+  int32 priority_seconds = 7;
+}
+
+// Timer commands for durable sleep
+message StartTimerCommand {
+  string timer_id = 1;
+  int64 duration_ms = 2;
+}
+
+message CancelTimerCommand {
+  string timer_id = 1;
+}
+
+enum WorkflowStatus {
+  WORKFLOW_STATUS_UNSPECIFIED = 0;
+  RUNNING = 1;
+  SUSPENDED = 2;
+  COMPLETED = 3;
+  CANCELLED = 4;
+  FAILED = 5;
+}
+
+message SubmitWorkflowCommandsRequest {
+  string workflow_execution_id = 1;
+  repeated WorkflowCommand commands = 2;
+  WorkflowStatus status = 3;
+}
+
+// ============================================================================
+// Worker Lifecycle Service (Worker Discovery & Heartbeat)
+// ============================================================================
+
+service WorkerLifecycle {
+  // Register worker with workflows and tasks
+  rpc RegisterWorker(WorkerRegistrationRequest) returns (WorkerRegistrationResponse);
+
+  // Send heartbeat to update worker status
+  rpc SendHeartbeat(WorkerHeartbeatRequest) returns (google.protobuf.Empty);
+}
+
+message WorkerRegistrationRequest {
+  // Worker identity
+  string worker_name = 1;
+  string worker_version = 2;
+  string worker_type = 3;  // "WORKFLOW", "TASK", "UNIFIED"
+
+  // Tenant and space
+  string tenant_id = 4;
+  optional string space_id = 5;  // NULL = tenant-level (shared infrastructure)
+
+  // Connection info
+  string host_name = 6;
+  string process_id = 7;
+
+  // Capabilities
+  repeated WorkflowCapability workflows = 8;
+  repeated TaskCapability tasks = 9;
+
+  // Metadata
+  bytes metadata = 10;
+}
+
+message WorkflowCapability {
+  string kind = 1;
+  string name = 2;
+  string description = 3;
+  optional int32 timeout_seconds = 4;
+  bool cancellable = 5;
+  repeated string tags = 6;
+  bytes retry_policy = 7;
+  bytes metadata = 8;
+
+  // Code-first workflow versioning (added in workflow-versioning-implementation)
+  string version = 9;  // Semantic version (e.g., "1.0.0", "1.2.3")
+  string content_hash = 10;  // SHA-256 hash of workflow bytecode
+}
+
+message TaskCapability {
+  string kind = 1;
+  string name = 2;
+  string description = 3;
+  optional int32 timeout_seconds = 4;
+  bool cancellable = 5;
+  repeated string tags = 6;
+  bytes retry_policy = 7;
+  bytes input_schema = 8;
+  bytes output_schema = 9;
+  bytes metadata = 10;
+}
+
+message WorkerRegistrationResponse {
+  string worker_id = 1;
+  bool success = 2;
+  optional string error = 3;
+  repeated WorkflowConflict workflow_conflicts = 4;
+  repeated TaskConflict task_conflicts = 5;
+}
+
+message WorkflowConflict {
+  string kind = 1;
+  string reason = 2;
+  string existing_worker_id = 3;
+}
+
+message TaskConflict {
+  string kind = 1;
+  string reason = 2;
+  string existing_worker_id = 3;
+}
+
+message WorkerHeartbeatRequest {
+  string worker_id = 1;
+  repeated string workflow_kinds = 2;
+  repeated string task_kinds = 3;
+  bytes health_info = 4;
+}

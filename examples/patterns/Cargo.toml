@@ -1,0 +1,19 @@
+[package]
+name = "patterns-sample"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Workflow pattern showcase (timers, promises, child workflows)"
+
+[dependencies]
+flovyn-sdk.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+flovyn-sdk = { path = "../../sdk", features = ["testing"] }
