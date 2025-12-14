@@ -445,6 +445,53 @@ tests/
 
 ---
 
+## Resolved Issues
+
+### Task Scheduling Issue - RESOLVED
+
+**Problem**: Workflow schedules task via `ctx.schedule_raw()`, but task never executed.
+
+**Root cause**: The `schedule_raw` method was only recording a command but not actually submitting the task to the server. The server needs a `submitTask` gRPC call before the task worker can poll for it.
+
+**Solution**:
+1. Created `TaskSubmitter` trait (`sdk/src/workflow/task_submitter.rs`)
+2. Implemented `GrpcTaskSubmitter` that calls `submitTask` via gRPC
+3. Updated `WorkflowContextImpl` to use `TaskSubmitter` before recording SCHEDULE_TASK command
+4. Passed `TaskSubmitter` from `WorkflowExecutorWorker` to the context
+
+### Timer/Replay Issue - RESOLVED
+
+**Problem**: Server rejected events with "Sequence gap: expected 5, got 1" when workflow resumed after timer.
+
+**Root cause**: The SDK was restarting sequence numbering from 1 on each workflow execution instead of continuing from where it left off during replay.
+
+**Solution**:
+1. Fixed sequence number tracking in `WorkflowContextImpl` to continue from replay events
+2. Added `next_sequence` field that is initialized from the max sequence in replay events + 1
+3. New commands now get correct sequence numbers that follow the replayed events
+
+### Worker Ready Race Condition - RESOLVED
+
+**Problem**: `handle.await_ready()` would hang indefinitely because `notify_waiters()` was called before `notified().await`.
+
+**Root cause**: `Notify::notify_waiters()` only wakes tasks already waiting. If worker calls it before test calls `notified().await`, the notification is lost.
+
+**Solution**: Changed from `notify_waiters()` to `notify_one()` in both workflow and task workers. `notify_one()` stores a permit that can be consumed later, even if the waiter hasn't started yet.
+
+---
+
+## Test Timeouts
+
+All E2E tests now have automatic timeout protection:
+
+1. **Per-test timeout** (60 seconds default): Each test is wrapped with `with_timeout(TEST_TIMEOUT, ...)` that panics if the test takes too long.
+
+2. **CI job timeout**: GitHub Actions jobs have `timeout-minutes` set (15 min for build, 10 min for lint/docs).
+
+This prevents hanging tests from consuming CI minutes or blocking local development.
+
+---
+
 ## TODO
 
 - [x] Add testcontainers dependencies to `sdk/Cargo.toml` (include `reqwest`, `jsonwebtoken`, `chrono`)
@@ -453,12 +500,16 @@ tests/
 - [x] Implement self-signed JWT generation for REST API auth
 - [x] Implement tenant/worker-token creation via REST API
 - [x] Create `tests/e2e/fixtures/mod.rs`
-- [x] Implement `tests/e2e/fixtures/workflows.rs` (DoublerWorkflow, EchoWorkflow, FailingWorkflow, RunOperationWorkflow, StatefulWorkflow, TaskSchedulingWorkflow)
-- [x] Implement `tests/e2e/fixtures/tasks.rs` (EchoTask, SlowTask, FailingTask, ProgressTask)
-- [x] Implement `tests/e2e/workflow_tests.rs` (harness test, more tests pending SDK client integration)
-- [ ] Implement `tests/e2e/task_tests.rs` (5 tests)
-- [ ] Implement `tests/e2e/state_tests.rs` (4 tests)
-- [ ] Implement `tests/e2e/timer_tests.rs` (2 tests)
+- [x] Implement `tests/e2e/fixtures/workflows.rs` (DoublerWorkflow, EchoWorkflow, FailingWorkflow, StatefulWorkflow, TaskSchedulingWorkflow, TimerWorkflow, MultiTaskWorkflow)
+- [x] Implement `tests/e2e/fixtures/tasks.rs` (EchoTask, SlowTask)
+- [x] Implement `tests/e2e/workflow_tests.rs` (4 tests passing)
+- [x] Implement `tests/e2e/task_tests.rs` (2 tests passing)
+- [x] Implement `tests/e2e/state_tests.rs` (1 test passing)
+- [x] Implement `tests/e2e/timer_tests.rs` (2 tests passing)
+- [x] Add test timeout protection (with_timeout wrapper, CI timeout-minutes)
+- [x] Fix replay/sequence numbering issue
+- [x] Fix task scheduling (TaskSubmitter trait + GrpcTaskSubmitter)
+- [x] Fix worker ready race condition (notify_one vs notify_waiters)
 - [ ] Implement `tests/e2e/promise_tests.rs` (2 tests)
 - [ ] Implement `tests/e2e/child_workflow_tests.rs` (3 tests)
 - [ ] Implement `tests/e2e/replay_tests.rs` (3 tests)
@@ -466,3 +517,22 @@ tests/
 - [ ] Implement `tests/e2e/concurrency_tests.rs` (2 tests)
 - [ ] Add GitHub Actions workflow for E2E tests
 - [ ] Ensure Flovyn server Docker image is built in CI
+
+## Current Test Status
+
+All 10 E2E tests passing:
+- `test_harness_setup` ✅
+- `test_simple_workflow_execution` ✅
+- `test_echo_workflow` ✅
+- `test_failing_workflow` ✅
+- `test_start_workflow_async` ✅
+- `test_basic_task_scheduling` ✅
+- `test_multiple_sequential_tasks` ✅
+- `test_state_set_get` ✅
+- `test_durable_timer_sleep` ✅
+- `test_short_timer` ✅
+
+Run with:
+```bash
+FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-sdk -- --include-ignored --test-threads=1
+```

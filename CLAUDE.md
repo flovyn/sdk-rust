@@ -79,6 +79,7 @@ Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `
 ### Location
 - **Design documents**: `.dev/docs/design/` - Architecture, API design, technical decisions
 - **Implementation plans**: `.dev/docs/plans/` - Step-by-step implementation plans
+- **Bug reports**: `.dev/docs/plans/` - Bug report and fixes
 
 ### Plan Guidelines
 - Plans should NOT repeat content already in design documents - reference them instead
@@ -95,3 +96,21 @@ Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `
 - Rust 1.82+
 - Protocol Buffers compiler (`protoc`)
 - Flovyn server running on `localhost:9090` (for examples/e2e tests)
+
+## Platform Notes (macOS)
+
+### Command Timeouts
+The `timeout` command does not exist on macOS. Use these alternatives instead:
+
+```bash
+# Option 1: Use Bash tool's run_in_background parameter
+# Run command in background, then use BashOutput to check status
+
+# Option 2: Use cargo test's built-in timeout (for tests)
+cargo test -- --test-threads=1  # Tests have their own timeout
+
+# Option 3: For E2E tests, use the test's internal timeout mechanism
+# E2E tests use tokio::time::timeout() internally
+```
+
+**IMPORTANT**: Never use `timeout` command in bash - it will fail with "command not found".

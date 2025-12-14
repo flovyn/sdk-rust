@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod builder;
 pub mod flovyn_client;
+pub mod grpc_task_submitter;
 pub mod hook;
 pub mod task_execution;
 pub mod worker_lifecycle;
@@ -10,6 +11,7 @@ pub mod workflow_dispatch;
 pub mod workflow_query;
 
 // Re-export gRPC client types
+pub use grpc_task_submitter::GrpcTaskSubmitter;
 pub use task_execution::{SubmitTaskResult, TaskExecutionClient, TaskExecutionInfo};
 pub use workflow_dispatch::StartWorkflowResult as GrpcStartWorkflowResult;
 pub use workflow_dispatch::{WorkflowDispatch, WorkflowEvent, WorkflowExecutionInfo};

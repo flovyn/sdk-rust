@@ -2,7 +2,7 @@
 
 use crate::client::hook::WorkflowHook;
 use crate::client::worker_lifecycle::{WorkerLifecycleClient, WorkerType};
-use crate::client::{WorkflowDispatch, WorkflowExecutionInfo};
+use crate::client::{GrpcTaskSubmitter, WorkflowDispatch, WorkflowExecutionInfo};
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
 use crate::worker::executor::WorkflowStatus;
@@ -11,6 +11,7 @@ use crate::workflow::command::WorkflowCommand;
 use crate::workflow::context_impl::WorkflowContextImpl;
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::recorder::CommandCollector;
+use crate::workflow::task_submitter::TaskSubmitter;
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -85,6 +86,8 @@ pub struct WorkflowExecutorWorker {
     ready_notify: Arc<Notify>,
     /// Notify when work is available (from notification subscription)
     work_available_notify: Arc<Notify>,
+    /// Task submitter for workflows to submit tasks to the server
+    task_submitter: Arc<dyn TaskSubmitter>,
 }
 
 impl WorkflowExecutorWorker {
@@ -96,6 +99,10 @@ impl WorkflowExecutorWorker {
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
         let client = WorkflowDispatch::new(channel.clone(), &config.worker_token);
+        let task_submitter = Arc::new(GrpcTaskSubmitter::new(
+            channel.clone(),
+            &config.worker_token,
+        ));
         Self {
             config,
             registry,
@@ -108,6 +115,7 @@ impl WorkflowExecutorWorker {
             workflow_hook: None,
             ready_notify: Arc::new(Notify::new()),
             work_available_notify: Arc::new(Notify::new()),
+            task_submitter,
         }
     }
 
@@ -309,6 +317,7 @@ impl WorkflowExecutorWorker {
         let mut client = self.client.clone();
         let config = self.config.clone();
         let workflow_hook = self.workflow_hook.clone();
+        let task_submitter = self.task_submitter.clone();
 
         // Start heartbeat loop in background
         let heartbeat_running = self.running.clone();
@@ -347,7 +356,9 @@ impl WorkflowExecutorWorker {
         }
 
         // Signal that worker is ready
-        self.ready_notify.notify_waiters();
+        // Use notify_one() instead of notify_waiters() to store a permit
+        // that can be consumed even if await_ready() hasn't been called yet
+        self.ready_notify.notify_one();
 
         // Clone work_available_notify for the polling loop
         let work_available_notify = self.work_available_notify.clone();
@@ -367,6 +378,7 @@ impl WorkflowExecutorWorker {
                     running.clone(),
                     workflow_hook.clone(),
                     work_available_notify.clone(),
+                    task_submitter.clone(),
                 ) => {
                     if let Err(e) = result {
                         // Check if it's a connection error
@@ -411,6 +423,7 @@ impl WorkflowExecutorWorker {
         running: Arc<AtomicBool>,
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
         work_available_notify: Arc<Notify>,
+        task_submitter: Arc<dyn TaskSubmitter>,
     ) -> Result<()> {
         // Acquire semaphore permit
         let permit = semaphore
@@ -433,12 +446,15 @@ impl WorkflowExecutorWorker {
                 // Spawn execution in background
                 let mut client = client.clone();
                 let hook = workflow_hook.clone();
+                let task_submitter = task_submitter.clone();
 
                 tokio::spawn(async move {
                     let _permit = permit; // Keep permit alive during execution
                     let _running = running; // Keep reference
 
-                    if let Err(e) = Self::execute_workflow(&mut client, &registry, info, hook).await
+                    if let Err(e) =
+                        Self::execute_workflow(&mut client, &registry, info, hook, task_submitter)
+                            .await
                     {
                         error!("Workflow execution error: {}", e);
                     }
@@ -500,6 +516,7 @@ impl WorkflowExecutorWorker {
         registry: &WorkflowRegistry,
         workflow_info: WorkflowExecutionInfo,
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
+        task_submitter: Arc<dyn TaskSubmitter>,
     ) -> Result<()> {
         let workflow_id = workflow_info.id;
         let kind = &workflow_info.kind;
@@ -529,18 +546,29 @@ impl WorkflowExecutorWorker {
             })
             .collect();
 
+        // Debug: print replay events on resume
+        if !replay_events.is_empty() {
+            debug!(
+                workflow_id = %workflow_id,
+                num_events = replay_events.len(),
+                events = ?replay_events.iter().map(|e| format!("{}:{:?} - {:?}", e.sequence_number(), e.event_type(), e.data())).collect::<Vec<_>>(),
+                "Executing workflow with replay events"
+            );
+        }
+
         // Create workflow context
         let recorder = CommandCollector::new();
         let current_sequence = replay_events.len() as i32;
         let workflow_task_time = workflow_info.workflow_task_time_millis;
 
-        let ctx = Arc::new(WorkflowContextImpl::new(
+        let ctx = Arc::new(WorkflowContextImpl::new_with_task_submitter(
             workflow_id,
             workflow_info.tenant_id,
             workflow_info.input.clone(),
             recorder,
             replay_events.clone(),
             workflow_task_time,
+            Some(task_submitter),
         ));
 
         // Call hook: workflow started
@@ -556,7 +584,12 @@ impl WorkflowExecutorWorker {
 
         // Get commands and determine status
         let mut commands = ctx.get_commands();
-        let mut final_sequence = current_sequence;
+        // Calculate final_sequence from commands already recorded (or replay events if no commands)
+        let mut final_sequence = commands
+            .iter()
+            .map(|c| c.sequence_number())
+            .max()
+            .unwrap_or(current_sequence);
 
         let (status, output_commands, output_for_hook) = match result {
             Ok(output) => {
@@ -818,6 +851,7 @@ mod tests {
             space_id: Some(Uuid::new_v4()),
             enable_auto_registration: false,
             enable_notifications: false,
+            worker_token: "test-token".to_string(),
         };
 
         assert_eq!(config.worker_id, "test-worker");

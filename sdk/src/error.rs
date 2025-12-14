@@ -13,6 +13,10 @@ pub enum FlovynError {
     #[error("Task cancelled")]
     TaskCancelled,
 
+    /// Task execution failed
+    #[error("Task failed: {0}")]
+    TaskFailed(String),
+
     /// Workflow was cancelled
     #[error("Workflow cancelled: {0}")]
     WorkflowCancelled(String),

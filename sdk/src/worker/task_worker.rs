@@ -227,7 +227,9 @@ impl TaskExecutorWorker {
         });
 
         // Signal that worker is ready
-        self.ready_notify.notify_waiters();
+        // Use notify_one() instead of notify_waiters() to store a permit
+        // that can be consumed even if await_ready() hasn't been called yet
+        self.ready_notify.notify_one();
 
         // Polling loop
         while self.running.load(Ordering::SeqCst) {
@@ -408,6 +410,7 @@ mod tests {
             worker_version: "2.0.0".to_string(),
             space_id: Some(Uuid::new_v4()),
             enable_auto_registration: false,
+            worker_token: "test-token".to_string(),
         };
 
         assert_eq!(config.worker_id, "task-worker-1");

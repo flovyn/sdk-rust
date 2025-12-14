@@ -13,6 +13,10 @@ pub struct ScheduleTaskOptions {
     pub priority_seconds: Option<i32>,
     /// Task timeout override
     pub timeout: Option<Duration>,
+    /// Task queue override
+    pub queue: Option<String>,
+    /// Maximum retry attempts
+    pub max_retries: Option<u32>,
 }
 
 /// A deterministic random number generator
@@ -184,8 +188,12 @@ mod tests {
         let options = ScheduleTaskOptions {
             priority_seconds: Some(60),
             timeout: Some(Duration::from_secs(300)),
+            queue: Some("custom-queue".to_string()),
+            max_retries: Some(5),
         };
         assert_eq!(options.priority_seconds, Some(60));
         assert_eq!(options.timeout, Some(Duration::from_secs(300)));
+        assert_eq!(options.queue, Some("custom-queue".to_string()));
+        assert_eq!(options.max_retries, Some(5));
     }
 }

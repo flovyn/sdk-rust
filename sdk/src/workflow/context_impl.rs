@@ -5,11 +5,13 @@ use crate::workflow::command::WorkflowCommand;
 use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, WorkflowContext};
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::recorder::CommandRecorder;
+use crate::workflow::task_submitter::TaskSubmitter;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -118,6 +120,19 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
 
     /// Pending child workflows
     pending_child_workflows: RwLock<HashMap<String, Value>>,
+
+    /// Counter for deterministic sleep/timer ID generation.
+    /// Separate from sequence_number because sequence depends on existingEvents.size
+    /// which changes between executions. This counter ensures timer IDs are consistent.
+    sleep_call_counter: AtomicI32,
+
+    /// Tracking for consumed task execution IDs during replay.
+    /// This ensures multiple schedule() calls with the same taskType consume different events.
+    consumed_task_execution_ids: RwLock<std::collections::HashSet<String>>,
+
+    /// Task submitter for submitting tasks to the server.
+    /// If None, scheduling tasks will fail with an error.
+    task_submitter: Option<Arc<dyn TaskSubmitter>>,
 }
 
 impl<R: CommandRecorder> WorkflowContextImpl<R> {
@@ -129,6 +144,27 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
         recorder: R,
         existing_events: Vec<ReplayEvent>,
         start_time_millis: i64,
+    ) -> Self {
+        Self::new_with_task_submitter(
+            workflow_execution_id,
+            tenant_id,
+            input,
+            recorder,
+            existing_events,
+            start_time_millis,
+            None,
+        )
+    }
+
+    /// Create a new WorkflowContextImpl with an optional task submitter
+    pub fn new_with_task_submitter(
+        workflow_execution_id: Uuid,
+        tenant_id: Uuid,
+        input: Value,
+        recorder: R,
+        existing_events: Vec<ReplayEvent>,
+        start_time_millis: i64,
+        task_submitter: Option<Arc<dyn TaskSubmitter>>,
     ) -> Self {
         // Create seed from workflow execution ID for deterministic randomness
         let seed = workflow_execution_id.as_u128() as u64;
@@ -162,13 +198,17 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             }
         }
 
+        // Start sequence number from the next available position
+        // If there are existing events (replay), continue from after them
+        let initial_sequence = (existing_events.len() as i32) + 1;
+
         Self {
             workflow_execution_id,
             tenant_id,
             input,
             recorder: RwLock::new(recorder),
             existing_events,
-            sequence_number: AtomicI32::new(1),
+            sequence_number: AtomicI32::new(initial_sequence),
             current_time: AtomicI64::new(start_time_millis),
             uuid_counter: AtomicI64::new(0),
             random: SeededRandom::new(seed),
@@ -179,6 +219,9 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             pending_promises: RwLock::new(HashMap::new()),
             pending_timers: RwLock::new(HashMap::new()),
             pending_child_workflows: RwLock::new(HashMap::new()),
+            sleep_call_counter: AtomicI32::new(0),
+            consumed_task_execution_ids: RwLock::new(std::collections::HashSet::new()),
+            task_submitter,
         }
     }
 
@@ -200,6 +243,21 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
         self.existing_events
             .iter()
             .find(|e| e.sequence_number() == sequence && e.event_type() == event_type)
+    }
+
+    /// Find an event by type and a field value (e.g., timer_id)
+    fn find_event_by_field(
+        &self,
+        event_type: EventType,
+        field_name: &str,
+        field_value: &str,
+    ) -> Option<&ReplayEvent> {
+        self.existing_events.iter().find(|e| {
+            e.event_type() == event_type
+                && e.get_string(field_name)
+                    .map(|v| v == field_value)
+                    .unwrap_or(false)
+        })
     }
 
     /// Request cancellation
@@ -334,24 +392,119 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         input: Value,
         options: ScheduleTaskOptions,
     ) -> Result<Value> {
-        let sequence = self.next_sequence();
-        let task_execution_id = self.random_uuid();
+        // Find the FIRST UNCONSUMED TASK_SCHEDULED event for this taskType (by sequence order).
+        // This is critical for handling multiple schedule() calls with the same taskType.
+        // Each call must consume a different task event, not reuse the same one.
+        let unconsumed_scheduled_event = {
+            let consumed = self.consumed_task_execution_ids.read();
+            self.existing_events
+                .iter()
+                .filter(|e| {
+                    e.event_type() == EventType::TaskScheduled
+                        && e.get_string("taskType").map(|t| t == task_type).unwrap_or(false)
+                        && !consumed.contains(
+                            &e.get_string("taskExecutionId")
+                                .or_else(|| e.get_string("taskId"))
+                                .unwrap_or_default()
+                                .to_string(),
+                        )
+                })
+                .min_by_key(|e| e.sequence_number())
+                .cloned()
+        };
 
-        // Check existing events for replay
-        if let Some(event) = self.find_event(sequence, EventType::TaskCompleted) {
-            if let Some(result) = event.get("result") {
-                self.record_command(WorkflowCommand::ScheduleTask {
-                    sequence_number: sequence,
-                    task_type: task_type.to_string(),
-                    task_execution_id,
-                    input,
-                    priority_seconds: options.priority_seconds,
-                })?;
-                return Ok(result.clone());
+        // If we found an unconsumed SCHEDULED event, look for its completion/failure
+        if let Some(scheduled_event) = unconsumed_scheduled_event {
+            let task_execution_id = scheduled_event
+                .get_string("taskExecutionId")
+                .or_else(|| scheduled_event.get_string("taskId"))
+                .ok_or_else(|| {
+                    FlovynError::Other("TASK_SCHEDULED event missing taskExecutionId".to_string())
+                })?
+                .to_string();
+
+            // Find terminal event (COMPLETED or FAILED) for this specific task
+            let terminal_event = self
+                .existing_events
+                .iter()
+                .filter(|e| {
+                    let matches_id = e
+                        .get_string("taskExecutionId")
+                        .or_else(|| e.get_string("taskId"))
+                        .map(|id| id == task_execution_id)
+                        .unwrap_or(false);
+                    matches_id
+                        && (e.event_type() == EventType::TaskCompleted
+                            || e.event_type() == EventType::TaskFailed)
+                })
+                .max_by_key(|e| e.sequence_number());
+
+            match terminal_event {
+                Some(event) if event.event_type() == EventType::TaskCompleted => {
+                    // Task completed - mark as consumed and return result
+                    {
+                        let mut consumed = self.consumed_task_execution_ids.write();
+                        consumed.insert(task_execution_id);
+                    }
+
+                    // Get result from "result" or "output" field
+                    let result = event
+                        .get("result")
+                        .or_else(|| event.get("output"))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    return Ok(result);
+                }
+                Some(event) if event.event_type() == EventType::TaskFailed => {
+                    // Task failed - mark as consumed and return error
+                    {
+                        let mut consumed = self.consumed_task_execution_ids.write();
+                        consumed.insert(task_execution_id);
+                    }
+
+                    let error = event
+                        .get_string("error")
+                        .unwrap_or("Task failed")
+                        .to_string();
+                    return Err(FlovynError::TaskFailed(error));
+                }
+                _ => {
+                    // Task scheduled but no terminal event - still running, suspend
+                    return Err(FlovynError::Suspended {
+                        reason: format!("Task is still running: {}", task_type),
+                    });
+                }
             }
         }
 
-        // Record the command
+        // No unconsumed task event found → submit new task
+        // First, submit the task to the server to create the TaskExecution entity
+        let task_submitter = self.task_submitter.as_ref().ok_or_else(|| {
+            FlovynError::Other(format!(
+                "TaskSubmitter is not configured. Cannot schedule task '{}'",
+                task_type
+            ))
+        })?;
+
+        let submit_options = crate::workflow::task_submitter::TaskSubmitOptions {
+            max_retries: options.max_retries.unwrap_or(3),
+            timeout: options.timeout.unwrap_or(Duration::from_secs(300)),
+            queue: options.queue.clone(),
+            priority_seconds: options.priority_seconds,
+        };
+
+        let task_execution_id = task_submitter
+            .submit_task(
+                self.workflow_execution_id,
+                self.tenant_id,
+                task_type,
+                input.clone(),
+                submit_options,
+            )
+            .await?;
+
+        // Record the command with the server-assigned task_execution_id
+        let sequence = self.next_sequence();
         self.record_command(WorkflowCommand::ScheduleTask {
             sequence_number: sequence,
             task_type: task_type.to_string(),
@@ -360,17 +513,9 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             priority_seconds: options.priority_seconds,
         })?;
 
-        // Check if already resolved
-        {
-            let pending = self.pending_tasks.read();
-            if let Some(result) = pending.get(task_type) {
-                return Ok(result.clone());
-            }
-        }
-
-        // Task not yet resolved - suspend
+        // Suspend workflow - will be resumed when task completes
         Err(FlovynError::Suspended {
-            reason: format!("Waiting for task: {}", task_type),
+            reason: format!("Task scheduled: {}", task_type),
         })
     }
 
@@ -429,33 +574,37 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn sleep(&self, duration: Duration) -> Result<()> {
-        let sequence = self.next_sequence();
-        let timer_id = format!("timer-{}", sequence);
+        // Generate deterministic timer ID using dedicated counter.
+        // This counter is separate from sequence_number to ensure timer IDs are
+        // consistent across replays (sequence depends on existingEvents.size).
+        let sleep_count = self.sleep_call_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        let timer_id = format!("sleep-{}", sleep_count);
         let duration_ms = duration.as_millis() as i64;
 
-        // Check existing events for replay
-        if self.find_event(sequence, EventType::TimerFired).is_some() {
+        // Check for existing TIMER_FIRED event (during replay) by timer_id
+        let fired_event =
+            self.find_event_by_field(EventType::TimerFired, "timerId", &timer_id);
+        if fired_event.is_some() {
+            // Timer already fired during replay - return immediately (no new command)
+            return Ok(());
+        }
+
+        // Check for existing TIMER_STARTED event (during replay)
+        let started_event =
+            self.find_event_by_field(EventType::TimerStarted, "timerId", &timer_id);
+
+        if started_event.is_none() {
+            // New timer - record START_TIMER command
+            let sequence = self.next_sequence();
             self.record_command(WorkflowCommand::StartTimer {
                 sequence_number: sequence,
                 timer_id: timer_id.clone(),
                 duration_ms,
             })?;
-            return Ok(());
         }
 
-        // Record command and suspend (timer needs to fire externally)
-        self.record_command(WorkflowCommand::StartTimer {
-            sequence_number: sequence,
-            timer_id: timer_id.clone(),
-            duration_ms,
-        })?;
-
-        // Register pending timer and suspend
-        {
-            let mut pending = self.pending_timers.write();
-            pending.insert(timer_id.clone(), duration_ms);
-        }
-
+        // Throw exception to suspend workflow execution (will be resumed when timer fires)
+        // NOTE: The SuspendWorkflow command will be added by workflow_worker when it catches this error
         Err(FlovynError::Suspended {
             reason: format!("Waiting for timer: {}", timer_id),
         })
@@ -585,6 +734,24 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 mod tests {
     use super::*;
     use crate::workflow::recorder::CommandCollector;
+    use crate::workflow::task_submitter::{TaskSubmitOptions, TaskSubmitter};
+
+    /// Mock task submitter that always returns a fixed task execution ID
+    struct MockTaskSubmitter;
+
+    #[async_trait]
+    impl TaskSubmitter for MockTaskSubmitter {
+        async fn submit_task(
+            &self,
+            _workflow_execution_id: Uuid,
+            _tenant_id: Uuid,
+            _task_type: &str,
+            _input: Value,
+            _options: TaskSubmitOptions,
+        ) -> Result<Uuid> {
+            Ok(Uuid::new_v4())
+        }
+    }
 
     fn create_test_context() -> WorkflowContextImpl<CommandCollector> {
         WorkflowContextImpl::new(
@@ -594,6 +761,18 @@ mod tests {
             CommandCollector::new(),
             vec![],
             1700000000000, // Fixed timestamp for tests
+        )
+    }
+
+    fn create_test_context_with_task_submitter() -> WorkflowContextImpl<CommandCollector> {
+        WorkflowContextImpl::new_with_task_submitter(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            vec![],
+            1700000000000, // Fixed timestamp for tests
+            Some(Arc::new(MockTaskSubmitter)),
         )
     }
 
@@ -860,7 +1039,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_schedule_raw_suspends() {
-        let ctx = create_test_context();
+        // Use context with task submitter since schedule_raw now submits tasks via gRPC
+        let ctx = create_test_context_with_task_submitter();
 
         let result = ctx
             .schedule_raw("my-task", serde_json::json!({"input": true}))
@@ -878,12 +1058,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_schedule_raw_returns_resolved() {
-        let ctx = create_test_context();
+    async fn test_schedule_raw_returns_completed_from_replay() {
+        use chrono::Utc;
+        // Create context with replay events showing task was already scheduled and completed
+        let task_execution_id = "test-task-123";
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "my-task",
+                    "taskExecutionId": task_execution_id,
+                    "input": {"input": true}
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": task_execution_id,
+                    "output": {"result": 42}
+                }),
+                Utc::now(),
+            ),
+        ];
 
-        // Pre-resolve the task
-        ctx.resolve_task("my-task", serde_json::json!({"result": 42}));
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
 
+        // Since the task was already completed in replay, we should get the result
         let result = ctx
             .schedule_raw("my-task", serde_json::json!({"input": true}))
             .await
@@ -899,6 +1109,194 @@ mod tests {
         let result = ctx.sleep(Duration::from_secs(60)).await;
 
         assert!(matches!(result, Err(FlovynError::Suspended { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_sleep_returns_immediately_when_timer_fired() {
+        use chrono::Utc;
+        // Create context with replay events showing timer was already started and fired
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::TimerStarted,
+                serde_json::json!({
+                    "timerId": "sleep-1",
+                    "durationMs": 60000
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TimerFired,
+                serde_json::json!({
+                    "timerId": "sleep-1"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Since the timer was already fired in replay, sleep should return immediately
+        let result = ctx.sleep(Duration::from_secs(60)).await;
+        assert!(result.is_ok());
+
+        // No command should be recorded (we're replaying, not creating new commands)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_tasks_same_type_each_consume_one_event() {
+        use chrono::Utc;
+        // Test that multiple schedule() calls with the same taskType each consume a different event.
+        // This is critical for handling patterns like:
+        //   let result1 = ctx.schedule("fast-task", input1).await;
+        //   let result2 = ctx.schedule("fast-task", input2).await;
+        // Each call should get its respective result, not both getting the first.
+
+        let replay_events = vec![
+            // First task scheduled and completed
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "fast-task",
+                    "taskExecutionId": "task-111",
+                    "input": {"seq": 1}
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-111",
+                    "output": {"result": "first"}
+                }),
+                Utc::now(),
+            ),
+            // Second task scheduled and completed
+            ReplayEvent::new(
+                3,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "fast-task",
+                    "taskExecutionId": "task-222",
+                    "input": {"seq": 2}
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                4,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-222",
+                    "output": {"result": "second"}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // First schedule call should return "first" result
+        let result1 = ctx
+            .schedule_raw("fast-task", serde_json::json!({"seq": 1}))
+            .await
+            .unwrap();
+        assert_eq!(result1, serde_json::json!({"result": "first"}));
+
+        // Second schedule call should return "second" result (not "first" again)
+        let result2 = ctx
+            .schedule_raw("fast-task", serde_json::json!({"seq": 2}))
+            .await
+            .unwrap();
+        assert_eq!(result2, serde_json::json!({"result": "second"}));
+    }
+
+    #[tokio::test]
+    async fn test_task_still_running_suspends() {
+        use chrono::Utc;
+        // Test that when a task is scheduled but not yet completed, workflow suspends
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "slow-task",
+                    "taskExecutionId": "task-pending",
+                    "input": {}
+                }),
+                Utc::now(),
+            ),
+            // No TaskCompleted event - task is still running
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        let result = ctx.schedule_raw("slow-task", serde_json::json!({})).await;
+        assert!(matches!(result, Err(FlovynError::Suspended { reason }) if reason.contains("still running")));
+    }
+
+    #[tokio::test]
+    async fn test_task_failed_returns_error() {
+        use chrono::Utc;
+        // Test that when a task fails, the error is propagated
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "failing-task",
+                    "taskExecutionId": "task-failed",
+                    "input": {}
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskFailed,
+                serde_json::json!({
+                    "taskExecutionId": "task-failed",
+                    "error": "Connection timeout"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        let result = ctx.schedule_raw("failing-task", serde_json::json!({})).await;
+        assert!(matches!(result, Err(FlovynError::TaskFailed(msg)) if msg == "Connection timeout"));
     }
 
     #[tokio::test]

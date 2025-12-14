@@ -168,3 +168,77 @@ impl DynamicWorkflow for TaskSchedulingWorkflow {
         Ok(output)
     }
 }
+
+/// Workflow that schedules multiple tasks sequentially.
+pub struct MultiTaskWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for MultiTaskWorkflow {
+    fn kind(&self) -> &str {
+        "multi-task-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // Schedule echo task
+        let echo_result = ctx
+            .schedule_raw(
+                "echo-task",
+                serde_json::json!({ "message": "from multi-task workflow" }),
+            )
+            .await?;
+
+        // Schedule slow task
+        let slow_result = ctx
+            .schedule_raw("slow-task", serde_json::json!({ "sleepMs": 100 }))
+            .await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("taskCount".to_string(), Value::Number(2.into()));
+        output.insert("echoResult".to_string(), echo_result);
+        output.insert("slowResult".to_string(), slow_result);
+        Ok(output)
+    }
+}
+
+/// Workflow that sleeps for a configurable duration.
+pub struct TimerWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for TimerWorkflow {
+    fn kind(&self) -> &str {
+        "timer-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let sleep_ms = input
+            .get("sleepMs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000);
+
+        let start_time = ctx.current_time_millis();
+
+        // Sleep using durable timer
+        ctx.sleep(std::time::Duration::from_millis(sleep_ms)).await?;
+
+        let end_time = ctx.current_time_millis();
+
+        let mut output = DynamicOutput::new();
+        output.insert(
+            "sleptMs".to_string(),
+            Value::Number(sleep_ms.into()),
+        );
+        output.insert(
+            "elapsedMs".to_string(),
+            Value::Number((end_time - start_time).into()),
+        );
+        Ok(output)
+    }
+}
