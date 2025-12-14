@@ -19,6 +19,7 @@
 
 mod harness;
 mod fixtures;
+mod test_env;
 mod workflow_tests;
 mod task_tests;
 mod state_tests;
@@ -29,6 +30,7 @@ mod error_tests;
 mod concurrency_tests;
 
 pub use harness::TestHarness;
+pub use test_env::{E2ETestEnvironment, E2ETestEnvBuilder, WorkflowResult, WorkflowStatus};
 
 use std::time::Duration;
 use tokio::sync::OnceCell;
