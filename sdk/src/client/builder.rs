@@ -47,6 +47,8 @@ pub struct FlovynClientBuilder {
     workflow_registry: WorkflowRegistry,
     task_registry: TaskRegistry,
     hooks: Vec<Box<dyn WorkflowHook>>,
+    /// Worker token for gRPC authentication
+    worker_token: Option<String>,
 }
 
 impl Default for FlovynClientBuilder {
@@ -75,6 +77,7 @@ impl FlovynClientBuilder {
             workflow_registry: WorkflowRegistry::new(),
             task_registry: TaskRegistry::new(),
             hooks: Vec::new(),
+            worker_token: None,
         }
     }
 
@@ -165,6 +168,15 @@ impl FlovynClientBuilder {
         self
     }
 
+    /// Set the worker token for gRPC authentication
+    ///
+    /// The worker token is passed in the Authorization header for all gRPC requests.
+    /// This is required when the server has security enabled.
+    pub fn worker_token(mut self, token: impl Into<String>) -> Self {
+        self.worker_token = Some(token.into());
+        self
+    }
+
     /// Set the complete client configuration
     pub fn config(mut self, config: FlovynClientConfig) -> Self {
         self.config = config;
@@ -244,7 +256,17 @@ impl FlovynClientBuilder {
     }
 
     /// Build the FlovynClient
+    ///
+    /// # Errors
+    /// Returns an error if worker_token is not set.
     pub async fn build(self) -> Result<super::FlovynClient> {
+        // Require worker_token for authentication
+        let worker_token = self.worker_token.ok_or_else(|| {
+            FlovynError::InvalidConfiguration(
+                "worker_token is required. Use .worker_token(\"fwt_...\") to set it.".to_string(),
+            )
+        })?;
+
         // Create or use provided channel
         let channel = match self.custom_channel {
             Some(ch) => ch,
@@ -285,6 +307,7 @@ impl FlovynClientBuilder {
             task_registry: Arc::new(self.task_registry),
             workflow_hook,
             running: std::sync::atomic::AtomicBool::new(false),
+            worker_token,
         })
     }
 }

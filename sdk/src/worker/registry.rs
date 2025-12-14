@@ -30,6 +30,8 @@ pub struct WorkflowMetadata {
     pub cancellable: bool,
     /// Timeout in seconds
     pub timeout_seconds: Option<u64>,
+    /// SHA-256 hash of workflow content for version validation
+    pub content_hash: Option<String>,
 }
 
 /// Type alias for boxed workflow execution functions
@@ -133,6 +135,7 @@ impl WorkflowRegistry {
             tags: workflow.tags(),
             cancellable: workflow.cancellable(),
             timeout_seconds: workflow.timeout_seconds().map(|s| s as u64),
+            content_hash: None, // Will be computed during registration
         };
 
         let workflow = Arc::new(workflow);
@@ -164,6 +167,7 @@ impl WorkflowRegistry {
             tags: vec![],
             cancellable: true,
             timeout_seconds: None,
+            content_hash: None,
         };
 
         let boxed_fn: BoxedWorkflowFn = Box::new(move |ctx, input| {
@@ -238,6 +242,7 @@ mod tests {
             tags: vec!["payment".to_string(), "finance".to_string()],
             cancellable: true,
             timeout_seconds: Some(300),
+            content_hash: None,
         };
 
         assert_eq!(metadata.kind, "payment-workflow");
@@ -375,6 +380,7 @@ mod tests {
             tags: vec!["complex".to_string()],
             cancellable: false,
             timeout_seconds: Some(600),
+            content_hash: None,
         };
 
         let execute_fn: BoxedWorkflowFn =
@@ -407,6 +413,7 @@ mod tests {
             tags: vec![],
             cancellable: true,
             timeout_seconds: None,
+            content_hash: None,
         };
 
         let execute_fn: BoxedWorkflowFn = Box::new(|_ctx, input| {
@@ -462,6 +469,7 @@ mod tests {
             tags: vec![],
             cancellable: true,
             timeout_seconds: None,
+            content_hash: None,
         };
 
         let execute_fn: BoxedWorkflowFn =

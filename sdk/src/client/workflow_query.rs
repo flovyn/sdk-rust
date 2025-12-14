@@ -1,33 +1,30 @@
 //! WorkflowQuery client wrapper for querying workflow state
 
+use crate::client::auth::WorkerTokenInterceptor;
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::workflow_query_client::WorkflowQueryClient as GrpcWorkflowQueryClient;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+/// Type alias for authenticated client
+type AuthClient = GrpcWorkflowQueryClient<InterceptedService<Channel, WorkerTokenInterceptor>>;
+
 /// Client for workflow query operations
-#[derive(Debug, Clone)]
 pub struct WorkflowQueryClient {
-    inner: GrpcWorkflowQueryClient<Channel>,
+    inner: AuthClient,
 }
 
 impl WorkflowQueryClient {
-    /// Create from an existing channel
-    pub fn new(channel: Channel) -> Self {
+    /// Create from a channel with worker token authentication
+    pub fn new(channel: Channel, token: &str) -> Self {
+        let interceptor = WorkerTokenInterceptor::new(token);
         Self {
-            inner: GrpcWorkflowQueryClient::new(channel),
+            inner: GrpcWorkflowQueryClient::with_interceptor(channel, interceptor),
         }
-    }
-
-    /// Connect to the server at the given endpoint
-    pub async fn connect(endpoint: &str) -> Result<Self> {
-        let client = GrpcWorkflowQueryClient::connect(endpoint.to_string())
-            .await
-            .map_err(|e| FlovynError::NetworkError(e.to_string()))?;
-        Ok(Self { inner: client })
     }
 
     /// Query workflow state and return raw Value

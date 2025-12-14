@@ -45,6 +45,8 @@ pub struct WorkflowWorkerConfig {
     pub enable_auto_registration: bool,
     /// Enable notification subscription for instant work notifications
     pub enable_notifications: bool,
+    /// Worker token for gRPC authentication
+    pub worker_token: String,
 }
 
 impl Default for WorkflowWorkerConfig {
@@ -61,6 +63,7 @@ impl Default for WorkflowWorkerConfig {
             space_id: None,
             enable_auto_registration: true,
             enable_notifications: true,
+            worker_token: String::new(),
         }
     }
 }
@@ -92,10 +95,11 @@ impl WorkflowExecutorWorker {
         channel: Channel,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
+        let client = WorkflowDispatch::new(channel.clone(), &config.worker_token);
         Self {
             config,
             registry,
-            client: WorkflowDispatch::new(channel.clone()),
+            client,
             channel,
             running: Arc::new(AtomicBool::new(false)),
             semaphore,
@@ -144,7 +148,7 @@ impl WorkflowExecutorWorker {
             "Registering workflow worker with server"
         );
 
-        let mut lifecycle_client = WorkerLifecycleClient::new(self.channel.clone());
+        let mut lifecycle_client = WorkerLifecycleClient::new(self.channel.clone(), &self.config.worker_token);
 
         let result = lifecycle_client
             .register_worker(
@@ -178,6 +182,7 @@ impl WorkflowExecutorWorker {
     /// Run heartbeat loop
     async fn heartbeat_loop(
         channel: Channel,
+        worker_token: String,
         server_worker_id: Option<Uuid>,
         heartbeat_interval: Duration,
         running: Arc<AtomicBool>,
@@ -188,7 +193,7 @@ impl WorkflowExecutorWorker {
         }
 
         let worker_id = server_worker_id.unwrap();
-        let mut client = WorkerLifecycleClient::new(channel);
+        let mut client = WorkerLifecycleClient::new(channel, &worker_token);
 
         while running.load(Ordering::SeqCst) {
             tokio::time::sleep(heartbeat_interval).await;
@@ -218,7 +223,7 @@ impl WorkflowExecutorWorker {
         );
 
         while running.load(Ordering::SeqCst) {
-            let mut client = WorkflowDispatch::new(channel.clone());
+            let mut client = WorkflowDispatch::new(channel.clone(), &config.worker_token);
 
             // Subscribe to notifications
             let stream_result = client
@@ -308,12 +313,14 @@ impl WorkflowExecutorWorker {
         // Start heartbeat loop in background
         let heartbeat_running = self.running.clone();
         let heartbeat_channel = self.channel.clone();
+        let heartbeat_worker_token = self.config.worker_token.clone();
         let heartbeat_worker_id = self.server_worker_id;
         let heartbeat_interval = self.config.heartbeat_interval;
 
         tokio::spawn(async move {
             Self::heartbeat_loop(
                 heartbeat_channel,
+                heartbeat_worker_token,
                 heartbeat_worker_id,
                 heartbeat_interval,
                 heartbeat_running,

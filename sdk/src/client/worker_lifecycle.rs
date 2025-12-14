@@ -3,6 +3,7 @@
 //! This module provides the client for the WorkerLifecycle gRPC service,
 //! which handles worker registration and heartbeat operations.
 
+use crate::client::auth::WorkerTokenInterceptor;
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1::{
     self, TaskCapability, WorkerHeartbeatRequest, WorkerRegistrationRequest,
@@ -10,8 +11,13 @@ use crate::generated::flovyn_v1::{
 };
 use crate::task::registry::TaskMetadata;
 use crate::worker::registry::WorkflowMetadata;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use uuid::Uuid;
+
+/// Type alias for authenticated client
+type AuthClient =
+    flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient<InterceptedService<Channel, WorkerTokenInterceptor>>;
 
 /// Worker types for registration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,14 +87,18 @@ pub struct TaskConflict {
 /// gRPC client for WorkerLifecycle service.
 /// Handles worker registration and heartbeat operations.
 pub struct WorkerLifecycleClient {
-    stub: flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient<Channel>,
+    stub: AuthClient,
 }
 
 impl WorkerLifecycleClient {
-    /// Create a new WorkerLifecycleClient from an existing channel
-    pub fn new(channel: Channel) -> Self {
+    /// Create a new WorkerLifecycleClient with worker token authentication
+    pub fn new(channel: Channel, token: &str) -> Self {
+        let interceptor = WorkerTokenInterceptor::new(token);
         Self {
-            stub: flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient::new(channel),
+            stub: flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient::with_interceptor(
+                channel,
+                interceptor,
+            ),
         }
     }
 
@@ -191,6 +201,16 @@ impl WorkerLifecycleClient {
 
 /// Convert WorkflowMetadata to protobuf WorkflowCapability
 fn workflow_to_proto(metadata: WorkflowMetadata) -> WorkflowCapability {
+    let version = metadata
+        .version
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "1.0.0".to_string());
+
+    // Use the content hash from metadata, or generate one from kind:version
+    let content_hash = metadata.content_hash.unwrap_or_else(|| {
+        compute_content_hash(&metadata.kind, &version)
+    });
+
     WorkflowCapability {
         kind: metadata.kind,
         name: metadata.name,
@@ -200,12 +220,20 @@ fn workflow_to_proto(metadata: WorkflowMetadata) -> WorkflowCapability {
         tags: metadata.tags,
         retry_policy: Vec::new(),
         metadata: Vec::new(),
-        version: metadata
-            .version
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "0.0.0".to_string()),
-        content_hash: String::new(),
+        version,
+        content_hash,
     }
+}
+
+/// Compute SHA-256 content hash for workflow versioning.
+/// Uses kind:version as the hash input (simplified approach).
+fn compute_content_hash(kind: &str, version: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash_source = format!("{}:{}", kind, version);
+    let mut hasher = Sha256::new();
+    hasher.update(hash_source.as_bytes());
+    let result = hasher.finalize();
+    hex::encode(result)
 }
 
 /// Convert TaskMetadata to protobuf TaskCapability
@@ -282,6 +310,7 @@ mod tests {
             tags: vec!["order".to_string(), "payment".to_string()],
             cancellable: true,
             timeout_seconds: Some(300),
+            content_hash: None,
         };
 
         let proto = workflow_to_proto(metadata);
@@ -293,6 +322,8 @@ mod tests {
         assert!(proto.cancellable);
         assert_eq!(proto.timeout_seconds, Some(300));
         assert_eq!(proto.tags, vec!["order", "payment"]);
+        // Content hash should be generated
+        assert!(!proto.content_hash.is_empty());
     }
 
     #[test]
@@ -305,6 +336,7 @@ mod tests {
             tags: vec![],
             cancellable: false,
             timeout_seconds: None,
+            content_hash: None,
         };
 
         let proto = workflow_to_proto(metadata);
@@ -312,10 +344,12 @@ mod tests {
         assert_eq!(proto.kind, "simple-workflow");
         assert_eq!(proto.name, "Simple Workflow");
         assert_eq!(proto.description, "");
-        assert_eq!(proto.version, "0.0.0");
+        assert_eq!(proto.version, "1.0.0"); // Default version changed to 1.0.0
         assert!(!proto.cancellable);
         assert_eq!(proto.timeout_seconds, None);
         assert!(proto.tags.is_empty());
+        // Content hash should be generated even without explicit version
+        assert!(!proto.content_hash.is_empty());
     }
 
     #[test]

@@ -36,6 +36,8 @@ pub struct TaskWorkerConfig {
     pub space_id: Option<Uuid>,
     /// Enable automatic worker registration on startup
     pub enable_auto_registration: bool,
+    /// Worker token for gRPC authentication
+    pub worker_token: String,
 }
 
 impl Default for TaskWorkerConfig {
@@ -51,6 +53,7 @@ impl Default for TaskWorkerConfig {
             worker_version: "1.0.0".to_string(),
             space_id: None,
             enable_auto_registration: true,
+            worker_token: String::new(),
         }
     }
 }
@@ -75,12 +78,13 @@ impl TaskExecutorWorker {
     pub fn new(config: TaskWorkerConfig, registry: Arc<TaskRegistry>, channel: Channel) -> Self {
         let executor_config = TaskExecutorConfig::default();
         let executor = TaskExecutor::new(registry.clone(), executor_config);
+        let client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
 
         Self {
             config,
             registry,
             executor,
-            client: TaskExecutionClient::new(channel.clone()),
+            client,
             channel,
             running: Arc::new(AtomicBool::new(false)),
             shutdown_tx: None,
@@ -120,7 +124,7 @@ impl TaskExecutorWorker {
             "Registering task worker with server"
         );
 
-        let mut lifecycle_client = WorkerLifecycleClient::new(self.channel.clone());
+        let mut lifecycle_client = WorkerLifecycleClient::new(self.channel.clone(), &self.config.worker_token);
 
         let result = lifecycle_client
             .register_worker(
@@ -154,6 +158,7 @@ impl TaskExecutorWorker {
     /// Run heartbeat loop
     async fn heartbeat_loop(
         channel: Channel,
+        worker_token: String,
         server_worker_id: Option<Uuid>,
         heartbeat_interval: Duration,
         running: Arc<AtomicBool>,
@@ -164,7 +169,7 @@ impl TaskExecutorWorker {
         }
 
         let worker_id = server_worker_id.unwrap();
-        let mut client = WorkerLifecycleClient::new(channel);
+        let mut client = WorkerLifecycleClient::new(channel, &worker_token);
 
         while running.load(Ordering::SeqCst) {
             tokio::time::sleep(heartbeat_interval).await;
@@ -206,12 +211,14 @@ impl TaskExecutorWorker {
         // Start heartbeat loop in background
         let heartbeat_running = self.running.clone();
         let heartbeat_channel = self.channel.clone();
+        let heartbeat_worker_token = self.config.worker_token.clone();
         let heartbeat_worker_id = self.server_worker_id;
         let heartbeat_interval = self.config.heartbeat_interval;
 
         tokio::spawn(async move {
             Self::heartbeat_loop(
                 heartbeat_channel,
+                heartbeat_worker_token,
                 heartbeat_worker_id,
                 heartbeat_interval,
                 heartbeat_running,

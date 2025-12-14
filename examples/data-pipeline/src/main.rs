@@ -42,6 +42,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(9090);
+    let worker_token = std::env::var("FLOVYN_WORKER_TOKEN")
+        .expect("FLOVYN_WORKER_TOKEN environment variable is required");
 
     info!(
         tenant_id = %tenant_id,
@@ -53,6 +55,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let client = FlovynClient::builder()
         .server_address(&server_host, server_port)
         .tenant_id(tenant_id)
+        .worker_token(worker_token)
         .task_queue("data-pipeline")
         .max_concurrent_workflows(5)
         .max_concurrent_tasks(20)

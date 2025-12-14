@@ -45,6 +45,10 @@ parking_lot = "0.12"
 # System info
 hostname = "0.4"
 
+# Hashing
+sha2 = "0.10"
+hex = "0.4"
+
 [dev-dependencies]
 # Testing
 tokio-test = "0.4"

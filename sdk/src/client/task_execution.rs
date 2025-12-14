@@ -1,32 +1,29 @@
 //! TaskExecution client wrapper
 
+use crate::client::auth::WorkerTokenInterceptor;
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::task_execution_client::TaskExecutionClient as GrpcTaskExecutionClient;
 use serde_json::Value;
 use std::time::Duration;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+/// Type alias for authenticated client
+type AuthClient = GrpcTaskExecutionClient<InterceptedService<Channel, WorkerTokenInterceptor>>;
+
 /// Client for task execution operations
-#[derive(Debug, Clone)]
 pub struct TaskExecutionClient {
-    inner: GrpcTaskExecutionClient<Channel>,
+    inner: AuthClient,
 }
 
 impl TaskExecutionClient {
-    /// Connect to the server at the given endpoint
-    pub async fn connect(endpoint: &str) -> Result<Self> {
-        let client = GrpcTaskExecutionClient::connect(endpoint.to_string())
-            .await
-            .map_err(|e| FlovynError::NetworkError(e.to_string()))?;
-        Ok(Self { inner: client })
-    }
-
-    /// Create from an existing channel
-    pub fn new(channel: Channel) -> Self {
+    /// Create from a channel with worker token authentication
+    pub fn new(channel: Channel, token: &str) -> Self {
+        let interceptor = WorkerTokenInterceptor::new(token);
         Self {
-            inner: GrpcTaskExecutionClient::new(channel),
+            inner: GrpcTaskExecutionClient::with_interceptor(channel, interceptor),
         }
     }
 
