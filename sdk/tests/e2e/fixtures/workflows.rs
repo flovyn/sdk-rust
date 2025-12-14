@@ -242,3 +242,227 @@ impl DynamicWorkflow for TimerWorkflow {
         Ok(output)
     }
 }
+
+/// Workflow that waits for a promise to be resolved externally.
+pub struct PromiseWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for PromiseWorkflow {
+    fn kind(&self) -> &str {
+        "promise-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let promise_name = input
+            .get("promiseName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("approval");
+
+        // Wait for the promise to be resolved externally
+        let promise_value = ctx.promise_raw(promise_name).await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("promiseName".to_string(), Value::String(promise_name.to_string()));
+        output.insert("promiseValue".to_string(), promise_value);
+        Ok(output)
+    }
+}
+
+/// Workflow that waits for a promise with timeout.
+pub struct PromiseWithTimeoutWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for PromiseWithTimeoutWorkflow {
+    fn kind(&self) -> &str {
+        "promise-timeout-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let promise_name = input
+            .get("promiseName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("approval");
+        let timeout_ms = input
+            .get("timeoutMs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5000);
+
+        // Wait for the promise with timeout
+        let result = ctx
+            .promise_with_timeout_raw(promise_name, std::time::Duration::from_millis(timeout_ms))
+            .await;
+
+        let mut output = DynamicOutput::new();
+        output.insert("promiseName".to_string(), Value::String(promise_name.to_string()));
+        match result {
+            Ok(value) => {
+                output.insert("resolved".to_string(), Value::Bool(true));
+                output.insert("promiseValue".to_string(), value);
+            }
+            Err(e) => {
+                output.insert("resolved".to_string(), Value::Bool(false));
+                output.insert("error".to_string(), Value::String(e.to_string()));
+            }
+        }
+        Ok(output)
+    }
+}
+
+/// Workflow that schedules a child workflow.
+pub struct ParentWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ParentWorkflow {
+    fn kind(&self) -> &str {
+        "parent-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let child_input = input
+            .get("childInput")
+            .cloned()
+            .unwrap_or(Value::Object(DynamicInput::new()));
+
+        // Schedule a child workflow
+        let child_result = ctx
+            .schedule_workflow_raw("child-1", "child-workflow", child_input)
+            .await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("childResult".to_string(), child_result);
+        Ok(output)
+    }
+}
+
+/// Simple child workflow that doubles a value.
+pub struct ChildWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ChildWorkflow {
+    fn kind(&self) -> &str {
+        "child-workflow"
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let value = input.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+
+        let mut output = DynamicOutput::new();
+        output.insert("result".to_string(), Value::Number((value * 2).into()));
+        Ok(output)
+    }
+}
+
+/// Child workflow that always fails.
+pub struct FailingChildWorkflow {
+    pub message: String,
+}
+
+impl FailingChildWorkflow {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl Default for FailingChildWorkflow {
+    fn default() -> Self {
+        Self::new("Child workflow intentional failure")
+    }
+}
+
+#[async_trait]
+impl DynamicWorkflow for FailingChildWorkflow {
+    fn kind(&self) -> &str {
+        "failing-child-workflow"
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        Err(FlovynError::WorkflowFailed(self.message.clone()))
+    }
+}
+
+/// Parent workflow that schedules a failing child.
+pub struct ParentWithFailingChildWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ParentWithFailingChildWorkflow {
+    fn kind(&self) -> &str {
+        "parent-failing-child-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // Schedule a child workflow that will fail
+        let result = ctx
+            .schedule_workflow_raw("failing-child-1", "failing-child-workflow", serde_json::json!({}))
+            .await;
+
+        let mut output = DynamicOutput::new();
+        match result {
+            Ok(child_result) => {
+                output.insert("childSucceeded".to_string(), Value::Bool(true));
+                output.insert("childResult".to_string(), child_result);
+            }
+            Err(e) => {
+                output.insert("childSucceeded".to_string(), Value::Bool(false));
+                output.insert("childError".to_string(), Value::String(e.to_string()));
+            }
+        }
+        Ok(output)
+    }
+}
+
+/// Grandparent workflow that schedules a parent workflow.
+pub struct GrandparentWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for GrandparentWorkflow {
+    fn kind(&self) -> &str {
+        "grandparent-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let value = input.get("value").and_then(|v| v.as_i64()).unwrap_or(10);
+
+        // Schedule parent workflow which will schedule child workflow
+        let parent_result = ctx
+            .schedule_workflow_raw(
+                "parent-1",
+                "parent-workflow",
+                serde_json::json!({ "childInput": { "value": value } }),
+            )
+            .await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("parentResult".to_string(), parent_result);
+        Ok(output)
+    }
+}

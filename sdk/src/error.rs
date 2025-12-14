@@ -69,6 +69,10 @@ pub enum FlovynError {
     #[error("Promise timeout: {name}")]
     PromiseTimeout { name: String },
 
+    /// Promise rejected
+    #[error("Promise rejected: {name}: {error}")]
+    PromiseRejected { name: String, error: String },
+
     /// Timer error
     #[error("Timer error: {0}")]
     TimerError(String),

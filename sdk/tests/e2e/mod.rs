@@ -23,6 +23,10 @@ mod workflow_tests;
 mod task_tests;
 mod state_tests;
 mod timer_tests;
+mod promise_tests;
+mod child_workflow_tests;
+mod error_tests;
+mod concurrency_tests;
 
 pub use harness::TestHarness;
 

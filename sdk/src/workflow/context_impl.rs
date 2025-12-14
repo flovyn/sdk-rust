@@ -616,45 +616,54 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn promise_with_timeout_raw(&self, name: &str, timeout: Duration) -> Result<Value> {
-        let sequence = self.next_sequence();
         let timeout_ms = if timeout.as_secs() == u64::MAX {
             None
         } else {
             Some(timeout.as_millis() as i64)
         };
 
-        // Check existing events for replay
-        if let Some(event) = self.find_event(sequence, EventType::PromiseResolved) {
+        // Check for existing PROMISE_RESOLVED event (during replay) by promise name
+        if let Some(event) = self.find_event_by_field(EventType::PromiseResolved, "promiseName", name) {
             if let Some(value) = event.get("value") {
-                self.record_command(WorkflowCommand::CreatePromise {
-                    sequence_number: sequence,
-                    promise_id: name.to_string(),
-                    timeout_ms,
-                })?;
+                // Promise already resolved during replay - return immediately (no new command)
                 return Ok(value.clone());
             }
         }
 
-        // Check for timeout
-        if let Some(_event) = self.find_event(sequence, EventType::PromiseTimeout) {
-            self.record_command(WorkflowCommand::CreatePromise {
-                sequence_number: sequence,
-                promise_id: name.to_string(),
-                timeout_ms,
-            })?;
+        // Check for existing PROMISE_REJECTED event (during replay) by promise name
+        if let Some(event) = self.find_event_by_field(EventType::PromiseRejected, "promiseName", name) {
+            let error = event
+                .get_string("error")
+                .unwrap_or("Promise rejected")
+                .to_string();
+            return Err(FlovynError::PromiseRejected {
+                name: name.to_string(),
+                error,
+            });
+        }
+
+        // Check for timeout event (during replay) by promise name
+        if self.find_event_by_field(EventType::PromiseTimeout, "promiseName", name).is_some() {
+            // Promise already timed out during replay - return error (no new command)
             return Err(FlovynError::PromiseTimeout {
                 name: name.to_string(),
             });
         }
 
-        // Record command
-        self.record_command(WorkflowCommand::CreatePromise {
-            sequence_number: sequence,
-            promise_id: name.to_string(),
-            timeout_ms,
-        })?;
+        // Check for existing PROMISE_CREATED event (during replay)
+        let created_event = self.find_event_by_field(EventType::PromiseCreated, "promiseId", name);
 
-        // Check if already resolved
+        if created_event.is_none() {
+            // New promise - record CREATE_PROMISE command
+            let sequence = self.next_sequence();
+            self.record_command(WorkflowCommand::CreatePromise {
+                sequence_number: sequence,
+                promise_id: name.to_string(),
+                timeout_ms,
+            })?;
+        }
+
+        // Check if already resolved in pending_promises (for in-process testing)
         {
             let pending = self.pending_promises.read();
             if let Some(value) = pending.get(name) {
@@ -669,39 +678,51 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn schedule_workflow_raw(&self, name: &str, kind: &str, input: Value) -> Result<Value> {
-        let sequence = self.next_sequence();
-        let child_execution_id = self.random_uuid();
-
-        // Check existing events for replay
-        if let Some(event) = self.find_event(sequence, EventType::ChildWorkflowCompleted) {
-            if let Some(result) = event.get("result") {
-                self.record_command(WorkflowCommand::ScheduleChildWorkflow {
-                    sequence_number: sequence,
-                    name: name.to_string(),
-                    kind: Some(kind.to_string()),
-                    definition_id: None,
-                    child_execution_id,
-                    input,
-                    task_queue: "default".to_string(),
-                    priority_seconds: 0,
-                })?;
+        // Check for existing CHILD_WORKFLOW_COMPLETED event (during replay) by childExecutionName
+        if let Some(event) = self.find_event_by_field(EventType::ChildWorkflowCompleted, "childExecutionName", name) {
+            if let Some(result) = event.get("output") {
+                // Child workflow already completed during replay - return immediately (no new command)
                 return Ok(result.clone());
             }
         }
 
-        // Record command
-        self.record_command(WorkflowCommand::ScheduleChildWorkflow {
-            sequence_number: sequence,
-            name: name.to_string(),
-            kind: Some(kind.to_string()),
-            definition_id: None,
-            child_execution_id,
-            input,
-            task_queue: "default".to_string(),
-            priority_seconds: 0,
-        })?;
+        // Check for existing CHILD_WORKFLOW_FAILED event (during replay) by childExecutionName
+        if let Some(event) = self.find_event_by_field(EventType::ChildWorkflowFailed, "childExecutionName", name) {
+            let error = event
+                .get_string("error")
+                .unwrap_or("Child workflow failed")
+                .to_string();
+            let execution_id = event
+                .get_string("childworkflowExecutionId")
+                .unwrap_or("unknown")
+                .to_string();
+            return Err(FlovynError::ChildWorkflowFailed {
+                execution_id,
+                name: name.to_string(),
+                error,
+            });
+        }
 
-        // Check if already resolved
+        // Check for existing CHILD_WORKFLOW_INITIATED event (during replay)
+        let initiated_event = self.find_event_by_field(EventType::ChildWorkflowInitiated, "childExecutionName", name);
+
+        if initiated_event.is_none() {
+            // New child workflow - record SCHEDULE_CHILD_WORKFLOW command
+            let sequence = self.next_sequence();
+            let child_execution_id = self.random_uuid();
+            self.record_command(WorkflowCommand::ScheduleChildWorkflow {
+                sequence_number: sequence,
+                name: name.to_string(),
+                kind: Some(kind.to_string()),
+                definition_id: None,
+                child_execution_id,
+                input,
+                task_queue: "default".to_string(),
+                priority_seconds: 0,
+            })?;
+        }
+
+        // Check if already resolved in pending_child_workflows (for in-process testing)
         {
             let pending = self.pending_child_workflows.read();
             if let Some(result) = pending.get(name) {
@@ -1321,6 +1342,126 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_promise_returns_immediately_when_resolved_during_replay() {
+        use chrono::Utc;
+        // Create context with replay events showing promise was already created and resolved
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::PromiseCreated,
+                serde_json::json!({
+                    "promiseId": "user-approval",
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::PromiseResolved,
+                serde_json::json!({
+                    "promiseName": "user-approval",
+                    "value": {"approved": true, "approver": "admin"}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Since the promise was already resolved in replay, promise_raw should return immediately
+        let result = ctx.promise_raw("user-approval").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), serde_json::json!({"approved": true, "approver": "admin"}));
+
+        // No command should be recorded (we're replaying, not creating new commands)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_promise_returns_error_when_rejected_during_replay() {
+        use chrono::Utc;
+        // Create context with replay events showing promise was created and rejected
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::PromiseCreated,
+                serde_json::json!({
+                    "promiseId": "user-approval",
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::PromiseRejected,
+                serde_json::json!({
+                    "promiseName": "user-approval",
+                    "error": "Approval denied by supervisor"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Since the promise was rejected in replay, promise_raw should return error
+        let result = ctx.promise_raw("user-approval").await;
+        assert!(matches!(result, Err(FlovynError::PromiseRejected { name, error })
+            if name == "user-approval" && error == "Approval denied by supervisor"));
+
+        // No command should be recorded
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_promise_suspends_when_created_but_not_resolved_during_replay() {
+        use chrono::Utc;
+        // Create context with replay events showing promise was created but not resolved
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::PromiseCreated,
+                serde_json::json!({
+                    "promiseId": "user-approval",
+                }),
+                Utc::now(),
+            ),
+            // No PROMISE_RESOLVED event - promise is still pending
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Since the promise was created but not resolved, should suspend without recording new command
+        let result = ctx.promise_raw("user-approval").await;
+        assert!(matches!(result, Err(FlovynError::Suspended { reason }) if reason.contains("user-approval")));
+
+        // No command should be recorded (promise was already created)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_schedule_workflow_suspends() {
         let ctx = create_test_context();
 
@@ -1344,5 +1485,130 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, serde_json::json!({"completed": true}));
+    }
+
+    #[tokio::test]
+    async fn test_schedule_workflow_returns_immediately_when_completed_during_replay() {
+        use chrono::Utc;
+        // Create context with replay events showing child workflow was already initiated and completed
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::ChildWorkflowInitiated,
+                serde_json::json!({
+                    "childExecutionName": "payment-child",
+                    "childworkflowExecutionId": "child-123"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::ChildWorkflowCompleted,
+                serde_json::json!({
+                    "childExecutionName": "payment-child",
+                    "childworkflowExecutionId": "child-123",
+                    "output": {"payment": "confirmed", "amount": 100}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Since the child workflow was already completed in replay, schedule_workflow_raw should return immediately
+        let result = ctx.schedule_workflow_raw("payment-child", "payment-workflow", serde_json::json!({})).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), serde_json::json!({"payment": "confirmed", "amount": 100}));
+
+        // No command should be recorded (we're replaying, not creating new commands)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_schedule_workflow_returns_error_when_failed_during_replay() {
+        use chrono::Utc;
+        // Create context with replay events showing child workflow was initiated and failed
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::ChildWorkflowInitiated,
+                serde_json::json!({
+                    "childExecutionName": "payment-child",
+                    "childworkflowExecutionId": "child-123"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::ChildWorkflowFailed,
+                serde_json::json!({
+                    "childExecutionName": "payment-child",
+                    "childworkflowExecutionId": "child-123",
+                    "error": "Payment gateway unavailable"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Since the child workflow was already failed in replay, should return error
+        let result = ctx.schedule_workflow_raw("payment-child", "payment-workflow", serde_json::json!({})).await;
+        assert!(matches!(result, Err(FlovynError::ChildWorkflowFailed { name, error, .. })
+            if name == "payment-child" && error == "Payment gateway unavailable"));
+
+        // No command should be recorded
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_schedule_workflow_suspends_when_initiated_but_not_completed_during_replay() {
+        use chrono::Utc;
+        // Create context with replay events showing child workflow was initiated but not completed
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::ChildWorkflowInitiated,
+                serde_json::json!({
+                    "childExecutionName": "payment-child",
+                    "childworkflowExecutionId": "child-123"
+                }),
+                Utc::now(),
+            ),
+            // No CHILD_WORKFLOW_COMPLETED event - child workflow is still running
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({"test": true}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Since the child workflow was initiated but not completed, should suspend without recording new command
+        let result = ctx.schedule_workflow_raw("payment-child", "payment-workflow", serde_json::json!({})).await;
+        assert!(matches!(result, Err(FlovynError::Suspended { reason }) if reason.contains("payment-child")));
+
+        // No command should be recorded (child workflow was already initiated)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
     }
 }

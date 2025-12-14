@@ -99,6 +99,49 @@ class WorkflowContextImpl(...) {
 - `test_task_failed_returns_error` - Verifies task failure propagation
 - `test_schedule_raw_returns_completed_from_replay` - Verifies task replay
 
+## Promise Replay Fix (Applied 2025-12-14)
+
+The original fix addressed timers and tasks. The promise replay fix was later applied using the same pattern:
+
+### Changes Made
+
+1. **Look up events by promise name, not sequence**: Changed `find_event(sequence, ...)` to `find_event_by_field(EventType::*, "promiseName", name)`
+
+2. **Check for resolved/rejected events first**: Before recording commands, check if the promise was already resolved or rejected during replay
+
+3. **Skip command recording during replay**: Only record `CREATE_PROMISE` command if no `PROMISE_CREATED` event exists
+
+4. **Added `PromiseRejected` error variant**: New error type for handling rejected promises during replay
+
+### New Unit Tests Added
+
+- `test_promise_returns_immediately_when_resolved_during_replay`
+- `test_promise_returns_error_when_rejected_during_replay`
+- `test_promise_suspends_when_created_but_not_resolved_during_replay`
+
+## Child Workflow Replay Fix (Applied 2025-12-14)
+
+The child workflow scheduling had the same replay issue. Fixed using the same pattern:
+
+### Changes Made
+
+1. **Look up events by childExecutionName, not sequence**: Changed `find_event(sequence, ...)` to `find_event_by_field(EventType::*, "childExecutionName", name)`
+   - Server uses `childExecutionName` field (not `name`) in all child workflow events
+   - Server uses `output` field (not `result`) for completed child workflow results
+   - Server uses `childworkflowExecutionId` field for execution IDs
+
+2. **Use correct event types**: Use `ChildWorkflowInitiated` (not `ChildWorkflowStarted`) to check if a child workflow was already scheduled
+
+3. **Check for completed/failed events first**: Before recording commands, check if the child workflow was already completed or failed during replay
+
+4. **Skip command recording during replay**: Only record `SCHEDULE_CHILD_WORKFLOW` command if no `CHILD_WORKFLOW_INITIATED` event exists
+
+### New Unit Tests Added
+
+- `test_schedule_workflow_returns_immediately_when_completed_during_replay`
+- `test_schedule_workflow_returns_error_when_failed_during_replay`
+- `test_schedule_workflow_suspends_when_initiated_but_not_completed_during_replay`
+
 ## Related Files
 
 - Kotlin SDK reference: `sdk/kotlin/src/main/kotlin/ai/flovyn/sdk/kotlin/workflow/WorkflowContextImpl.kt`

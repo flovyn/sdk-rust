@@ -510,27 +510,54 @@ This prevents hanging tests from consuming CI minutes or blocking local developm
 - [x] Fix replay/sequence numbering issue
 - [x] Fix task scheduling (TaskSubmitter trait + GrpcTaskSubmitter)
 - [x] Fix worker ready race condition (notify_one vs notify_waiters)
-- [ ] Implement `tests/e2e/promise_tests.rs` (2 tests)
-- [ ] Implement `tests/e2e/child_workflow_tests.rs` (3 tests)
-- [ ] Implement `tests/e2e/replay_tests.rs` (3 tests)
-- [ ] Implement `tests/e2e/error_tests.rs` (2 tests)
-- [ ] Implement `tests/e2e/concurrency_tests.rs` (2 tests)
+- [x] Implement `tests/e2e/promise_tests.rs` (2 tests)
+- [x] Implement `tests/e2e/child_workflow_tests.rs` (3 tests)
+- [x] Implement `tests/e2e/error_tests.rs` (2 tests)
+- [x] Implement `tests/e2e/concurrency_tests.rs` (2 tests)
+- [x] Add workflows: PromiseWorkflow, PromiseWithTimeoutWorkflow, ParentWorkflow, ChildWorkflow, FailingChildWorkflow, ParentWithFailingChildWorkflow, GrandparentWorkflow
 - [ ] Add GitHub Actions workflow for E2E tests
 - [ ] Ensure Flovyn server Docker image is built in CI
 
+**Note**: `tests/e2e/replay_tests.rs` was not implemented as determinism violation detection is better tested at the unit level with controlled replay scenarios. The E2E tests focus on integration with the real server.
+
 ## Current Test Status
 
-All 10 E2E tests passing:
+All E2E tests implemented (19 tests total):
+
+**workflow_tests.rs** (5 tests):
 - `test_harness_setup` ✅
 - `test_simple_workflow_execution` ✅
 - `test_echo_workflow` ✅
 - `test_failing_workflow` ✅
 - `test_start_workflow_async` ✅
+
+**task_tests.rs** (2 tests):
 - `test_basic_task_scheduling` ✅
 - `test_multiple_sequential_tasks` ✅
+
+**state_tests.rs** (1 test):
 - `test_state_set_get` ✅
+
+**timer_tests.rs** (2 tests):
 - `test_durable_timer_sleep` ✅
 - `test_short_timer` ✅
+
+**promise_tests.rs** (2 tests):
+- `test_promise_resolve` ✅
+- `test_promise_reject` ✅
+
+**child_workflow_tests.rs** (3 tests):
+- `test_child_workflow_success` ✅
+- `test_child_workflow_failure` ✅
+- `test_nested_child_workflows` ✅
+
+**error_tests.rs** (2 tests):
+- `test_workflow_failure` ✅
+- `test_error_message_preserved` ✅
+
+**concurrency_tests.rs** (2 tests):
+- `test_concurrent_workflow_execution` ✅
+- `test_multiple_workers` ✅
 
 Run with:
 ```bash
