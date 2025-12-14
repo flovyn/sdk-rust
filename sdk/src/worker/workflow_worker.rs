@@ -416,6 +416,7 @@ impl WorkflowExecutorWorker {
     }
 
     /// Poll for a workflow and execute it
+    #[allow(clippy::too_many_arguments)]
     async fn poll_and_execute(
         client: &mut WorkflowDispatch,
         registry: Arc<WorkflowRegistry>,
