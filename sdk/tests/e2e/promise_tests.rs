@@ -59,7 +59,10 @@ async fn test_promise_resolve() {
         let output = result.output.as_ref().expect("Expected output");
         assert_eq!(output["promiseName"], json!("user-approval"));
         assert_eq!(output["promiseValue"]["approved"], json!(true));
-        assert_eq!(output["promiseValue"]["approver"], json!("admin@example.com"));
+        assert_eq!(
+            output["promiseValue"]["approver"],
+            json!("admin@example.com")
+        );
     })
     .await;
 }
@@ -96,18 +99,18 @@ async fn test_promise_reject() {
 
         // Reject the promise externally
         env.client()
-            .reject_promise(
-                workflow_id,
-                "approval",
-                "Request denied by admin",
-            )
+            .reject_promise(workflow_id, "approval", "Request denied by admin")
             .await
             .expect("Failed to reject promise");
 
         // Wait for PROMISE_REJECTED or WORKFLOW_EXECUTION_FAILED event
         let timeout = Duration::from_secs(20);
-        let rejected_event = env.await_event(workflow_id, "PROMISE_REJECTED", timeout).await;
-        let failed_event = env.await_event(workflow_id, "WORKFLOW_EXECUTION_FAILED", timeout).await;
+        let rejected_event = env
+            .await_event(workflow_id, "PROMISE_REJECTED", timeout)
+            .await;
+        let failed_event = env
+            .await_event(workflow_id, "WORKFLOW_EXECUTION_FAILED", timeout)
+            .await;
 
         // Verify we have a rejection/failure event
         assert!(

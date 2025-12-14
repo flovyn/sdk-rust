@@ -2,7 +2,10 @@
 //!
 //! These tests verify child workflow scheduling and execution against a real server.
 
-use crate::fixtures::workflows::{ChildWorkflow, GrandparentWorkflow, ParentWithFailingChildWorkflow, ParentWorkflow, FailingChildWorkflow};
+use crate::fixtures::workflows::{
+    ChildWorkflow, FailingChildWorkflow, GrandparentWorkflow, ParentWithFailingChildWorkflow,
+    ParentWorkflow,
+};
 use crate::test_env::E2ETestEnvBuilder;
 use crate::with_timeout;
 use serde_json::json;
@@ -17,31 +20,38 @@ use std::time::Duration;
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_child_workflow_success() {
-    with_timeout(Duration::from_secs(60), "test_child_workflow_success", async {
-        let env = E2ETestEnvBuilder::new("e2e-child-workflow-worker")
-            .await
-            .register_workflow(ParentWorkflow)
-            .register_workflow(ChildWorkflow)
-            .build_and_start()
-            .await;
+    with_timeout(
+        Duration::from_secs(60),
+        "test_child_workflow_success",
+        async {
+            let env = E2ETestEnvBuilder::new("e2e-child-workflow-worker")
+                .await
+                .register_workflow(ParentWorkflow)
+                .register_workflow(ChildWorkflow)
+                .build_and_start()
+                .await;
 
-        // Start parent workflow with child input
-        let result = env
-            .start_and_await(
-                "parent-workflow",
-                json!({
-                    "childInput": {
-                        "value": 21
-                    }
-                }),
-            )
-            .await
-            .expect("Workflow execution failed");
+            // Start parent workflow with child input
+            let result = env
+                .start_and_await(
+                    "parent-workflow",
+                    json!({
+                        "childInput": {
+                            "value": 21
+                        }
+                    }),
+                )
+                .await
+                .expect("Workflow execution failed");
 
-        // Parent should have the child's result (21 * 2 = 42)
-        assert!(result.get("childResult").is_some(), "Expected childResult in output");
-        assert_eq!(result["childResult"]["result"], json!(42));
-    })
+            // Parent should have the child's result (21 * 2 = 42)
+            assert!(
+                result.get("childResult").is_some(),
+                "Expected childResult in output"
+            );
+            assert_eq!(result["childResult"]["result"], json!(42));
+        },
+    )
     .await;
 }
 
@@ -54,24 +64,31 @@ async fn test_child_workflow_success() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_child_workflow_failure() {
-    with_timeout(Duration::from_secs(60), "test_child_workflow_failure", async {
-        let env = E2ETestEnvBuilder::new("e2e-failing-child-worker")
-            .await
-            .register_workflow(ParentWithFailingChildWorkflow)
-            .register_workflow(FailingChildWorkflow::default())
-            .build_and_start()
-            .await;
+    with_timeout(
+        Duration::from_secs(60),
+        "test_child_workflow_failure",
+        async {
+            let env = E2ETestEnvBuilder::new("e2e-failing-child-worker")
+                .await
+                .register_workflow(ParentWithFailingChildWorkflow)
+                .register_workflow(FailingChildWorkflow::default())
+                .build_and_start()
+                .await;
 
-        // Start parent workflow
-        let result = env
-            .start_and_await("parent-failing-child-workflow", json!({}))
-            .await
-            .expect("Parent workflow should complete (handling child error)");
+            // Start parent workflow
+            let result = env
+                .start_and_await("parent-failing-child-workflow", json!({}))
+                .await
+                .expect("Parent workflow should complete (handling child error)");
 
-        // Parent should report child failure
-        assert_eq!(result["childSucceeded"], json!(false));
-        assert!(result.get("childError").is_some(), "Expected childError in output");
-    })
+            // Parent should report child failure
+            assert_eq!(result["childSucceeded"], json!(false));
+            assert!(
+                result.get("childError").is_some(),
+                "Expected childError in output"
+            );
+        },
+    )
     .await;
 }
 
@@ -110,8 +127,14 @@ async fn test_nested_child_workflows() {
 
         // Result should have nested structure from parent
         // Grandparent -> Parent -> Child (value * 2 = 20)
-        assert!(result.get("parentResult").is_some(), "Expected parentResult in output");
-        assert!(result["parentResult"].get("childResult").is_some(), "Expected childResult in parentResult");
+        assert!(
+            result.get("parentResult").is_some(),
+            "Expected parentResult in output"
+        );
+        assert!(
+            result["parentResult"].get("childResult").is_some(),
+            "Expected childResult in parentResult"
+        );
         assert_eq!(result["parentResult"]["childResult"]["result"], json!(20));
     })
     .await;

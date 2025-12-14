@@ -44,11 +44,7 @@ async fn test_concurrent_workflow_execution() {
         for i in 0..num_workflows {
             let options = StartWorkflowOptions::new().with_workflow_version("1.0.0");
             let result = client
-                .start_workflow_with_options(
-                    "doubler-workflow",
-                    json!({ "value": i }),
-                    options,
-                )
+                .start_workflow_with_options("doubler-workflow", json!({ "value": i }), options)
                 .await
                 .expect("Failed to start workflow");
             workflow_ids.push((i, result.workflow_execution_id));
@@ -83,9 +79,7 @@ async fn test_concurrent_workflow_execution() {
                     .await
                     .expect("Failed to get events");
 
-                let completion = events
-                    .iter()
-                    .find(|e| e.event_type == "WORKFLOW_COMPLETED");
+                let completion = events.iter().find(|e| e.event_type == "WORKFLOW_COMPLETED");
 
                 if let Some(event) = completion {
                     // Verify result is correct (input * 2)
@@ -213,9 +207,7 @@ async fn test_multiple_workers() {
                     .await
                     .expect("Failed to get events");
 
-                let completion = events
-                    .iter()
-                    .find(|e| e.event_type == "WORKFLOW_COMPLETED");
+                let completion = events.iter().find(|e| e.event_type == "WORKFLOW_COMPLETED");
 
                 if let Some(event) = completion {
                     if let Some(output) = event.payload.get("output") {

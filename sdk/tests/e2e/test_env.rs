@@ -24,9 +24,11 @@
 //! }
 //! ```
 
-use crate::harness::TestHarness;
 use crate::get_harness;
-use flovyn_sdk::client::{FlovynClient, FlovynClientBuilder, StartWorkflowOptions, WorkerHandle, WorkflowEvent};
+use crate::harness::TestHarness;
+use flovyn_sdk::client::{
+    FlovynClient, FlovynClientBuilder, StartWorkflowOptions, WorkerHandle, WorkflowEvent,
+};
 use flovyn_sdk::{TaskDefinition, WorkflowDefinition};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -94,7 +96,10 @@ impl E2ETestEnvironment {
 
     /// Start the worker and wait for it to be ready.
     pub async fn start_worker(&mut self) -> &mut Self {
-        let client = self.client.as_ref().expect("Client not built. Call build_client first.");
+        let client = self
+            .client
+            .as_ref()
+            .expect("Client not built. Call build_client first.");
         let handle = client.start().await.expect("Failed to start worker");
         handle.await_ready().await;
 
@@ -113,7 +118,8 @@ impl E2ETestEnvironment {
     /// Start a workflow without waiting for completion.
     pub async fn start_workflow(&self, kind: &str, input: Value) -> Uuid {
         let options = StartWorkflowOptions::new().with_workflow_version("1.0.0");
-        let result = self.client()
+        let result = self
+            .client()
             .start_workflow_with_options(kind, input, options)
             .await
             .expect("Failed to start workflow");
@@ -122,7 +128,8 @@ impl E2ETestEnvironment {
 
     /// Start a workflow and wait for it to complete (uses FlovynClient's built-in method).
     pub async fn start_and_await(&self, kind: &str, input: Value) -> Result<Value, String> {
-        self.start_and_await_with_timeout(kind, input, DEFAULT_AWAIT_TIMEOUT).await
+        self.start_and_await_with_timeout(kind, input, DEFAULT_AWAIT_TIMEOUT)
+            .await
     }
 
     /// Start a workflow and wait for completion with custom timeout.
@@ -141,7 +148,8 @@ impl E2ETestEnvironment {
 
     /// Poll for workflow completion and return full result with events.
     pub async fn await_completion(&self, workflow_id: Uuid) -> WorkflowResult {
-        self.await_completion_with_timeout(workflow_id, DEFAULT_AWAIT_TIMEOUT).await
+        self.await_completion_with_timeout(workflow_id, DEFAULT_AWAIT_TIMEOUT)
+            .await
     }
 
     /// Poll for workflow completion with custom timeout.
@@ -163,7 +171,8 @@ impl E2ETestEnvironment {
                 };
             }
 
-            let events = self.client()
+            let events = self
+                .client()
                 .get_workflow_events(workflow_id)
                 .await
                 .unwrap_or_default();
@@ -180,8 +189,13 @@ impl E2ETestEnvironment {
             }
 
             // Check for failure
-            if let Some(event) = events.iter().find(|e| e.event_type == "WORKFLOW_EXECUTION_FAILED") {
-                let error = event.payload.get("error")
+            if let Some(event) = events
+                .iter()
+                .find(|e| e.event_type == "WORKFLOW_EXECUTION_FAILED")
+            {
+                let error = event
+                    .payload
+                    .get("error")
                     .and_then(|e| e.as_str())
                     .map(|s| s.to_string());
                 return WorkflowResult {
@@ -211,7 +225,8 @@ impl E2ETestEnvironment {
                 return None;
             }
 
-            let events = self.client()
+            let events = self
+                .client()
                 .get_workflow_events(workflow_id)
                 .await
                 .unwrap_or_default();
@@ -251,7 +266,10 @@ impl E2ETestEnvironment {
 
     /// Assert that workflow output contains expected key-value.
     pub fn assert_output(&self, result: &WorkflowResult, key: &str, expected: &Value) {
-        let output = result.output.as_ref().expect("Workflow output should not be None");
+        let output = result
+            .output
+            .as_ref()
+            .expect("Workflow output should not be None");
         assert_eq!(
             output.get(key),
             Some(expected),
@@ -264,7 +282,10 @@ impl E2ETestEnvironment {
 
     /// Assert that workflow output equals expected value.
     pub fn assert_output_eq(&self, result: &WorkflowResult, expected: &Value) {
-        let output = result.output.as_ref().expect("Workflow output should not be None");
+        let output = result
+            .output
+            .as_ref()
+            .expect("Workflow output should not be None");
         assert_eq!(output, expected, "Output mismatch");
     }
 
@@ -305,10 +326,7 @@ impl E2ETestEnvBuilder {
             .worker_token(harness.worker_token())
             .worker_id(worker_id);
 
-        Self {
-            harness,
-            builder,
-        }
+        Self { harness, builder }
     }
 
     /// Register a typed workflow definition.
@@ -335,7 +353,8 @@ impl E2ETestEnvBuilder {
 
     /// Build the client and start the worker.
     pub async fn build_and_start(self) -> E2ETestEnvironment {
-        let client = self.builder
+        let client = self
+            .builder
             .build()
             .await
             .expect("Failed to build FlovynClient");
@@ -353,4 +372,3 @@ impl E2ETestEnvBuilder {
         }
     }
 }
-

@@ -124,7 +124,8 @@ impl TaskExecutorWorker {
             "Registering task worker with server"
         );
 
-        let mut lifecycle_client = WorkerLifecycleClient::new(self.channel.clone(), &self.config.worker_token);
+        let mut lifecycle_client =
+            WorkerLifecycleClient::new(self.channel.clone(), &self.config.worker_token);
 
         let result = lifecycle_client
             .register_worker(

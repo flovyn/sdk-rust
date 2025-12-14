@@ -44,10 +44,7 @@ impl TestHarness {
         let server: ContainerAsync<GenericImage> = server_image
             .with_env_var(
                 "SPRING_DATASOURCE_URL",
-                format!(
-                    "jdbc:postgresql://host.docker.internal:{}/flovyn",
-                    pg_port
-                ),
+                format!("jdbc:postgresql://host.docker.internal:{}/flovyn", pg_port),
             )
             .with_env_var("SPRING_DATASOURCE_USERNAME", "flovyn")
             .with_env_var("SPRING_DATASOURCE_PASSWORD", "flovyn")

@@ -63,7 +63,10 @@ async fn test_workflow_failure() {
 
             if let Some(event) = failure_event {
                 // Verify the error information is present
-                assert!(event.payload.get("error").is_some(), "Expected error in failure event");
+                assert!(
+                    event.payload.get("error").is_some(),
+                    "Expected error in failure event"
+                );
                 break;
             }
 

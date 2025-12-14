@@ -226,15 +226,13 @@ impl DynamicWorkflow for TimerWorkflow {
         let start_time = ctx.current_time_millis();
 
         // Sleep using durable timer
-        ctx.sleep(std::time::Duration::from_millis(sleep_ms)).await?;
+        ctx.sleep(std::time::Duration::from_millis(sleep_ms))
+            .await?;
 
         let end_time = ctx.current_time_millis();
 
         let mut output = DynamicOutput::new();
-        output.insert(
-            "sleptMs".to_string(),
-            Value::Number(sleep_ms.into()),
-        );
+        output.insert("sleptMs".to_string(), Value::Number(sleep_ms.into()));
         output.insert(
             "elapsedMs".to_string(),
             Value::Number((end_time - start_time).into()),
@@ -266,7 +264,10 @@ impl DynamicWorkflow for PromiseWorkflow {
         let promise_value = ctx.promise_raw(promise_name).await?;
 
         let mut output = DynamicOutput::new();
-        output.insert("promiseName".to_string(), Value::String(promise_name.to_string()));
+        output.insert(
+            "promiseName".to_string(),
+            Value::String(promise_name.to_string()),
+        );
         output.insert("promiseValue".to_string(), promise_value);
         Ok(output)
     }
@@ -301,7 +302,10 @@ impl DynamicWorkflow for PromiseWithTimeoutWorkflow {
             .await;
 
         let mut output = DynamicOutput::new();
-        output.insert("promiseName".to_string(), Value::String(promise_name.to_string()));
+        output.insert(
+            "promiseName".to_string(),
+            Value::String(promise_name.to_string()),
+        );
         match result {
             Ok(value) => {
                 output.insert("resolved".to_string(), Value::Bool(true));
@@ -418,7 +422,11 @@ impl DynamicWorkflow for ParentWithFailingChildWorkflow {
     ) -> Result<DynamicOutput> {
         // Schedule a child workflow that will fail
         let result = ctx
-            .schedule_workflow_raw("failing-child-1", "failing-child-workflow", serde_json::json!({}))
+            .schedule_workflow_raw(
+                "failing-child-1",
+                "failing-child-workflow",
+                serde_json::json!({}),
+            )
             .await;
 
         let mut output = DynamicOutput::new();

@@ -307,10 +307,11 @@ impl FlovynClient {
         };
 
         let interceptor = crate::client::auth::WorkerTokenInterceptor::new(&self.worker_token);
-        let mut client = flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
-            self.channel.clone(),
-            interceptor,
-        );
+        let mut client =
+            flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
+                self.channel.clone(),
+                interceptor,
+            );
 
         client
             .resolve_promise(request)
@@ -335,10 +336,11 @@ impl FlovynClient {
         };
 
         let interceptor = crate::client::auth::WorkerTokenInterceptor::new(&self.worker_token);
-        let mut client = flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
-            self.channel.clone(),
-            interceptor,
-        );
+        let mut client =
+            flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
+                self.channel.clone(),
+                interceptor,
+            );
 
         client
             .reject_promise(request)

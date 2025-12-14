@@ -94,7 +94,11 @@ async fn test_failing_workflow() {
 
         // Wait for a WORKFLOW_EXECUTION_FAILED event
         let event = env
-            .await_event(workflow_id, "WORKFLOW_EXECUTION_FAILED", Duration::from_secs(10))
+            .await_event(
+                workflow_id,
+                "WORKFLOW_EXECUTION_FAILED",
+                Duration::from_secs(10),
+            )
             .await
             .expect("Workflow failure event not found within timeout");
 
@@ -125,7 +129,9 @@ async fn test_start_workflow_async() {
             .await;
 
         // Start workflow without waiting
-        let workflow_id = env.start_workflow("doubler-workflow", json!({"value": 100})).await;
+        let workflow_id = env
+            .start_workflow("doubler-workflow", json!({"value": 100}))
+            .await;
 
         // Verify we got a valid workflow execution ID
         assert!(!workflow_id.is_nil());

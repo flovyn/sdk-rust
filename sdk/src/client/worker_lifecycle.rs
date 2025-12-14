@@ -16,8 +16,9 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 /// Type alias for authenticated client
-type AuthClient =
-    flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient<InterceptedService<Channel, WorkerTokenInterceptor>>;
+type AuthClient = flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient<
+    InterceptedService<Channel, WorkerTokenInterceptor>,
+>;
 
 /// Worker types for registration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,9 +208,9 @@ fn workflow_to_proto(metadata: WorkflowMetadata) -> WorkflowCapability {
         .unwrap_or_else(|| "1.0.0".to_string());
 
     // Use the content hash from metadata, or generate one from kind:version
-    let content_hash = metadata.content_hash.unwrap_or_else(|| {
-        compute_content_hash(&metadata.kind, &version)
-    });
+    let content_hash = metadata
+        .content_hash
+        .unwrap_or_else(|| compute_content_hash(&metadata.kind, &version));
 
     WorkflowCapability {
         kind: metadata.kind,

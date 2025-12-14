@@ -17,20 +17,20 @@
 //! - Flovyn server Docker image must be available (`flovyn-server-test:latest`)
 //! - Dev infrastructure running (PostgreSQL on 5435, NATS on 4222)
 
-mod harness;
-mod fixtures;
-mod test_env;
-mod workflow_tests;
-mod task_tests;
-mod state_tests;
-mod timer_tests;
-mod promise_tests;
 mod child_workflow_tests;
-mod error_tests;
 mod concurrency_tests;
+mod error_tests;
+mod fixtures;
+mod harness;
+mod promise_tests;
+mod state_tests;
+mod task_tests;
+mod test_env;
+mod timer_tests;
+mod workflow_tests;
 
 pub use harness::TestHarness;
-pub use test_env::{E2ETestEnvironment, E2ETestEnvBuilder, WorkflowResult, WorkflowStatus};
+pub use test_env::{E2ETestEnvBuilder, E2ETestEnvironment, WorkflowResult, WorkflowStatus};
 
 use std::time::Duration;
 use tokio::sync::OnceCell;
