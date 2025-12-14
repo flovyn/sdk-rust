@@ -19,7 +19,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        rust: [stable]
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +28,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: "1.92.0"
           components: rustfmt, clippy
 
       - name: Cache cargo registry
@@ -60,8 +59,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.92.0"
           components: rustfmt, clippy
 
       - name: Check formatting
@@ -81,7 +81,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
 
       - name: Build documentation
         run: cargo doc --no-deps --workspace
