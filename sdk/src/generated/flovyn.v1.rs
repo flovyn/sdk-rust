@@ -82,9 +82,7 @@ pub struct WorkflowExecution {
     /// Workflow definition snapshot (Phase 9: Version Locking)
     /// Cached JSON definition for version isolation (visual workflows only)
     #[prost(string, optional, tag = "13")]
-    pub workflow_definition_snapshot: ::core::option::Option<
-        ::prost::alloc::string::String,
-    >,
+    pub workflow_definition_snapshot: ::core::option::Option<::prost::alloc::string::String>,
     /// Time when this workflow task was created (milliseconds since epoch)
     /// Used for deterministic ctx.currentTimeMillis()
     /// This value is consistent across replays for the same workflow task
@@ -114,10 +112,8 @@ pub struct StartWorkflowRequest {
     #[prost(bytes = "vec", tag = "3")]
     pub input: ::prost::alloc::vec::Vec<u8>,
     #[prost(map = "string, string", tag = "4")]
-    pub labels: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub labels:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// Task queue routing (default: "default")
     #[prost(string, tag = "5")]
     pub task_queue: ::prost::alloc::string::String,
@@ -127,9 +123,7 @@ pub struct StartWorkflowRequest {
     #[prost(string, optional, tag = "7")]
     pub workflow_definition_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "8")]
-    pub parent_workflow_execution_id: ::core::option::Option<
-        ::prost::alloc::string::String,
-    >,
+    pub parent_workflow_execution_id: ::core::option::Option<::prost::alloc::string::String>,
     /// Workflow version selection (Phase 9: Version Locking)
     /// For code-first: semantic version (e.g., "1.0.0"), empty = latest/default
     /// For visual: version number as string (e.g., "1", "2"), empty = latest
@@ -199,9 +193,8 @@ pub struct StartChildWorkflowRequest {
         oneof = "start_child_workflow_request::WorkflowExecutionIdentifier",
         tags = "4, 5"
     )]
-    pub workflow_execution_identifier: ::core::option::Option<
-        start_child_workflow_request::WorkflowExecutionIdentifier,
-    >,
+    pub workflow_execution_identifier:
+        ::core::option::Option<start_child_workflow_request::WorkflowExecutionIdentifier>,
 }
 /// Nested message and enum types in `StartChildWorkflowRequest`.
 pub mod start_child_workflow_request {
@@ -293,10 +286,8 @@ pub struct SubmitTaskRequest {
     #[prost(bytes = "vec", tag = "4")]
     pub input: ::prost::alloc::vec::Vec<u8>,
     #[prost(map = "string, string", tag = "5")]
-    pub labels: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub labels:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(int32, tag = "6")]
     pub max_retries: i32,
     #[prost(int64, tag = "7")]
@@ -334,10 +325,8 @@ pub struct PollTaskRequest {
     #[prost(string, tag = "2")]
     pub tenant_id: ::prost::alloc::string::String,
     #[prost(map = "string, string", tag = "3")]
-    pub worker_labels: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub worker_labels:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(int64, tag = "4")]
     pub timeout_seconds: i64,
     /// Queue to poll tasks from (default: "default")
@@ -931,8 +920,8 @@ impl WorkflowStatus {
 /// Generated client implementations.
 pub mod workflow_dispatch_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     #[derive(Debug, Clone)]
     pub struct WorkflowDispatchClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -976,9 +965,8 @@ pub mod workflow_dispatch_client {
                     <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
+                Into<StdError> + Send + Sync,
         {
             WorkflowDispatchClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1019,22 +1007,20 @@ pub mod workflow_dispatch_client {
             &mut self,
             request: impl tonic::IntoRequest<super::PollRequest>,
         ) -> std::result::Result<tonic::Response<super::PollResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkflowDispatch/PollWorkflow",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkflowDispatch/PollWorkflow");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("flovyn.v1.WorkflowDispatch", "PollWorkflow"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "PollWorkflow",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Subscribe to work-available notifications (server-to-client stream)
@@ -1046,114 +1032,91 @@ pub mod workflow_dispatch_client {
             tonic::Response<tonic::codec::Streaming<super::WorkAvailableEvent>>,
             tonic::Status,
         > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/flovyn.v1.WorkflowDispatch/SubscribeToNotifications",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new(
-                        "flovyn.v1.WorkflowDispatch",
-                        "SubscribeToNotifications",
-                    ),
-                );
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "SubscribeToNotifications",
+            ));
             self.inner.server_streaming(req, path, codec).await
         }
         /// Start workflow programmatically
         pub async fn start_workflow(
             &mut self,
             request: impl tonic::IntoRequest<super::StartWorkflowRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::StartWorkflowResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::StartWorkflowResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkflowDispatch/StartWorkflow",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkflowDispatch/StartWorkflow");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("flovyn.v1.WorkflowDispatch", "StartWorkflow"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "StartWorkflow",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Get visual workflow definition by ID (for lazy loading)
         pub async fn get_visual_workflow_definition_by_id(
             &mut self,
-            request: impl tonic::IntoRequest<
-                super::GetVisualWorkflowDefinitionByIdRequest,
-            >,
+            request: impl tonic::IntoRequest<super::GetVisualWorkflowDefinitionByIdRequest>,
         ) -> std::result::Result<
             tonic::Response<super::GetVisualWorkflowDefinitionByIdResponse>,
             tonic::Status,
         > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/flovyn.v1.WorkflowDispatch/GetVisualWorkflowDefinitionById",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new(
-                        "flovyn.v1.WorkflowDispatch",
-                        "GetVisualWorkflowDefinitionById",
-                    ),
-                );
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "GetVisualWorkflowDefinitionById",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Start a child workflow
         pub async fn start_child_workflow(
             &mut self,
             request: impl tonic::IntoRequest<super::StartChildWorkflowRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::StartChildWorkflowResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::StartChildWorkflowResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/flovyn.v1.WorkflowDispatch/StartChildWorkflow",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("flovyn.v1.WorkflowDispatch", "StartChildWorkflow"),
-                );
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "StartChildWorkflow",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Resolve a durable promise
@@ -1161,22 +1124,20 @@ pub mod workflow_dispatch_client {
             &mut self,
             request: impl tonic::IntoRequest<super::ResolvePromiseRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkflowDispatch/ResolvePromise",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkflowDispatch/ResolvePromise");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("flovyn.v1.WorkflowDispatch", "ResolvePromise"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "ResolvePromise",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Reject a durable promise
@@ -1184,45 +1145,36 @@ pub mod workflow_dispatch_client {
             &mut self,
             request: impl tonic::IntoRequest<super::RejectPromiseRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkflowDispatch/RejectPromise",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkflowDispatch/RejectPromise");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("flovyn.v1.WorkflowDispatch", "RejectPromise"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "RejectPromise",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Get workflow events (for replay)
         pub async fn get_events(
             &mut self,
             request: impl tonic::IntoRequest<super::GetEventsRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::GetEventsResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::GetEventsResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkflowDispatch/GetEvents",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkflowDispatch/GetEvents");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.WorkflowDispatch", "GetEvents"));
@@ -1233,27 +1185,21 @@ pub mod workflow_dispatch_client {
             &mut self,
             request: impl tonic::IntoRequest<super::SubmitWorkflowCommandsRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/flovyn.v1.WorkflowDispatch/SubmitWorkflowCommands",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new(
-                        "flovyn.v1.WorkflowDispatch",
-                        "SubmitWorkflowCommands",
-                    ),
-                );
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "SubmitWorkflowCommands",
+            ));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -1261,8 +1207,8 @@ pub mod workflow_dispatch_client {
 /// Generated client implementations.
 pub mod workflow_query_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     #[derive(Debug, Clone)]
     pub struct WorkflowQueryClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -1306,9 +1252,8 @@ pub mod workflow_query_client {
                     <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
+                Into<StdError> + Send + Sync,
         {
             WorkflowQueryClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1347,23 +1292,17 @@ pub mod workflow_query_client {
         pub async fn query_workflow(
             &mut self,
             request: impl tonic::IntoRequest<super::QueryWorkflowRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::QueryWorkflowResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::QueryWorkflowResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkflowQuery/QueryWorkflow",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkflowQuery/QueryWorkflow");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.WorkflowQuery", "QueryWorkflow"));
@@ -1374,8 +1313,8 @@ pub mod workflow_query_client {
 /// Generated client implementations.
 pub mod task_execution_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     #[derive(Debug, Clone)]
     pub struct TaskExecutionClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -1419,9 +1358,8 @@ pub mod task_execution_client {
                     <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
+                Into<StdError> + Send + Sync,
         {
             TaskExecutionClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1460,23 +1398,16 @@ pub mod task_execution_client {
         pub async fn submit_task(
             &mut self,
             request: impl tonic::IntoRequest<super::SubmitTaskRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::SubmitTaskResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::SubmitTaskResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/SubmitTask",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/SubmitTask");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "SubmitTask"));
@@ -1486,23 +1417,15 @@ pub mod task_execution_client {
         pub async fn poll_task(
             &mut self,
             request: impl tonic::IntoRequest<super::PollTaskRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PollTaskResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::PollTaskResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/PollTask",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/PollTask");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "PollTask"));
@@ -1513,19 +1436,15 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::CompleteTaskRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/CompleteTask",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/CompleteTask");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "CompleteTask"));
@@ -1536,19 +1455,14 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::FailTaskRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/FailTask",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/FailTask");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "FailTask"));
@@ -1559,19 +1473,15 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::ReportProgressRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/ReportProgress",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/ReportProgress");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "ReportProgress"));
@@ -1582,19 +1492,14 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::HeartbeatRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/Heartbeat",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/Heartbeat");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "Heartbeat"));
@@ -1605,19 +1510,14 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::CancelTaskRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/CancelTask",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/CancelTask");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "CancelTask"));
@@ -1628,19 +1528,14 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::LogMessageRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/LogMessage",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/LogMessage");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "LogMessage"));
@@ -1650,23 +1545,15 @@ pub mod task_execution_client {
         pub async fn get_state(
             &mut self,
             request: impl tonic::IntoRequest<super::GetStateRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::GetStateResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::GetStateResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/GetState",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/GetState");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "GetState"));
@@ -1677,19 +1564,14 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::SetStateRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/SetState",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/SetState");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "SetState"));
@@ -1700,19 +1582,14 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::ClearStateRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/ClearState",
-            );
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/ClearState");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "ClearState"));
@@ -1723,19 +1600,15 @@ pub mod task_execution_client {
             &mut self,
             request: impl tonic::IntoRequest<super::ClearAllStateRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/ClearAllState",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/ClearAllState");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "ClearAllState"));
@@ -1745,23 +1618,17 @@ pub mod task_execution_client {
         pub async fn get_state_keys(
             &mut self,
             request: impl tonic::IntoRequest<super::GetStateKeysRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::GetStateKeysResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::GetStateKeysResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/GetStateKeys",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/GetStateKeys");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "GetStateKeys"));
@@ -1771,23 +1638,17 @@ pub mod task_execution_client {
         pub async fn stream_task_data(
             &mut self,
             request: impl tonic::IntoRequest<super::StreamTaskDataRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::StreamTaskDataResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::StreamTaskDataResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.TaskExecution/StreamTaskData",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.TaskExecution/StreamTaskData");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.TaskExecution", "StreamTaskData"));
@@ -1798,8 +1659,8 @@ pub mod task_execution_client {
 /// Generated client implementations.
 pub mod worker_lifecycle_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     #[derive(Debug, Clone)]
     pub struct WorkerLifecycleClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -1843,9 +1704,8 @@ pub mod worker_lifecycle_client {
                     <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
+                Into<StdError> + Send + Sync,
         {
             WorkerLifecycleClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1884,26 +1744,22 @@ pub mod worker_lifecycle_client {
         pub async fn register_worker(
             &mut self,
             request: impl tonic::IntoRequest<super::WorkerRegistrationRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::WorkerRegistrationResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::WorkerRegistrationResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkerLifecycle/RegisterWorker",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkerLifecycle/RegisterWorker");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("flovyn.v1.WorkerLifecycle", "RegisterWorker"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkerLifecycle",
+                "RegisterWorker",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Send heartbeat to update worker status
@@ -1911,22 +1767,20 @@ pub mod worker_lifecycle_client {
             &mut self,
             request: impl tonic::IntoRequest<super::WorkerHeartbeatRequest>,
         ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.WorkerLifecycle/SendHeartbeat",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkerLifecycle/SendHeartbeat");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("flovyn.v1.WorkerLifecycle", "SendHeartbeat"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkerLifecycle",
+                "SendHeartbeat",
+            ));
             self.inner.unary(req, path, codec).await
         }
     }
