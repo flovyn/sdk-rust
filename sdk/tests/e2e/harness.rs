@@ -3,19 +3,24 @@
 //! Provides container orchestration for PostgreSQL, NATS, and Flovyn server,
 //! plus JWT generation and REST API client for test setup.
 //!
-//! The harness operates in dev mode: Uses existing dev infrastructure
-//! (PostgreSQL on 5435, NATS on 4222) and starts only the server container.
+//! All containers are started by the harness - no external dependencies required.
 
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use testcontainers::{
-    core::ContainerPort, runners::AsyncRunner, ContainerAsync, GenericImage, ImageExt,
+    core::{ContainerPort, WaitFor},
+    runners::AsyncRunner,
+    ContainerAsync, GenericImage, ImageExt,
 };
 use uuid::Uuid;
 
-/// Test harness managing the server container and providing test utilities.
+/// Test harness managing all containers and providing test utilities.
 pub struct TestHarness {
+    #[allow(dead_code)]
+    postgres: ContainerAsync<GenericImage>,
+    #[allow(dead_code)]
+    nats: ContainerAsync<GenericImage>,
     #[allow(dead_code)]
     server: ContainerAsync<GenericImage>,
     server_grpc_port: u16,
@@ -26,14 +31,35 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    /// Create a new test harness using existing dev infrastructure.
-    /// Expects: PostgreSQL on 5435, NATS on 4222.
+    /// Create a new test harness starting all required containers.
+    /// Starts PostgreSQL, NATS, and Flovyn server containers.
     pub async fn new() -> Self {
-        // Use existing dev PostgreSQL and NATS
-        let pg_port = 5435;
-        let nats_port = 4222;
+        // Start PostgreSQL container
+        let postgres: ContainerAsync<GenericImage> = GenericImage::new("postgres", "16-alpine")
+            .with_wait_for(WaitFor::message_on_stderr("database system is ready to accept connections"))
+            .with_exposed_port(ContainerPort::Tcp(5432))
+            .with_env_var("POSTGRES_USER", "flovyn")
+            .with_env_var("POSTGRES_PASSWORD", "flovyn")
+            .with_env_var("POSTGRES_DB", "flovyn")
+            .start()
+            .await
+            .expect("Failed to start PostgreSQL");
 
-        // Start only the Flovyn server container
+        let pg_host_port = postgres.get_host_port_ipv4(5432).await.unwrap();
+        println!("PostgreSQL started on port {}", pg_host_port);
+
+        // Start NATS container
+        let nats: ContainerAsync<GenericImage> = GenericImage::new("nats", "latest")
+            .with_wait_for(WaitFor::message_on_stderr("Server is ready"))
+            .with_exposed_port(ContainerPort::Tcp(4222))
+            .start()
+            .await
+            .expect("Failed to start NATS");
+
+        let nats_host_port = nats.get_host_port_ipv4(4222).await.unwrap();
+        println!("NATS started on port {}", nats_host_port);
+
+        // Start the Flovyn server container
         // Image name can be overridden via FLOVYN_SERVER_IMAGE env var
         let image_name = std::env::var("FLOVYN_SERVER_IMAGE")
             .unwrap_or_else(|_| "flovyn-server-test".to_string());
@@ -44,14 +70,14 @@ impl TestHarness {
         let server: ContainerAsync<GenericImage> = server_image
             .with_env_var(
                 "SPRING_DATASOURCE_URL",
-                format!("jdbc:postgresql://host.docker.internal:{}/flovyn", pg_port),
+                format!("jdbc:postgresql://host.docker.internal:{}/flovyn", pg_host_port),
             )
             .with_env_var("SPRING_DATASOURCE_USERNAME", "flovyn")
             .with_env_var("SPRING_DATASOURCE_PASSWORD", "flovyn")
             .with_env_var("NATS_ENABLED", "true")
             .with_env_var(
                 "NATS_SERVERS_0",
-                format!("nats://host.docker.internal:{}", nats_port),
+                format!("nats://host.docker.internal:{}", nats_host_port),
             )
             .with_env_var("SERVER_PORT", "8080")
             .with_env_var("GRPC_SERVER_PORT", "9090")
@@ -60,13 +86,14 @@ impl TestHarness {
             // Enable security with signature verification skipped (for self-signed JWTs)
             .with_env_var("FLOVYN_SECURITY_ENABLED", "true")
             .with_env_var("FLOVYN_SECURITY_JWT_SKIP_SIGNATURE_VERIFICATION", "true")
-            .with_startup_timeout(Duration::from_secs(60))
+            .with_startup_timeout(Duration::from_secs(120))
             .start()
             .await
             .expect("Failed to start Flovyn server");
 
         let server_grpc_port = server.get_host_port_ipv4(9090).await.unwrap();
         let server_http_port = server.get_host_port_ipv4(8080).await.unwrap();
+        println!("Flovyn server started - HTTP: {}, gRPC: {}", server_http_port, server_grpc_port);
 
         // Wait for server to be ready (30s timeout, logs on failure)
         Self::wait_for_health(&server, server_http_port).await;
@@ -76,6 +103,8 @@ impl TestHarness {
             Self::setup_test_tenant(server_http_port).await;
 
         Self {
+            postgres,
+            nats,
             server,
             server_grpc_port,
             server_http_port,

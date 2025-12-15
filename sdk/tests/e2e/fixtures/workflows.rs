@@ -474,3 +474,123 @@ impl DynamicWorkflow for GrandparentWorkflow {
         Ok(output)
     }
 }
+
+/// Comprehensive workflow that tests multiple SDK features in a single execution.
+/// Tests: basic execution, state set/get, operation recording (ctx.run_raw).
+pub struct ComprehensiveWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ComprehensiveWorkflow {
+    fn kind(&self) -> &str {
+        "comprehensive-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let mut output = DynamicOutput::new();
+        let mut tests_passed = Vec::new();
+
+        // Test 1: Basic input processing
+        let value = input.get("value").and_then(|v| v.as_i64()).unwrap_or(10);
+        output.insert("inputValue".to_string(), Value::Number(value.into()));
+        tests_passed.push("basic_input");
+
+        // Test 2: Operation recording with ctx.run_raw()
+        let doubled = Value::Number((value * 2).into());
+        let run_result = ctx.run_raw("double-operation", doubled.clone()).await?;
+        output.insert("runResult".to_string(), run_result);
+        tests_passed.push("run_operation");
+
+        // Test 3: State set
+        let state_key = "test-state-key";
+        let state_value = serde_json::json!({
+            "counter": value,
+            "message": "state test",
+            "nested": {"a": 1, "b": 2}
+        });
+        ctx.set_raw(state_key, state_value.clone()).await?;
+        output.insert("stateSet".to_string(), Value::Bool(true));
+        tests_passed.push("state_set");
+
+        // Test 4: State get (should return what we just set)
+        let retrieved = ctx.get_raw(state_key).await?;
+        output.insert("stateRetrieved".to_string(), retrieved.clone().unwrap_or(Value::Null));
+
+        // Verify state matches
+        let state_matches = retrieved.as_ref() == Some(&state_value);
+        output.insert("stateMatches".to_string(), Value::Bool(state_matches));
+        if state_matches {
+            tests_passed.push("state_get");
+        }
+
+        // Test 5: Multiple operations to test replay
+        let tripled = Value::Number((value * 3).into());
+        let triple_result = ctx.run_raw("triple-operation", tripled).await?;
+        output.insert("tripleResult".to_string(), triple_result);
+        tests_passed.push("multiple_operations");
+
+        // Summary
+        output.insert("testsPassedCount".to_string(), Value::Number(tests_passed.len().into()));
+        output.insert("testsPassed".to_string(),
+            Value::Array(tests_passed.into_iter().map(|s| Value::String(s.to_string())).collect()));
+
+        Ok(output)
+    }
+}
+
+/// Comprehensive workflow that also tests task scheduling.
+/// This workflow schedules a task and waits for its result.
+pub struct ComprehensiveWithTaskWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ComprehensiveWithTaskWorkflow {
+    fn kind(&self) -> &str {
+        "comprehensive-with-task-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let mut output = DynamicOutput::new();
+        let mut tests_passed = Vec::new();
+
+        // Test 1: Basic input
+        let value = input.get("value").and_then(|v| v.as_i64()).unwrap_or(10);
+        output.insert("inputValue".to_string(), Value::Number(value.into()));
+        tests_passed.push("basic_input");
+
+        // Test 2: State operations
+        ctx.set_raw("workflow-state", serde_json::json!({"step": 1})).await?;
+        tests_passed.push("state_set");
+
+        // Test 3: Operation recording
+        let op_result = ctx.run_raw("compute", Value::Number((value * 2).into())).await?;
+        output.insert("opResult".to_string(), op_result);
+        tests_passed.push("operation");
+
+        // Test 4: Task scheduling
+        let task_input = serde_json::json!({
+            "message": format!("Task for value {}", value),
+            "number": value
+        });
+        let task_result = ctx.schedule_raw("echo-task", task_input).await?;
+        output.insert("taskResult".to_string(), task_result);
+        tests_passed.push("task_scheduling");
+
+        // Test 5: Verify state persists
+        let state = ctx.get_raw("workflow-state").await?;
+        output.insert("stateAfterTask".to_string(), state.unwrap_or(Value::Null));
+        tests_passed.push("state_persistence");
+
+        output.insert("testsPassedCount".to_string(), Value::Number(tests_passed.len().into()));
+        output.insert("testsPassed".to_string(),
+            Value::Array(tests_passed.into_iter().map(|s| Value::String(s.to_string())).collect()));
+
+        Ok(output)
+    }
+}

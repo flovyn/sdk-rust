@@ -17,6 +17,9 @@ pub struct PollRequest {
     /// Worker pool ID to poll from (NULL = default shared pool)
     #[prost(string, optional, tag = "5")]
     pub worker_pool_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Workflow kinds this worker can handle (empty = all kinds)
+    #[prost(string, repeated, tag = "6")]
+    pub workflow_capabilities: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

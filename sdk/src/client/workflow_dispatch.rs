@@ -42,6 +42,7 @@ impl WorkflowDispatch {
             task_queue: task_queue.to_string(),
             timeout_seconds: timeout.as_secs() as i64,
             worker_pool_id: None,
+            workflow_capabilities: vec![], // TODO: Pass registered workflow kinds
         };
 
         let response = self

@@ -24,7 +24,7 @@ async fn test_child_workflow_success() {
         Duration::from_secs(60),
         "test_child_workflow_success",
         async {
-            let env = E2ETestEnvBuilder::new("e2e-child-workflow-worker")
+            let env = E2ETestEnvBuilder::with_task_queue("e2e-child-workflow-worker", "child-success-queue")
                 .await
                 .register_workflow(ParentWorkflow)
                 .register_workflow(ChildWorkflow)
@@ -68,7 +68,7 @@ async fn test_child_workflow_failure() {
         Duration::from_secs(60),
         "test_child_workflow_failure",
         async {
-            let env = E2ETestEnvBuilder::new("e2e-failing-child-worker")
+            let env = E2ETestEnvBuilder::with_task_queue("e2e-failing-child-worker", "child-failure-queue")
                 .await
                 .register_workflow(ParentWithFailingChildWorkflow)
                 .register_workflow(FailingChildWorkflow::default())
@@ -105,7 +105,7 @@ async fn test_nested_child_workflows() {
     // Use longer timeout for nested workflows
     let timeout = Duration::from_secs(90);
     with_timeout(timeout, "test_nested_child_workflows", async {
-        let env = E2ETestEnvBuilder::new("e2e-nested-workflow-worker")
+        let env = E2ETestEnvBuilder::with_task_queue("e2e-nested-workflow-worker", "child-nested-queue")
             .await
             .register_workflow(GrandparentWorkflow)
             .register_workflow(ParentWorkflow)

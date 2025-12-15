@@ -18,6 +18,7 @@
 //! - Dev infrastructure running (PostgreSQL on 5435, NATS on 4222)
 
 mod child_workflow_tests;
+mod comprehensive_tests;
 mod concurrency_tests;
 mod error_tests;
 mod fixtures;

@@ -22,11 +22,13 @@ async fn test_concurrent_workflow_execution() {
     with_timeout(test_timeout, "test_concurrent_workflow_execution", async {
         let harness = get_harness().await;
 
+        let task_queue = "concurrency-exec-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-concurrent-worker")
             .worker_token(harness.worker_token())
+            .task_queue(task_queue)
             .register_workflow(DoublerWorkflow)
             .build()
             .await
@@ -42,7 +44,9 @@ async fn test_concurrent_workflow_execution() {
         let mut workflow_ids = Vec::new();
 
         for i in 0..num_workflows {
-            let options = StartWorkflowOptions::new().with_workflow_version("1.0.0");
+            let options = StartWorkflowOptions::new()
+                .with_workflow_version("1.0.0")
+                .with_task_queue(task_queue);
             let result = client
                 .start_workflow_with_options("doubler-workflow", json!({ "value": i }), options)
                 .await
@@ -129,12 +133,15 @@ async fn test_multiple_workers() {
     with_timeout(test_timeout, "test_multiple_workers", async {
         let harness = get_harness().await;
 
+        let task_queue = "concurrency-multi-worker-queue";
+
         // Create first worker
         let client1 = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-multi-worker-1")
             .worker_token(harness.worker_token())
+            .task_queue(task_queue)
             .register_workflow(DoublerWorkflow)
             .build()
             .await
@@ -146,6 +153,7 @@ async fn test_multiple_workers() {
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-multi-worker-2")
             .worker_token(harness.worker_token())
+            .task_queue(task_queue)
             .register_workflow(DoublerWorkflow)
             .build()
             .await
@@ -165,7 +173,9 @@ async fn test_multiple_workers() {
         let mut workflow_ids = Vec::new();
 
         for i in 0..num_workflows {
-            let options = StartWorkflowOptions::new().with_workflow_version("1.0.0");
+            let options = StartWorkflowOptions::new()
+                .with_workflow_version("1.0.0")
+                .with_task_queue(task_queue);
             // Use client1 to start all workflows (they go to the shared queue)
             let result = client1
                 .start_workflow_with_options(

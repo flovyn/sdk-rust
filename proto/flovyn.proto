@@ -61,6 +61,9 @@ message PollRequest {
 
   // Worker pool ID to poll from (NULL = default shared pool)
   optional string worker_pool_id = 5;
+
+  // Workflow kinds this worker can handle (empty = all kinds)
+  repeated string workflow_capabilities = 6;
 }
 
 message SubscriptionRequest {

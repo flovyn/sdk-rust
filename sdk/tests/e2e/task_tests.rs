@@ -25,11 +25,13 @@ async fn test_basic_task_scheduling() {
     with_timeout(TEST_TIMEOUT, "test_basic_task_scheduling", async {
         let harness = get_harness().await;
 
+        let task_queue = "task-basic-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-task-worker")
             .worker_token(harness.worker_token())
+            .task_queue(task_queue)
             .register_workflow(TaskSchedulingWorkflow)
             .register_task(EchoTask)
             .build()
@@ -43,7 +45,9 @@ async fn test_basic_task_scheduling() {
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Start a workflow that schedules an echo task
-        let options = StartWorkflowOptions::new().with_workflow_version("1.0.0");
+        let options = StartWorkflowOptions::new()
+            .with_workflow_version("1.0.0")
+            .with_task_queue(task_queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "task-scheduling-workflow",
@@ -85,11 +89,13 @@ async fn test_multiple_sequential_tasks() {
 
         let harness = get_harness().await;
 
+        let task_queue = "task-multi-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-multi-task-worker")
             .worker_token(harness.worker_token())
+            .task_queue(task_queue)
             .register_workflow(MultiTaskWorkflow)
             .register_task(EchoTask)
             .register_task(SlowTask)
@@ -102,7 +108,9 @@ async fn test_multiple_sequential_tasks() {
 
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let options = StartWorkflowOptions::new().with_workflow_version("1.0.0");
+        let options = StartWorkflowOptions::new()
+            .with_workflow_version("1.0.0")
+            .with_task_queue(task_queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "multi-task-workflow",

@@ -31,7 +31,7 @@ async fn test_harness_setup() {
 #[ignore] // Enable when Docker is available
 async fn test_simple_workflow_execution() {
     with_timeout(TEST_TIMEOUT, "test_simple_workflow_execution", async {
-        let env = E2ETestEnvBuilder::new("e2e-test-worker")
+        let env = E2ETestEnvBuilder::with_task_queue("e2e-test-worker", "workflow-simple-queue")
             .await
             .register_workflow(DoublerWorkflow)
             .build_and_start()
@@ -52,7 +52,7 @@ async fn test_simple_workflow_execution() {
 #[ignore] // Enable when Docker is available
 async fn test_echo_workflow() {
     with_timeout(TEST_TIMEOUT, "test_echo_workflow", async {
-        let env = E2ETestEnvBuilder::new("e2e-echo-worker")
+        let env = E2ETestEnvBuilder::with_task_queue("e2e-echo-worker", "workflow-echo-queue")
             .await
             .register_workflow(EchoWorkflow)
             .build_and_start()
@@ -83,7 +83,7 @@ async fn test_echo_workflow() {
 #[ignore] // Enable when Docker is available
 async fn test_failing_workflow() {
     with_timeout(TEST_TIMEOUT, "test_failing_workflow", async {
-        let env = E2ETestEnvBuilder::new("e2e-failing-worker")
+        let env = E2ETestEnvBuilder::with_task_queue("e2e-failing-worker", "workflow-failing-queue")
             .await
             .register_workflow(FailingWorkflow::new("Test error message"))
             .build_and_start()
@@ -122,7 +122,7 @@ async fn test_failing_workflow() {
 #[ignore] // Enable when Docker is available
 async fn test_start_workflow_async() {
     with_timeout(TEST_TIMEOUT, "test_start_workflow_async", async {
-        let env = E2ETestEnvBuilder::new("e2e-async-worker")
+        let env = E2ETestEnvBuilder::with_task_queue("e2e-async-worker", "workflow-async-queue")
             .await
             .register_workflow(DoublerWorkflow)
             .build_and_start()
