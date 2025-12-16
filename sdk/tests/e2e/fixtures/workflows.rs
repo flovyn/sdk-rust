@@ -517,7 +517,10 @@ impl DynamicWorkflow for ComprehensiveWorkflow {
 
         // Test 4: State get (should return what we just set)
         let retrieved = ctx.get_raw(state_key).await?;
-        output.insert("stateRetrieved".to_string(), retrieved.clone().unwrap_or(Value::Null));
+        output.insert(
+            "stateRetrieved".to_string(),
+            retrieved.clone().unwrap_or(Value::Null),
+        );
 
         // Verify state matches
         let state_matches = retrieved.as_ref() == Some(&state_value);
@@ -533,9 +536,19 @@ impl DynamicWorkflow for ComprehensiveWorkflow {
         tests_passed.push("multiple_operations");
 
         // Summary
-        output.insert("testsPassedCount".to_string(), Value::Number(tests_passed.len().into()));
-        output.insert("testsPassed".to_string(),
-            Value::Array(tests_passed.into_iter().map(|s| Value::String(s.to_string())).collect()));
+        output.insert(
+            "testsPassedCount".to_string(),
+            Value::Number(tests_passed.len().into()),
+        );
+        output.insert(
+            "testsPassed".to_string(),
+            Value::Array(
+                tests_passed
+                    .into_iter()
+                    .map(|s| Value::String(s.to_string()))
+                    .collect(),
+            ),
+        );
 
         Ok(output)
     }
@@ -565,11 +578,14 @@ impl DynamicWorkflow for ComprehensiveWithTaskWorkflow {
         tests_passed.push("basic_input");
 
         // Test 2: State operations
-        ctx.set_raw("workflow-state", serde_json::json!({"step": 1})).await?;
+        ctx.set_raw("workflow-state", serde_json::json!({"step": 1}))
+            .await?;
         tests_passed.push("state_set");
 
         // Test 3: Operation recording
-        let op_result = ctx.run_raw("compute", Value::Number((value * 2).into())).await?;
+        let op_result = ctx
+            .run_raw("compute", Value::Number((value * 2).into()))
+            .await?;
         output.insert("opResult".to_string(), op_result);
         tests_passed.push("operation");
 
@@ -587,9 +603,19 @@ impl DynamicWorkflow for ComprehensiveWithTaskWorkflow {
         output.insert("stateAfterTask".to_string(), state.unwrap_or(Value::Null));
         tests_passed.push("state_persistence");
 
-        output.insert("testsPassedCount".to_string(), Value::Number(tests_passed.len().into()));
-        output.insert("testsPassed".to_string(),
-            Value::Array(tests_passed.into_iter().map(|s| Value::String(s.to_string())).collect()));
+        output.insert(
+            "testsPassedCount".to_string(),
+            Value::Number(tests_passed.len().into()),
+        );
+        output.insert(
+            "testsPassed".to_string(),
+            Value::Array(
+                tests_passed
+                    .into_iter()
+                    .map(|s| Value::String(s.to_string()))
+                    .collect(),
+            ),
+        );
 
         Ok(output)
     }

@@ -29,11 +29,14 @@ async fn test_comprehensive_workflow_features() {
         TEST_TIMEOUT,
         "test_comprehensive_workflow_features",
         async {
-            let env = E2ETestEnvBuilder::with_task_queue("e2e-comprehensive-worker", "comprehensive-features-queue")
-                .await
-                .register_workflow(ComprehensiveWorkflow)
-                .build_and_start()
-                .await;
+            let env = E2ETestEnvBuilder::with_task_queue(
+                "e2e-comprehensive-worker",
+                "comprehensive-features-queue",
+            )
+            .await
+            .register_workflow(ComprehensiveWorkflow)
+            .build_and_start()
+            .await;
 
             let result = env
                 .start_and_await("comprehensive-workflow", json!({"value": 21}))
@@ -42,13 +45,19 @@ async fn test_comprehensive_workflow_features() {
 
             // Validate all features tested by the comprehensive workflow
             assert_eq!(result["inputValue"], 21, "Basic input should work");
-            assert_eq!(result["runResult"], 42, "ctx.run_raw should record operation");
+            assert_eq!(
+                result["runResult"], 42,
+                "ctx.run_raw should record operation"
+            );
             assert_eq!(result["stateSet"], true, "State set should succeed");
             assert_eq!(
                 result["stateMatches"], true,
                 "State get should return what was set"
             );
-            assert_eq!(result["tripleResult"], 63, "Multiple operations should work");
+            assert_eq!(
+                result["tripleResult"], 63,
+                "Multiple operations should work"
+            );
             assert_eq!(
                 result["testsPassedCount"], 5,
                 "All 5 feature tests should pass"
@@ -61,7 +70,10 @@ async fn test_comprehensive_workflow_features() {
             assert_eq!(state_retrieved["nested"]["a"], 1);
             assert_eq!(state_retrieved["nested"]["b"], 2);
 
-            println!("Comprehensive test passed all {} checks", result["testsPassedCount"]);
+            println!(
+                "Comprehensive test passed all {} checks",
+                result["testsPassedCount"]
+            );
         },
     )
     .await;
@@ -75,12 +87,15 @@ async fn test_comprehensive_with_task_scheduling() {
     // Use longer timeout for task-based test
     let timeout = Duration::from_secs(90);
     with_timeout(timeout, "test_comprehensive_with_task_scheduling", async {
-        let env = E2ETestEnvBuilder::with_task_queue("e2e-comprehensive-task-worker", "comprehensive-task-queue")
-            .await
-            .register_workflow(ComprehensiveWithTaskWorkflow)
-            .register_task(EchoTask)
-            .build_and_start()
-            .await;
+        let env = E2ETestEnvBuilder::with_task_queue(
+            "e2e-comprehensive-task-worker",
+            "comprehensive-task-queue",
+        )
+        .await
+        .register_workflow(ComprehensiveWithTaskWorkflow)
+        .register_task(EchoTask)
+        .build_and_start()
+        .await;
 
         let result = env
             .start_and_await_with_timeout(
@@ -127,14 +142,17 @@ async fn test_comprehensive_with_task_scheduling() {
 async fn test_all_basic_workflows() {
     let timeout = Duration::from_secs(120);
     with_timeout(timeout, "test_all_basic_workflows", async {
-        let env = E2ETestEnvBuilder::with_task_queue("e2e-all-workflows-worker", "comprehensive-all-queue")
-            .await
-            .register_workflow(DoublerWorkflow)
-            .register_workflow(EchoWorkflow)
-            .register_workflow(StatefulWorkflow)
-            .register_workflow(FailingWorkflow::new("Test error"))
-            .build_and_start()
-            .await;
+        let env = E2ETestEnvBuilder::with_task_queue(
+            "e2e-all-workflows-worker",
+            "comprehensive-all-queue",
+        )
+        .await
+        .register_workflow(DoublerWorkflow)
+        .register_workflow(EchoWorkflow)
+        .register_workflow(StatefulWorkflow)
+        .register_workflow(FailingWorkflow::new("Test error"))
+        .build_and_start()
+        .await;
 
         // Test 1: Doubler workflow
         println!("Testing DoublerWorkflow...");
@@ -156,7 +174,10 @@ async fn test_all_basic_workflows() {
             .start_and_await("echo-workflow", echo_input.clone())
             .await
             .expect("Echo workflow failed");
-        assert_eq!(echo_result, echo_input, "Echo should return input unchanged");
+        assert_eq!(
+            echo_result, echo_input,
+            "Echo should return input unchanged"
+        );
         println!("  ✓ EchoWorkflow passed");
 
         // Test 3: Stateful workflow

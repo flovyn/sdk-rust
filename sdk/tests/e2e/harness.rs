@@ -24,9 +24,8 @@ use testcontainers::{
 use uuid::Uuid;
 
 /// Unique session ID for this test run (used for container labeling)
-static TEST_SESSION_ID: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    Uuid::new_v4().to_string()[..8].to_string()
-});
+static TEST_SESSION_ID: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| Uuid::new_v4().to_string()[..8].to_string());
 
 /// Container IDs for cleanup (postgres, nats, server)
 static CONTAINER_IDS: Mutex<Option<(String, String, String)>> = Mutex::new(None);
@@ -69,12 +68,18 @@ extern "C" fn cleanup_on_exit() {
     // Stop and remove containers using docker CLI (can't use async here)
     if let Ok(guard) = CONTAINER_IDS.lock() {
         if let Some((pg_id, nats_id, server_id)) = guard.as_ref() {
-            eprintln!("[HARNESS] Stopping containers: {}, {}, {}", pg_id, nats_id, server_id);
+            eprintln!(
+                "[HARNESS] Stopping containers: {}, {}, {}",
+                pg_id, nats_id, server_id
+            );
             let _ = std::process::Command::new("docker")
                 .args(["stop", "-t", "1", pg_id, nats_id, server_id])
                 .output();
 
-            eprintln!("[HARNESS] Removing containers: {}, {}, {}", pg_id, nats_id, server_id);
+            eprintln!(
+                "[HARNESS] Removing containers: {}, {}, {}",
+                pg_id, nats_id, server_id
+            );
             let _ = std::process::Command::new("docker")
                 .args(["rm", "-f", pg_id, nats_id, server_id])
                 .output();
@@ -108,7 +113,9 @@ impl TestHarness {
 
         // Start PostgreSQL container with labels
         let postgres: ContainerAsync<GenericImage> = GenericImage::new("postgres", "16-alpine")
-            .with_wait_for(WaitFor::message_on_stderr("database system is ready to accept connections"))
+            .with_wait_for(WaitFor::message_on_stderr(
+                "database system is ready to accept connections",
+            ))
             .with_exposed_port(ContainerPort::Tcp(5432))
             .with_env_var("POSTGRES_USER", "flovyn")
             .with_env_var("POSTGRES_PASSWORD", "flovyn")
@@ -148,7 +155,10 @@ impl TestHarness {
         let server: ContainerAsync<GenericImage> = server_image
             .with_env_var(
                 "SPRING_DATASOURCE_URL",
-                format!("jdbc:postgresql://host.docker.internal:{}/flovyn", pg_host_port),
+                format!(
+                    "jdbc:postgresql://host.docker.internal:{}/flovyn",
+                    pg_host_port
+                ),
             )
             .with_env_var("SPRING_DATASOURCE_USERNAME", "flovyn")
             .with_env_var("SPRING_DATASOURCE_PASSWORD", "flovyn")
@@ -171,7 +181,10 @@ impl TestHarness {
 
         let server_grpc_port = server.get_host_port_ipv4(9090).await.unwrap();
         let server_http_port = server.get_host_port_ipv4(8080).await.unwrap();
-        println!("Flovyn server started - HTTP: {}, gRPC: {}", server_http_port, server_grpc_port);
+        println!(
+            "Flovyn server started - HTTP: {}, gRPC: {}",
+            server_http_port, server_grpc_port
+        );
 
         // Store container IDs for atexit cleanup
         let pg_id = postgres.id().to_string();
@@ -180,8 +193,12 @@ impl TestHarness {
         if let Ok(mut guard) = CONTAINER_IDS.lock() {
             *guard = Some((pg_id.clone(), nats_id.clone(), server_id.clone()));
         }
-        println!("[HARNESS] Container IDs stored for cleanup: pg={}, nats={}, server={}",
-                 &pg_id[..12], &nats_id[..12], &server_id[..12]);
+        println!(
+            "[HARNESS] Container IDs stored for cleanup: pg={}, nats={}, server={}",
+            &pg_id[..12],
+            &nats_id[..12],
+            &server_id[..12]
+        );
 
         // Wait for server to be ready (30s timeout, logs on failure)
         Self::wait_for_health(&server, server_http_port).await;

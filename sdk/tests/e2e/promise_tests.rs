@@ -78,11 +78,12 @@ async fn test_promise_resolve() {
 #[ignore] // Enable when Docker is available
 async fn test_promise_reject() {
     with_timeout(TEST_TIMEOUT, "test_promise_reject", async {
-        let env = E2ETestEnvBuilder::with_task_queue("e2e-promise-reject-worker", "promise-reject-queue")
-            .await
-            .register_workflow(PromiseWorkflow)
-            .build_and_start()
-            .await;
+        let env =
+            E2ETestEnvBuilder::with_task_queue("e2e-promise-reject-worker", "promise-reject-queue")
+                .await
+                .register_workflow(PromiseWorkflow)
+                .build_and_start()
+                .await;
 
         // Start the workflow
         let workflow_id = env

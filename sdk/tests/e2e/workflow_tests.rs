@@ -83,11 +83,12 @@ async fn test_echo_workflow() {
 #[ignore] // Enable when Docker is available
 async fn test_failing_workflow() {
     with_timeout(TEST_TIMEOUT, "test_failing_workflow", async {
-        let env = E2ETestEnvBuilder::with_task_queue("e2e-failing-worker", "workflow-failing-queue")
-            .await
-            .register_workflow(FailingWorkflow::new("Test error message"))
-            .build_and_start()
-            .await;
+        let env =
+            E2ETestEnvBuilder::with_task_queue("e2e-failing-worker", "workflow-failing-queue")
+                .await
+                .register_workflow(FailingWorkflow::new("Test error message"))
+                .build_and_start()
+                .await;
 
         // Start the workflow without waiting (since it will be retried)
         let workflow_id = env.start_workflow("failing-workflow", json!({})).await;
