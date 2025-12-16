@@ -497,6 +497,7 @@ dependencies = [
  "hex",
  "hostname",
  "jsonwebtoken",
+ "libc",
  "parking_lot",
  "proptest",
  "prost",

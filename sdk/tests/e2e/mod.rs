@@ -33,6 +33,7 @@ mod workflow_tests;
 pub use harness::TestHarness;
 pub use test_env::{E2ETestEnvBuilder, E2ETestEnvironment, WorkflowResult, WorkflowStatus};
 
+use harness::register_atexit_handler;
 use std::time::Duration;
 use tokio::sync::OnceCell;
 
@@ -45,6 +46,9 @@ static GLOBAL_HARNESS: OnceCell<TestHarness> = OnceCell::const_new();
 
 /// Get or initialize the global test harness.
 pub async fn get_harness() -> &'static TestHarness {
+    // Register atexit handler before creating any containers
+    register_atexit_handler();
+
     GLOBAL_HARNESS
         .get_or_init(|| async { TestHarness::new().await })
         .await

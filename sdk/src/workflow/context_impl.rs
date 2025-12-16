@@ -734,7 +734,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 definition_id: None,
                 child_execution_id,
                 input,
-                task_queue: "default".to_string(),
+                task_queue: String::new(), // Empty = inherit from parent
                 priority_seconds: 0,
             })?;
         }

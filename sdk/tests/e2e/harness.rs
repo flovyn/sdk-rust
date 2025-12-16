@@ -4,9 +4,17 @@
 //! plus JWT generation and REST API client for test setup.
 //!
 //! All containers are started by the harness - no external dependencies required.
+//!
+//! # Environment Variables
+//!
+//! - `FLOVYN_TEST_KEEP_CONTAINERS=1` - Skip cleanup on exit (for debugging).
+//!   Containers will remain running. Use `./bin/dev/cleanup-test-containers.sh`
+//!   to clean up manually.
 
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use testcontainers::{
     core::{ContainerPort, WaitFor},
@@ -14,6 +22,67 @@ use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
 };
 use uuid::Uuid;
+
+/// Unique session ID for this test run (used for container labeling)
+static TEST_SESSION_ID: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    Uuid::new_v4().to_string()[..8].to_string()
+});
+
+/// Container IDs for cleanup (postgres, nats, server)
+static CONTAINER_IDS: Mutex<Option<(String, String, String)>> = Mutex::new(None);
+
+/// Register atexit handler once
+pub static ATEXIT_REGISTERED: std::sync::Once = std::sync::Once::new();
+
+/// Flag to track if cleanup has already run
+static CLEANUP_RAN: AtomicBool = AtomicBool::new(false);
+
+/// Register the atexit cleanup handler.
+/// Call this before creating any containers.
+pub fn register_atexit_handler() {
+    ATEXIT_REGISTERED.call_once(|| {
+        eprintln!("[HARNESS] Registering atexit cleanup handler");
+        unsafe {
+            libc::atexit(cleanup_on_exit);
+        }
+    });
+}
+
+/// Cleanup function called on process exit.
+/// Note: Uses eprintln! instead of tracing because this runs after main exits,
+/// when the tracing subscriber may be dropped or in an inconsistent state.
+extern "C" fn cleanup_on_exit() {
+    // Prevent double cleanup
+    if CLEANUP_RAN.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    // Check if cleanup should be skipped (for debugging)
+    if std::env::var("FLOVYN_TEST_KEEP_CONTAINERS").is_ok() {
+        eprintln!("[HARNESS] FLOVYN_TEST_KEEP_CONTAINERS set - skipping cleanup");
+        eprintln!("[HARNESS] Run ./bin/dev/cleanup-test-containers.sh to clean up manually");
+        return;
+    }
+
+    eprintln!("[HARNESS] atexit cleanup triggered");
+
+    // Stop and remove containers using docker CLI (can't use async here)
+    if let Ok(guard) = CONTAINER_IDS.lock() {
+        if let Some((pg_id, nats_id, server_id)) = guard.as_ref() {
+            eprintln!("[HARNESS] Stopping containers: {}, {}, {}", pg_id, nats_id, server_id);
+            let _ = std::process::Command::new("docker")
+                .args(["stop", "-t", "1", pg_id, nats_id, server_id])
+                .output();
+
+            eprintln!("[HARNESS] Removing containers: {}, {}, {}", pg_id, nats_id, server_id);
+            let _ = std::process::Command::new("docker")
+                .args(["rm", "-f", pg_id, nats_id, server_id])
+                .output();
+        }
+    }
+
+    eprintln!("[HARNESS] atexit cleanup complete");
+}
 
 /// Test harness managing all containers and providing test utilities.
 pub struct TestHarness {
@@ -34,13 +103,18 @@ impl TestHarness {
     /// Create a new test harness starting all required containers.
     /// Starts PostgreSQL, NATS, and Flovyn server containers.
     pub async fn new() -> Self {
-        // Start PostgreSQL container
+        let session_id = TEST_SESSION_ID.as_str();
+        println!("[HARNESS] Starting test harness (session: {})", session_id);
+
+        // Start PostgreSQL container with labels
         let postgres: ContainerAsync<GenericImage> = GenericImage::new("postgres", "16-alpine")
             .with_wait_for(WaitFor::message_on_stderr("database system is ready to accept connections"))
             .with_exposed_port(ContainerPort::Tcp(5432))
             .with_env_var("POSTGRES_USER", "flovyn")
             .with_env_var("POSTGRES_PASSWORD", "flovyn")
             .with_env_var("POSTGRES_DB", "flovyn")
+            .with_label("flovyn-test", "true")
+            .with_label("flovyn-test-session", session_id)
             .start()
             .await
             .expect("Failed to start PostgreSQL");
@@ -48,10 +122,12 @@ impl TestHarness {
         let pg_host_port = postgres.get_host_port_ipv4(5432).await.unwrap();
         println!("PostgreSQL started on port {}", pg_host_port);
 
-        // Start NATS container
+        // Start NATS container with labels
         let nats: ContainerAsync<GenericImage> = GenericImage::new("nats", "latest")
             .with_wait_for(WaitFor::message_on_stderr("Server is ready"))
             .with_exposed_port(ContainerPort::Tcp(4222))
+            .with_label("flovyn-test", "true")
+            .with_label("flovyn-test-session", session_id)
             .start()
             .await
             .expect("Failed to start NATS");
@@ -59,13 +135,15 @@ impl TestHarness {
         let nats_host_port = nats.get_host_port_ipv4(4222).await.unwrap();
         println!("NATS started on port {}", nats_host_port);
 
-        // Start the Flovyn server container
+        // Start the Flovyn server container with labels
         // Image name can be overridden via FLOVYN_SERVER_IMAGE env var
         let image_name = std::env::var("FLOVYN_SERVER_IMAGE")
             .unwrap_or_else(|_| "flovyn-server-test".to_string());
         let server_image = GenericImage::new(image_name, "latest".to_string())
             .with_exposed_port(ContainerPort::Tcp(8080))
-            .with_exposed_port(ContainerPort::Tcp(9090));
+            .with_exposed_port(ContainerPort::Tcp(9090))
+            .with_label("flovyn-test", "true")
+            .with_label("flovyn-test-session", session_id);
 
         let server: ContainerAsync<GenericImage> = server_image
             .with_env_var(
@@ -94,6 +172,16 @@ impl TestHarness {
         let server_grpc_port = server.get_host_port_ipv4(9090).await.unwrap();
         let server_http_port = server.get_host_port_ipv4(8080).await.unwrap();
         println!("Flovyn server started - HTTP: {}, gRPC: {}", server_http_port, server_grpc_port);
+
+        // Store container IDs for atexit cleanup
+        let pg_id = postgres.id().to_string();
+        let nats_id = nats.id().to_string();
+        let server_id = server.id().to_string();
+        if let Ok(mut guard) = CONTAINER_IDS.lock() {
+            *guard = Some((pg_id.clone(), nats_id.clone(), server_id.clone()));
+        }
+        println!("[HARNESS] Container IDs stored for cleanup: pg={}, nats={}, server={}",
+                 &pg_id[..12], &nats_id[..12], &server_id[..12]);
 
         // Wait for server to be ready (30s timeout, logs on failure)
         Self::wait_for_health(&server, server_http_port).await;
