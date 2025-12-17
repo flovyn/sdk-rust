@@ -342,6 +342,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "dotenvy",
  "flovyn-sdk",
  "rand 0.8.5",
  "serde",
@@ -395,6 +396,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -406,6 +413,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "dotenvy",
  "flovyn-sdk",
  "rand 0.8.5",
  "serde",
@@ -737,6 +745,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "dotenvy",
  "flovyn-sdk",
  "serde",
  "serde_json",
@@ -1454,6 +1463,7 @@ name = "patterns-sample"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "dotenvy",
  "flovyn-sdk",
  "serde",
  "serde_json",

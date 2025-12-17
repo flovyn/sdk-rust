@@ -15,6 +15,7 @@ chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 async-trait.workspace = true
+dotenvy.workspace = true
 
 [dev-dependencies]
 flovyn-sdk = { path = "../../sdk", features = ["testing"] }

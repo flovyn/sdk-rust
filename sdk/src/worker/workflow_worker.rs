@@ -5,6 +5,7 @@ use crate::client::worker_lifecycle::{WorkerLifecycleClient, WorkerType};
 use crate::client::{GrpcTaskSubmitter, WorkflowDispatch, WorkflowExecutionInfo};
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
+use crate::telemetry::{workflow_execute_span, workflow_replay_span, SpanCollector};
 use crate::worker::executor::WorkflowStatus;
 use crate::worker::registry::WorkflowRegistry;
 use crate::workflow::command::WorkflowCommand;
@@ -16,7 +17,7 @@ use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Notify, Semaphore};
+use tokio::sync::{mpsc, watch, Notify, Semaphore};
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -48,6 +49,8 @@ pub struct WorkflowWorkerConfig {
     pub enable_notifications: bool,
     /// Worker token for gRPC authentication
     pub worker_token: String,
+    /// Enable telemetry (span reporting to server)
+    pub enable_telemetry: bool,
 }
 
 impl Default for WorkflowWorkerConfig {
@@ -65,6 +68,7 @@ impl Default for WorkflowWorkerConfig {
             enable_auto_registration: true,
             enable_notifications: true,
             worker_token: String::new(),
+            enable_telemetry: false,
         }
     }
 }
@@ -88,6 +92,10 @@ pub struct WorkflowExecutorWorker {
     work_available_notify: Arc<Notify>,
     /// Task submitter for workflows to submit tasks to the server
     task_submitter: Arc<dyn TaskSubmitter>,
+    /// Span collector for telemetry
+    span_collector: SpanCollector,
+    /// External shutdown signal receiver
+    external_shutdown_rx: Option<watch::Receiver<bool>>,
 }
 
 impl WorkflowExecutorWorker {
@@ -103,6 +111,7 @@ impl WorkflowExecutorWorker {
             channel.clone(),
             &config.worker_token,
         ));
+        let span_collector = SpanCollector::new(config.enable_telemetry);
         Self {
             config,
             registry,
@@ -116,6 +125,8 @@ impl WorkflowExecutorWorker {
             ready_notify: Arc::new(Notify::new()),
             work_available_notify: Arc::new(Notify::new()),
             task_submitter,
+            span_collector,
+            external_shutdown_rx: None,
         }
     }
 
@@ -125,9 +136,20 @@ impl WorkflowExecutorWorker {
         self
     }
 
+    /// Set the external shutdown signal receiver
+    pub fn with_shutdown_signal(mut self, rx: watch::Receiver<bool>) -> Self {
+        self.external_shutdown_rx = Some(rx);
+        self
+    }
+
     /// Get the ready notification handle
     pub fn ready_notify(&self) -> Arc<Notify> {
         self.ready_notify.clone()
+    }
+
+    /// Get the running flag for external shutdown control
+    pub fn running_flag(&self) -> Arc<AtomicBool> {
+        self.running.clone()
     }
 
     /// Check if the worker is running
@@ -298,6 +320,9 @@ impl WorkflowExecutorWorker {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
 
+        // Clone external shutdown receiver if present
+        let mut external_shutdown_rx = self.external_shutdown_rx.clone();
+
         info!(
             worker_id = %self.config.worker_id,
             tenant_id = %self.config.tenant_id,
@@ -319,6 +344,7 @@ impl WorkflowExecutorWorker {
         let config = self.config.clone();
         let workflow_hook = self.workflow_hook.clone();
         let task_submitter = self.task_submitter.clone();
+        let span_collector = self.span_collector.clone();
 
         // Start heartbeat loop in background
         let heartbeat_running = self.running.clone();
@@ -365,10 +391,21 @@ impl WorkflowExecutorWorker {
         let work_available_notify = self.work_available_notify.clone();
 
         // Polling loop
+        let mut was_disconnected = false;
         while running.load(Ordering::SeqCst) {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     debug!("Received shutdown signal");
+                    break;
+                }
+                _ = async {
+                    if let Some(ref mut rx) = external_shutdown_rx {
+                        let _ = rx.changed().await;
+                    } else {
+                        std::future::pending::<()>().await
+                    }
+                } => {
+                    debug!("Received external shutdown signal");
                     break;
                 }
                 result = Self::poll_and_execute(
@@ -380,6 +417,7 @@ impl WorkflowExecutorWorker {
                     workflow_hook.clone(),
                     work_available_notify.clone(),
                     task_submitter.clone(),
+                    span_collector.clone(),
                 ) => {
                     if let Err(e) = result {
                         // Check if it's a connection error
@@ -388,12 +426,16 @@ impl WorkflowExecutorWorker {
 
                         if is_connection_error {
                             warn!("Server unavailable, will retry: {}", e);
+                            was_disconnected = true;
                         } else {
                             error!("Polling loop error: {}", e);
                         }
 
                         // Wait before retrying
                         tokio::time::sleep(Duration::from_secs(5)).await;
+                    } else if was_disconnected {
+                        info!("Successfully reconnected to server");
+                        was_disconnected = false;
                     }
                 }
             }
@@ -426,6 +468,7 @@ impl WorkflowExecutorWorker {
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
         work_available_notify: Arc<Notify>,
         task_submitter: Arc<dyn TaskSubmitter>,
+        span_collector: SpanCollector,
     ) -> Result<()> {
         // Acquire semaphore permit
         let permit = semaphore
@@ -449,14 +492,21 @@ impl WorkflowExecutorWorker {
                 let mut client = client.clone();
                 let hook = workflow_hook.clone();
                 let task_submitter = task_submitter.clone();
+                let span_collector = span_collector.clone();
 
                 tokio::spawn(async move {
                     let _permit = permit; // Keep permit alive during execution
                     let _running = running; // Keep reference
 
-                    if let Err(e) =
-                        Self::execute_workflow(&mut client, &registry, info, hook, task_submitter)
-                            .await
+                    if let Err(e) = Self::execute_workflow(
+                        &mut client,
+                        &registry,
+                        info,
+                        hook,
+                        task_submitter,
+                        span_collector,
+                    )
+                    .await
                     {
                         error!("Workflow execution error: {}", e);
                     }
@@ -513,15 +563,18 @@ impl WorkflowExecutorWorker {
     }
 
     /// Execute a single workflow
+    #[allow(clippy::too_many_arguments)]
     async fn execute_workflow(
         client: &mut WorkflowDispatch,
         registry: &WorkflowRegistry,
         workflow_info: WorkflowExecutionInfo,
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
         task_submitter: Arc<dyn TaskSubmitter>,
+        span_collector: SpanCollector,
     ) -> Result<()> {
         let workflow_id = workflow_info.id;
         let kind = &workflow_info.kind;
+        let workflow_id_str = workflow_id.to_string();
 
         debug!(
             workflow_id = %workflow_id,
@@ -548,7 +601,7 @@ impl WorkflowExecutorWorker {
             })
             .collect();
 
-        // Debug: print replay events on resume
+        // Record replay span if there are events to replay
         if !replay_events.is_empty() {
             debug!(
                 workflow_id = %workflow_id,
@@ -556,6 +609,10 @@ impl WorkflowExecutorWorker {
                 events = ?replay_events.iter().map(|e| format!("{}:{:?} - {:?}", e.sequence_number(), e.event_type(), e.data())).collect::<Vec<_>>(),
                 "Executing workflow with replay events"
             );
+
+            // Record workflow.replay span
+            let replay_span = workflow_replay_span(&workflow_id_str, replay_events.len());
+            span_collector.record(replay_span.finish());
         }
 
         // Create workflow context
@@ -579,6 +636,9 @@ impl WorkflowExecutorWorker {
                 .await;
         }
 
+        // Start workflow.execute span
+        let execute_span = workflow_execute_span(&workflow_id_str, kind);
+
         // Execute workflow
         let result = registered
             .execute(ctx.clone(), workflow_info.input.clone())
@@ -593,7 +653,7 @@ impl WorkflowExecutorWorker {
             .max()
             .unwrap_or(current_sequence);
 
-        let (status, output_commands, output_for_hook) = match result {
+        let (status, output_commands, output_for_hook, error_info) = match result {
             Ok(output) => {
                 // Add complete command if not already present
                 final_sequence += 1;
@@ -602,7 +662,12 @@ impl WorkflowExecutorWorker {
                     sequence_number: final_sequence,
                     output,
                 });
-                (WorkflowStatus::Completed, commands, Some(output_clone))
+                (
+                    WorkflowStatus::Completed,
+                    commands,
+                    Some(output_clone),
+                    None,
+                )
             }
             Err(FlovynError::Suspended { reason }) => {
                 final_sequence += 1;
@@ -610,11 +675,17 @@ impl WorkflowExecutorWorker {
                     sequence_number: final_sequence,
                     reason,
                 });
-                (WorkflowStatus::Suspended, commands, None)
+                (WorkflowStatus::Suspended, commands, None, None)
             }
             Err(e) => {
                 final_sequence += 1;
                 let error_msg = e.to_string();
+                let error_type = match &e {
+                    FlovynError::DeterminismViolation(_) => "DeterminismViolation",
+                    FlovynError::WorkflowFailed { .. } => "WorkflowFailed",
+                    FlovynError::TaskFailed { .. } => "TaskFailed",
+                    _ => "Error",
+                };
                 commands.push(WorkflowCommand::FailWorkflow {
                     sequence_number: final_sequence,
                     error: error_msg.clone(),
@@ -625,9 +696,22 @@ impl WorkflowExecutorWorker {
                 if let Some(ref hook) = workflow_hook {
                     hook.on_workflow_failed(workflow_id, kind, &error_msg).await;
                 }
-                (WorkflowStatus::Failed, commands, None)
+                (
+                    WorkflowStatus::Failed,
+                    commands,
+                    None,
+                    Some((error_type.to_string(), error_msg)),
+                )
             }
         };
+
+        // Finish and record execution span
+        let finished_span = if let Some((error_type, error_msg)) = error_info {
+            execute_span.finish_with_error(&error_type, &error_msg)
+        } else {
+            execute_span.finish()
+        };
+        span_collector.record(finished_span);
 
         // Call hook: workflow completed (only for actual completion, not suspension)
         if status == WorkflowStatus::Completed {
@@ -655,6 +739,9 @@ impl WorkflowExecutorWorker {
         client
             .submit_workflow_commands(workflow_id, proto_commands, proto_status)
             .await?;
+
+        // Flush spans to server (fire-and-forget)
+        span_collector.flush(client).await;
 
         debug!(
             workflow_id = %workflow_id,
@@ -854,6 +941,7 @@ mod tests {
             enable_auto_registration: false,
             enable_notifications: false,
             worker_token: "test-token".to_string(),
+            enable_telemetry: true,
         };
 
         assert_eq!(config.worker_id, "test-worker");
@@ -862,6 +950,7 @@ mod tests {
         assert_eq!(config.worker_name, Some("My Worker".to_string()));
         assert_eq!(config.worker_version, "2.0.0");
         assert!(!config.enable_auto_registration);
+        assert!(config.enable_telemetry);
     }
 
     #[test]

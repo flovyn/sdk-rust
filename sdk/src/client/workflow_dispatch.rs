@@ -265,6 +265,30 @@ impl WorkflowDispatch {
         )
         .await
     }
+
+    /// Report execution spans to the server for distributed tracing
+    pub async fn report_execution_spans(
+        &mut self,
+        sdk_info: flovyn_v1::SdkInfo,
+        spans: Vec<flovyn_v1::ExecutionSpan>,
+    ) -> Result<ReportExecutionSpansResult> {
+        let request = flovyn_v1::ReportExecutionSpansRequest {
+            sdk_info: Some(sdk_info),
+            spans,
+        };
+
+        let response = self
+            .inner
+            .report_execution_spans(request)
+            .await
+            .map_err(FlovynError::Grpc)?;
+
+        let resp = response.into_inner();
+        Ok(ReportExecutionSpansResult {
+            accepted_count: resp.accepted_count,
+            rejected_count: resp.rejected_count,
+        })
+    }
 }
 
 /// Information about a workflow execution received from polling
@@ -310,6 +334,15 @@ pub struct StartWorkflowResult {
     pub idempotency_key_used: bool,
     /// Whether a new execution was created (false means existing returned)
     pub idempotency_key_new: bool,
+}
+
+/// Result of reporting execution spans
+#[derive(Debug, Clone)]
+pub struct ReportExecutionSpansResult {
+    /// Number of spans accepted by the server
+    pub accepted_count: i32,
+    /// Number of spans rejected by the server
+    pub rejected_count: i32,
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use crate::task::registry::TaskRegistry;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, watch, Notify};
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -71,6 +71,8 @@ pub struct TaskExecutorWorker {
     server_worker_id: Option<Uuid>,
     /// Notify when worker is ready
     ready_notify: Arc<Notify>,
+    /// External shutdown signal receiver
+    external_shutdown_rx: Option<watch::Receiver<bool>>,
 }
 
 impl TaskExecutorWorker {
@@ -90,12 +92,24 @@ impl TaskExecutorWorker {
             shutdown_tx: None,
             server_worker_id: None,
             ready_notify: Arc::new(Notify::new()),
+            external_shutdown_rx: None,
         }
+    }
+
+    /// Set the external shutdown signal receiver
+    pub fn with_shutdown_signal(mut self, rx: watch::Receiver<bool>) -> Self {
+        self.external_shutdown_rx = Some(rx);
+        self
     }
 
     /// Get the ready notification handle
     pub fn ready_notify(&self) -> Arc<Notify> {
         self.ready_notify.clone()
+    }
+
+    /// Get the running flag for external shutdown control
+    pub fn running_flag(&self) -> Arc<AtomicBool> {
+        self.running.clone()
     }
 
     /// Check if the worker is running
@@ -196,6 +210,9 @@ impl TaskExecutorWorker {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
 
+        // Clone external shutdown receiver if present
+        let mut external_shutdown_rx = self.external_shutdown_rx.clone();
+
         info!(
             worker_id = %self.config.worker_id,
             tenant_id = %self.config.tenant_id,
@@ -233,10 +250,21 @@ impl TaskExecutorWorker {
         self.ready_notify.notify_one();
 
         // Polling loop
+        let mut was_disconnected = false;
         while self.running.load(Ordering::SeqCst) {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     debug!("Received shutdown signal");
+                    break;
+                }
+                _ = async {
+                    if let Some(ref mut rx) = external_shutdown_rx {
+                        let _ = rx.changed().await;
+                    } else {
+                        std::future::pending::<()>().await
+                    }
+                } => {
+                    debug!("Received external shutdown signal");
                     break;
                 }
                 result = self.poll_and_execute() => {
@@ -247,12 +275,16 @@ impl TaskExecutorWorker {
 
                         if is_connection_error {
                             warn!("Server unavailable, will retry: {}", e);
+                            was_disconnected = true;
                         } else {
                             error!("Polling loop error: {}", e);
                         }
 
                         // Wait before retrying
                         tokio::time::sleep(Duration::from_secs(1)).await;
+                    } else if was_disconnected {
+                        info!("Successfully reconnected to server");
+                        was_disconnected = false;
                     }
                 }
             }

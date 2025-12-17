@@ -18,8 +18,23 @@ use tasks::{InventoryTask, PaymentTask, ShipmentTask};
 use tracing::info;
 use workflows::OrderWorkflow;
 
+/// Parse a server URL into host and port components
+fn parse_server_url(url: &str) -> (String, u16) {
+    let url = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let mut parts = url.split(':');
+    let host = parts.next().unwrap_or("localhost").to_string();
+    let port = parts.next().and_then(|p| p.parse().ok()).unwrap_or(9090);
+    (host, port)
+}
+
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Load environment variables from examples/.env
+    dotenvy::from_filename("examples/.env").ok();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -37,12 +52,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| uuid::Uuid::parse_str(&s).ok())
         .unwrap_or_else(uuid::Uuid::new_v4);
 
-    let server_host =
-        std::env::var("FLOVYN_SERVER_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let server_port: u16 = std::env::var("FLOVYN_SERVER_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(9090);
+    let server_url = std::env::var("FLOVYN_GRPC_SERVER_URL")
+        .unwrap_or_else(|_| "http://localhost:9090".to_string());
+    let (server_host, server_port) = parse_server_url(&server_url);
     let worker_token = std::env::var("FLOVYN_WORKER_TOKEN")
         .expect("FLOVYN_WORKER_TOKEN environment variable is required");
 

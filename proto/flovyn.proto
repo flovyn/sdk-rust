@@ -40,6 +40,9 @@ service WorkflowDispatch {
 
   // Submit workflow commands after execution
   rpc SubmitWorkflowCommands(SubmitWorkflowCommandsRequest) returns (google.protobuf.Empty);
+
+  // Report execution spans from SDK (span proxy for unified traces)
+  rpc ReportExecutionSpans(ReportExecutionSpansRequest) returns (ReportExecutionSpansResponse);
 }
 
 // ============================================================================
@@ -673,4 +676,83 @@ message WorkerHeartbeatRequest {
   repeated string workflow_kinds = 2;
   repeated string task_kinds = 3;
   bytes health_info = 4;
+}
+
+// ============================================================================
+// SDK Span Proxy Messages (for unified distributed tracing)
+// ============================================================================
+
+// SDK environment information
+message SdkInfo {
+  // Programming language (e.g., "rust", "python", "typescript")
+  string language = 1;
+
+  // SDK version (e.g., "0.1.0")
+  string sdk_version = 2;
+
+  // Language runtime version (e.g., "1.75.0" for Rust, "3.11" for Python)
+  optional string runtime_version = 3;
+
+  // Operating system (e.g., "linux", "macos", "windows")
+  optional string os = 4;
+
+  // Architecture (e.g., "x86_64", "aarch64")
+  optional string arch = 5;
+
+  // Hostname of the worker machine
+  optional string hostname = 6;
+}
+
+// An execution span from the SDK
+message ExecutionSpan {
+  // Unique span ID (UUID format)
+  string span_id = 1;
+
+  // Parent span ID (if this span has a parent)
+  optional string parent_span_id = 2;
+
+  // Span type (e.g., "workflow.execute", "task.execute", "workflow.replay")
+  string span_type = 3;
+
+  // Workflow execution ID this span belongs to
+  string workflow_id = 4;
+
+  // Task execution ID (if this is a task-related span)
+  optional string task_id = 5;
+
+  // Start time in nanoseconds since Unix epoch
+  int64 start_time_unix_ns = 6;
+
+  // End time in nanoseconds since Unix epoch
+  int64 end_time_unix_ns = 7;
+
+  // Whether this span represents an error
+  bool is_error = 8;
+
+  // Error type (if is_error is true)
+  optional string error_type = 9;
+
+  // Error message (if is_error is true, truncated to 1KB by server)
+  optional string error_message = 10;
+
+  // Additional attributes (filtered by server whitelist)
+  map<string, string> attributes = 11;
+}
+
+// Request to report execution spans
+message ReportExecutionSpansRequest {
+  // SDK environment info
+  SdkInfo sdk_info = 1;
+
+  // Execution spans to report
+  repeated ExecutionSpan spans = 2;
+}
+
+// Response from reporting execution spans
+message ReportExecutionSpansResponse {
+  // Number of spans accepted
+  int32 accepted_count = 1;
+
+  // Number of spans rejected (invalid type, unknown workflow, etc.)
+  int32 rejected_count = 2;
 }

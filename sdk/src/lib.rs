@@ -12,6 +12,7 @@ pub mod config;
 pub mod error;
 pub mod generated;
 pub mod task;
+pub mod telemetry;
 pub mod worker;
 pub mod workflow;
 
@@ -62,6 +63,9 @@ pub use worker::registry::{RegisteredWorkflow, WorkflowMetadata, WorkflowRegistr
 pub use worker::task_worker::{TaskExecutorWorker, TaskWorkerConfig};
 pub use worker::workflow_worker::{WorkflowExecutorWorker, WorkflowWorkerConfig};
 
+// Re-export telemetry types
+pub use telemetry::{RecordingSpan, SpanCollector};
+
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::client::{
@@ -81,6 +85,7 @@ pub mod prelude {
         TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
     };
     pub use crate::task::registry::{RegisteredTask, TaskMetadata, TaskRegistry};
+    pub use crate::telemetry::{RecordingSpan, SpanCollector};
     pub use crate::worker::determinism::{DeterminismValidationResult, DeterminismValidator};
     pub use crate::worker::executor::{
         WorkflowExecutor, WorkflowExecutorConfig, WorkflowStatus, WorkflowTaskResult,

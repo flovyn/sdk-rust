@@ -785,6 +785,90 @@ pub struct WorkerHeartbeatRequest {
     #[prost(bytes = "vec", tag = "4")]
     pub health_info: ::prost::alloc::vec::Vec<u8>,
 }
+/// SDK environment information
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SdkInfo {
+    /// Programming language (e.g., "rust", "python", "typescript")
+    #[prost(string, tag = "1")]
+    pub language: ::prost::alloc::string::String,
+    /// SDK version (e.g., "0.1.0")
+    #[prost(string, tag = "2")]
+    pub sdk_version: ::prost::alloc::string::String,
+    /// Language runtime version (e.g., "1.75.0" for Rust, "3.11" for Python)
+    #[prost(string, optional, tag = "3")]
+    pub runtime_version: ::core::option::Option<::prost::alloc::string::String>,
+    /// Operating system (e.g., "linux", "macos", "windows")
+    #[prost(string, optional, tag = "4")]
+    pub os: ::core::option::Option<::prost::alloc::string::String>,
+    /// Architecture (e.g., "x86_64", "aarch64")
+    #[prost(string, optional, tag = "5")]
+    pub arch: ::core::option::Option<::prost::alloc::string::String>,
+    /// Hostname of the worker machine
+    #[prost(string, optional, tag = "6")]
+    pub hostname: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// An execution span from the SDK
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExecutionSpan {
+    /// Unique span ID (UUID format)
+    #[prost(string, tag = "1")]
+    pub span_id: ::prost::alloc::string::String,
+    /// Parent span ID (if this span has a parent)
+    #[prost(string, optional, tag = "2")]
+    pub parent_span_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Span type (e.g., "workflow.execute", "task.execute", "workflow.replay")
+    #[prost(string, tag = "3")]
+    pub span_type: ::prost::alloc::string::String,
+    /// Workflow execution ID this span belongs to
+    #[prost(string, tag = "4")]
+    pub workflow_id: ::prost::alloc::string::String,
+    /// Task execution ID (if this is a task-related span)
+    #[prost(string, optional, tag = "5")]
+    pub task_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Start time in nanoseconds since Unix epoch
+    #[prost(int64, tag = "6")]
+    pub start_time_unix_ns: i64,
+    /// End time in nanoseconds since Unix epoch
+    #[prost(int64, tag = "7")]
+    pub end_time_unix_ns: i64,
+    /// Whether this span represents an error
+    #[prost(bool, tag = "8")]
+    pub is_error: bool,
+    /// Error type (if is_error is true)
+    #[prost(string, optional, tag = "9")]
+    pub error_type: ::core::option::Option<::prost::alloc::string::String>,
+    /// Error message (if is_error is true, truncated to 1KB by server)
+    #[prost(string, optional, tag = "10")]
+    pub error_message: ::core::option::Option<::prost::alloc::string::String>,
+    /// Additional attributes (filtered by server whitelist)
+    #[prost(map = "string, string", tag = "11")]
+    pub attributes:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+}
+/// Request to report execution spans
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReportExecutionSpansRequest {
+    /// SDK environment info
+    #[prost(message, optional, tag = "1")]
+    pub sdk_info: ::core::option::Option<SdkInfo>,
+    /// Execution spans to report
+    #[prost(message, repeated, tag = "2")]
+    pub spans: ::prost::alloc::vec::Vec<ExecutionSpan>,
+}
+/// Response from reporting execution spans
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReportExecutionSpansResponse {
+    /// Number of spans accepted
+    #[prost(int32, tag = "1")]
+    pub accepted_count: i32,
+    /// Number of spans rejected (invalid type, unknown workflow, etc.)
+    #[prost(int32, tag = "2")]
+    pub rejected_count: i32,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum StreamEventType {
@@ -1202,6 +1286,29 @@ pub mod workflow_dispatch_client {
             req.extensions_mut().insert(GrpcMethod::new(
                 "flovyn.v1.WorkflowDispatch",
                 "SubmitWorkflowCommands",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Report execution spans from SDK (span proxy for unified traces)
+        pub async fn report_execution_spans(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ReportExecutionSpansRequest>,
+        ) -> std::result::Result<tonic::Response<super::ReportExecutionSpansResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/flovyn.v1.WorkflowDispatch/ReportExecutionSpans",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "ReportExecutionSpans",
             ));
             self.inner.unary(req, path, codec).await
         }

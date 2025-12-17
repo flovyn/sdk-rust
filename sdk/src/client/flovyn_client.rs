@@ -19,7 +19,7 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{watch, Notify};
 use tonic::transport::Channel;
 use tracing::{debug, error, info};
 use uuid::Uuid;
@@ -117,6 +117,8 @@ pub struct FlovynClient {
     pub(crate) running: AtomicBool,
     /// Worker token for gRPC authentication
     pub(crate) worker_token: String,
+    /// Enable telemetry (span reporting to server)
+    pub(crate) enable_telemetry: bool,
 }
 
 impl FlovynClient {
@@ -170,52 +172,57 @@ impl FlovynClient {
             "Starting FlovynClient"
         );
 
-        let (shutdown_tx, _shutdown_rx) = mpsc::channel::<()>(1);
+        // Create shutdown channel for immediate shutdown signaling
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         // Start workflow worker if there are registered workflows
-        let (workflow_handle, workflow_ready) = if self.workflow_registry.has_registrations() {
-            let config = WorkflowWorkerConfig {
-                worker_id: self.worker_id.clone(),
-                tenant_id: self.tenant_id,
-                task_queue: self.task_queue.clone(),
-                poll_timeout: self.poll_timeout,
-                max_concurrent: self.config.workflow_config.max_concurrent,
-                heartbeat_interval: self.heartbeat_interval,
-                worker_name: self.worker_name.clone(),
-                worker_version: self.worker_version.clone(),
-                space_id: self.space_id,
-                enable_auto_registration: self.enable_auto_registration,
-                enable_notifications: true,
-                worker_token: self.worker_token.clone(),
+        let (workflow_handle, workflow_ready, workflow_running) =
+            if self.workflow_registry.has_registrations() {
+                let config = WorkflowWorkerConfig {
+                    worker_id: self.worker_id.clone(),
+                    tenant_id: self.tenant_id,
+                    task_queue: self.task_queue.clone(),
+                    poll_timeout: self.poll_timeout,
+                    max_concurrent: self.config.workflow_config.max_concurrent,
+                    heartbeat_interval: self.heartbeat_interval,
+                    worker_name: self.worker_name.clone(),
+                    worker_version: self.worker_version.clone(),
+                    space_id: self.space_id,
+                    enable_auto_registration: self.enable_auto_registration,
+                    enable_notifications: true,
+                    worker_token: self.worker_token.clone(),
+                    enable_telemetry: self.enable_telemetry,
+                };
+
+                let mut worker = WorkflowExecutorWorker::new(
+                    config,
+                    self.workflow_registry.clone(),
+                    self.channel.clone(),
+                )
+                .with_shutdown_signal(shutdown_rx.clone());
+
+                // Apply hook if present
+                if let Some(ref hook) = self.workflow_hook {
+                    worker = worker.with_hook(hook.clone());
+                }
+
+                let ready_notify = worker.ready_notify();
+                let running_flag = worker.running_flag();
+
+                let handle = tokio::spawn(async move {
+                    if let Err(e) = worker.start().await {
+                        error!("Workflow worker error: {}", e);
+                    }
+                });
+
+                (Some(handle), Some(ready_notify), Some(running_flag))
+            } else {
+                debug!("No workflows registered, skipping workflow worker");
+                (None, None, None)
             };
 
-            let mut worker = WorkflowExecutorWorker::new(
-                config,
-                self.workflow_registry.clone(),
-                self.channel.clone(),
-            );
-
-            // Apply hook if present
-            if let Some(ref hook) = self.workflow_hook {
-                worker = worker.with_hook(hook.clone());
-            }
-
-            let ready_notify = worker.ready_notify();
-
-            let handle = tokio::spawn(async move {
-                if let Err(e) = worker.start().await {
-                    error!("Workflow worker error: {}", e);
-                }
-            });
-
-            (Some(handle), Some(ready_notify))
-        } else {
-            debug!("No workflows registered, skipping workflow worker");
-            (None, None)
-        };
-
         // Start task worker if there are registered tasks
-        let (task_handle, task_ready) = if self.task_registry.has_registrations() {
+        let (task_handle, task_ready, task_running) = if self.task_registry.has_registrations() {
             let config = TaskWorkerConfig {
                 worker_id: format!("{}-task", self.worker_id),
                 tenant_id: self.tenant_id,
@@ -231,9 +238,11 @@ impl FlovynClient {
             };
 
             let worker =
-                TaskExecutorWorker::new(config, self.task_registry.clone(), self.channel.clone());
+                TaskExecutorWorker::new(config, self.task_registry.clone(), self.channel.clone())
+                    .with_shutdown_signal(shutdown_rx.clone());
 
             let ready_notify = worker.ready_notify();
+            let running_flag = worker.running_flag();
             let mut worker = worker;
 
             let handle = tokio::spawn(async move {
@@ -242,14 +251,16 @@ impl FlovynClient {
                 }
             });
 
-            (Some(handle), Some(ready_notify))
+            (Some(handle), Some(ready_notify), Some(running_flag))
         } else {
             debug!("No tasks registered, skipping task worker");
-            (None, None)
+            (None, None, None)
         };
 
         Ok(WorkerHandle {
             shutdown_tx,
+            workflow_running,
+            task_running,
             workflow_handle,
             task_handle,
             workflow_ready,
@@ -532,7 +543,9 @@ impl FlovynClient {
 
 /// Handle for managing running workers
 pub struct WorkerHandle {
-    shutdown_tx: mpsc::Sender<()>,
+    shutdown_tx: watch::Sender<bool>,
+    workflow_running: Option<Arc<AtomicBool>>,
+    task_running: Option<Arc<AtomicBool>>,
     workflow_handle: Option<tokio::task::JoinHandle<()>>,
     task_handle: Option<tokio::task::JoinHandle<()>>,
     workflow_ready: Option<Arc<Notify>>,
@@ -568,10 +581,24 @@ impl WorkerHandle {
         }
     }
 
-    /// Stop the workers gracefully
-    pub async fn stop(self) {
-        // Send shutdown signal
-        let _ = self.shutdown_tx.send(()).await;
+    /// Stop the workers
+    ///
+    /// If `immediate` is true, workers will be interrupted immediately even if
+    /// they are in the middle of a long-polling operation.
+    /// If `immediate` is false, workers will finish their current poll before stopping.
+    pub async fn stop_with_option(self, immediate: bool) {
+        if immediate {
+            // Send immediate shutdown signal via watch channel
+            let _ = self.shutdown_tx.send(true);
+        }
+
+        // Set running flags for any code that checks them
+        if let Some(ref running) = self.workflow_running {
+            running.store(false, Ordering::SeqCst);
+        }
+        if let Some(ref running) = self.task_running {
+            running.store(false, Ordering::SeqCst);
+        }
 
         // Wait for handles to complete
         if let Some(handle) = self.workflow_handle {
@@ -584,8 +611,35 @@ impl WorkerHandle {
         info!("Workers stopped");
     }
 
+    /// Stop the workers immediately
+    ///
+    /// This interrupts any in-progress polling operations for fast shutdown.
+    pub async fn stop(self) {
+        self.stop_with_option(true).await;
+    }
+
+    /// Stop the workers gracefully
+    ///
+    /// This waits for the current polling operation to complete before stopping.
+    /// May take up to the poll timeout duration.
+    pub async fn stop_graceful(self) {
+        self.stop_with_option(false).await;
+    }
+
     /// Abort the workers immediately
     pub fn abort(self) {
+        // Send immediate shutdown signal via watch channel
+        let _ = self.shutdown_tx.send(true);
+
+        // Also set running flags
+        if let Some(ref running) = self.workflow_running {
+            running.store(false, Ordering::SeqCst);
+        }
+        if let Some(ref running) = self.task_running {
+            running.store(false, Ordering::SeqCst);
+        }
+
+        // Abort task handles
         if let Some(handle) = self.workflow_handle {
             handle.abort();
         }

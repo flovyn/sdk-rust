@@ -49,6 +49,8 @@ pub struct FlovynClientBuilder {
     hooks: Vec<Box<dyn WorkflowHook>>,
     /// Worker token for gRPC authentication
     worker_token: Option<String>,
+    /// Enable telemetry (span reporting to server)
+    enable_telemetry: bool,
 }
 
 impl Default for FlovynClientBuilder {
@@ -78,6 +80,7 @@ impl FlovynClientBuilder {
             task_registry: TaskRegistry::new(),
             hooks: Vec::new(),
             worker_token: None,
+            enable_telemetry: false,
         }
     }
 
@@ -174,6 +177,17 @@ impl FlovynClientBuilder {
     /// This is required when the server has security enabled.
     pub fn worker_token(mut self, token: impl Into<String>) -> Self {
         self.worker_token = Some(token.into());
+        self
+    }
+
+    /// Enable telemetry (span reporting to server)
+    ///
+    /// When enabled, the SDK will report execution spans to the server for
+    /// distributed tracing. The server will create OTLP spans from the SDK data.
+    ///
+    /// Default: false
+    pub fn enable_telemetry(mut self, enable: bool) -> Self {
+        self.enable_telemetry = enable;
         self
     }
 
@@ -308,6 +322,7 @@ impl FlovynClientBuilder {
             workflow_hook,
             running: std::sync::atomic::AtomicBool::new(false),
             worker_token,
+            enable_telemetry: self.enable_telemetry,
         })
     }
 }

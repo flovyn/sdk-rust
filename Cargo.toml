@@ -57,3 +57,6 @@ parking_lot = "0.12"
 
 # System info
 hostname = "0.4"
+
+# Environment variables
+dotenvy = "0.15"
