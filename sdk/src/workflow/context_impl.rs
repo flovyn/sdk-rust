@@ -67,7 +67,7 @@ impl DeterministicRandom for SeededRandom {
     }
 
     fn next_bool(&self) -> bool {
-        self.next_u64().is_multiple_of(2)
+        self.next_u64() % 2 == 0
     }
 }
 
