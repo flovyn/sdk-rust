@@ -278,6 +278,11 @@ pub fn activity_execute_span(
     span
 }
 
+/// Helper to create a run.execute span (for cached side-effect operations)
+pub fn run_execute_span(workflow_id: &str, operation_name: &str) -> RecordingSpan {
+    RecordingSpan::new("run.execute", workflow_id).with_attribute("operation.name", operation_name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

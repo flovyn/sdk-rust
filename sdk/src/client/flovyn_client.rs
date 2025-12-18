@@ -235,6 +235,7 @@ impl FlovynClient {
                 space_id: self.space_id,
                 enable_auto_registration: self.enable_auto_registration,
                 worker_token: self.worker_token.clone(),
+                enable_telemetry: self.enable_telemetry,
             };
 
             let worker =

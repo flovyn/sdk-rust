@@ -1,10 +1,11 @@
 //! TaskExecutorWorker - Polling service for task execution
 
 use crate::client::worker_lifecycle::{WorkerLifecycleClient, WorkerType};
-use crate::client::TaskExecutionClient;
+use crate::client::{TaskExecutionClient, WorkflowDispatch};
 use crate::error::{FlovynError, Result};
 use crate::task::executor::{TaskExecutionResult, TaskExecutor, TaskExecutorConfig};
 use crate::task::registry::TaskRegistry;
+use crate::telemetry::{task_execute_span, SpanCollector};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +39,8 @@ pub struct TaskWorkerConfig {
     pub enable_auto_registration: bool,
     /// Worker token for gRPC authentication
     pub worker_token: String,
+    /// Enable telemetry (task.execute spans)
+    pub enable_telemetry: bool,
 }
 
 impl Default for TaskWorkerConfig {
@@ -54,6 +57,7 @@ impl Default for TaskWorkerConfig {
             space_id: None,
             enable_auto_registration: true,
             worker_token: String::new(),
+            enable_telemetry: false,
         }
     }
 }
@@ -73,6 +77,10 @@ pub struct TaskExecutorWorker {
     ready_notify: Arc<Notify>,
     /// External shutdown signal receiver
     external_shutdown_rx: Option<watch::Receiver<bool>>,
+    /// Span collector for telemetry
+    span_collector: SpanCollector,
+    /// WorkflowDispatch client for reporting spans
+    workflow_dispatch: WorkflowDispatch,
 }
 
 impl TaskExecutorWorker {
@@ -81,6 +89,8 @@ impl TaskExecutorWorker {
         let executor_config = TaskExecutorConfig::default();
         let executor = TaskExecutor::new(registry.clone(), executor_config);
         let client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
+        let span_collector = SpanCollector::new(config.enable_telemetry);
+        let workflow_dispatch = WorkflowDispatch::new(channel.clone(), &config.worker_token);
 
         Self {
             config,
@@ -93,6 +103,8 @@ impl TaskExecutorWorker {
             server_worker_id: None,
             ready_notify: Arc::new(Notify::new()),
             external_shutdown_rx: None,
+            span_collector,
+            workflow_dispatch,
         }
     }
 
@@ -326,6 +338,7 @@ impl TaskExecutorWorker {
 
         let task_execution_id = task_info.id;
         let task_type = &task_info.task_type;
+        let workflow_id = task_info.workflow_execution_id;
 
         debug!(
             task_execution_id = %task_execution_id,
@@ -333,6 +346,19 @@ impl TaskExecutorWorker {
             attempt = task_info.execution_count,
             "Executing task"
         );
+
+        // Create task.execute span for telemetry
+        let span = if self.span_collector.is_enabled() {
+            let wf_id = workflow_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "standalone".to_string());
+            Some(
+                task_execute_span(&wf_id, &task_execution_id.to_string(), task_type)
+                    .with_attribute("attempt", &task_info.execution_count.to_string()),
+            )
+        } else {
+            None
+        };
 
         // Execute the task using TaskExecutor
         let result = self
@@ -344,6 +370,26 @@ impl TaskExecutorWorker {
                 task_info.execution_count,
             )
             .await;
+
+        // Finish and record the span
+        if let Some(span) = span {
+            let finished_span = match &result {
+                TaskExecutionResult::Completed { .. } => span.finish(),
+                TaskExecutionResult::Failed { error_message, .. } => {
+                    span.finish_with_error("TaskFailed", error_message)
+                }
+                TaskExecutionResult::Cancelled => {
+                    span.finish_with_error("TaskCancelled", "Task was cancelled")
+                }
+                TaskExecutionResult::TimedOut => {
+                    span.finish_with_error("TaskTimeout", "Task execution timed out")
+                }
+            };
+            self.span_collector.record(finished_span);
+
+            // Flush spans to server
+            self.span_collector.flush(&mut self.workflow_dispatch).await;
+        }
 
         // Report result to server
         self.report_result(task_execution_id, result).await?;
@@ -425,6 +471,7 @@ mod tests {
         assert!(config.enable_auto_registration);
         assert!(config.worker_name.is_none());
         assert!(config.space_id.is_none());
+        assert!(!config.enable_telemetry);
     }
 
     #[test]
@@ -444,6 +491,7 @@ mod tests {
             space_id: Some(Uuid::new_v4()),
             enable_auto_registration: false,
             worker_token: "test-token".to_string(),
+            enable_telemetry: true,
         };
 
         assert_eq!(config.worker_id, "task-worker-1");
@@ -452,5 +500,6 @@ mod tests {
         assert_eq!(config.worker_name, Some("GPU Task Worker".to_string()));
         assert_eq!(config.worker_version, "2.0.0");
         assert!(!config.enable_auto_registration);
+        assert!(config.enable_telemetry);
     }
 }

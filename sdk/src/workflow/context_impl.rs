@@ -1,6 +1,7 @@
 //! WorkflowContextImpl - Concrete implementation of WorkflowContext
 
 use crate::error::{FlovynError, Result};
+use crate::generated::flovyn_v1::ExecutionSpan;
 use crate::workflow::command::WorkflowCommand;
 use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, WorkflowContext};
 use crate::workflow::event::{EventType, ReplayEvent};
@@ -133,6 +134,12 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
     /// Task submitter for submitting tasks to the server.
     /// If None, scheduling tasks will fail with an error.
     task_submitter: Option<Arc<dyn TaskSubmitter>>,
+
+    /// Whether telemetry is enabled for span recording
+    enable_telemetry: bool,
+
+    /// Recorded execution spans (collected by worker after execution)
+    recorded_spans: RwLock<Vec<ExecutionSpan>>,
 }
 
 impl<R: CommandRecorder> WorkflowContextImpl<R> {
@@ -165,6 +172,29 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
         existing_events: Vec<ReplayEvent>,
         start_time_millis: i64,
         task_submitter: Option<Arc<dyn TaskSubmitter>>,
+    ) -> Self {
+        Self::new_with_telemetry(
+            workflow_execution_id,
+            tenant_id,
+            input,
+            recorder,
+            existing_events,
+            start_time_millis,
+            task_submitter,
+            false, // telemetry disabled by default
+        )
+    }
+
+    /// Create a new WorkflowContextImpl with task submitter and telemetry
+    pub fn new_with_telemetry(
+        workflow_execution_id: Uuid,
+        tenant_id: Uuid,
+        input: Value,
+        recorder: R,
+        existing_events: Vec<ReplayEvent>,
+        start_time_millis: i64,
+        task_submitter: Option<Arc<dyn TaskSubmitter>>,
+        enable_telemetry: bool,
     ) -> Self {
         // Create seed from workflow execution ID for deterministic randomness
         let seed = workflow_execution_id.as_u128() as u64;
@@ -222,6 +252,8 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             sleep_call_counter: AtomicI32::new(0),
             consumed_task_execution_ids: RwLock::new(std::collections::HashSet::new()),
             task_submitter,
+            enable_telemetry,
+            recorded_spans: RwLock::new(Vec::new()),
         }
     }
 
@@ -297,6 +329,12 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
     pub fn resolve_child_workflow(&self, name: &str, result: Value) {
         let mut pending = self.pending_child_workflows.write();
         pending.insert(name.to_string(), result);
+    }
+
+    /// Take all recorded execution spans (clears the internal buffer).
+    /// Called by workflow worker to collect spans after execution.
+    pub fn take_recorded_spans(&self) -> Vec<ExecutionSpan> {
+        std::mem::take(&mut self.recorded_spans.write())
     }
 }
 
@@ -377,6 +415,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             operation_name: name.to_string(),
             result: result.clone(),
         })?;
+
+        // Record run.execute span for telemetry (only for new operations, not replay)
+        if self.enable_telemetry {
+            let span =
+                crate::telemetry::run_execute_span(&self.workflow_execution_id.to_string(), name)
+                    .finish();
+            self.recorded_spans.write().push(span);
+        }
 
         Ok(result)
     }

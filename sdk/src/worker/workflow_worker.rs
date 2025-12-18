@@ -620,7 +620,7 @@ impl WorkflowExecutorWorker {
         let current_sequence = replay_events.len() as i32;
         let workflow_task_time = workflow_info.workflow_task_time_millis;
 
-        let ctx = Arc::new(WorkflowContextImpl::new_with_task_submitter(
+        let ctx = Arc::new(WorkflowContextImpl::new_with_telemetry(
             workflow_id,
             workflow_info.tenant_id,
             workflow_info.input.clone(),
@@ -628,6 +628,7 @@ impl WorkflowExecutorWorker {
             replay_events.clone(),
             workflow_task_time,
             Some(task_submitter),
+            span_collector.is_enabled(),
         ));
 
         // Call hook: workflow started
@@ -739,6 +740,11 @@ impl WorkflowExecutorWorker {
         client
             .submit_workflow_commands(workflow_id, proto_commands, proto_status)
             .await?;
+
+        // Collect spans recorded by the workflow context (e.g., run.execute spans)
+        for span in ctx.take_recorded_spans() {
+            span_collector.record(span);
+        }
 
         // Flush spans to server (fire-and-forget)
         span_collector.flush(client).await;
