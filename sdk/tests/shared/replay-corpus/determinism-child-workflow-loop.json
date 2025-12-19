@@ -1,0 +1,93 @@
+{
+  "name": "determinism-child-workflow-loop",
+  "description": "Child workflows in a loop - tests sequence-based replay with multiple child workflows",
+  "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000004",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "child-workflow-loop-workflow",
+  "input": {
+    "count": 3
+  },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "count": 3 }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "ChildWorkflowInitiated",
+      "data": {
+        "childExecutionName": "child-1",
+        "childWorkflowKind": "process-child",
+        "childworkflowExecutionId": "child-exec-1",
+        "input": { "index": 1 }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "ChildWorkflowCompleted",
+      "data": {
+        "childExecutionName": "child-1",
+        "childworkflowExecutionId": "child-exec-1",
+        "output": { "processed": 1 }
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "ChildWorkflowInitiated",
+      "data": {
+        "childExecutionName": "child-2",
+        "childWorkflowKind": "process-child",
+        "childworkflowExecutionId": "child-exec-2",
+        "input": { "index": 2 }
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "ChildWorkflowCompleted",
+      "data": {
+        "childExecutionName": "child-2",
+        "childworkflowExecutionId": "child-exec-2",
+        "output": { "processed": 2 }
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "ChildWorkflowInitiated",
+      "data": {
+        "childExecutionName": "child-3",
+        "childWorkflowKind": "process-child",
+        "childworkflowExecutionId": "child-exec-3",
+        "input": { "index": 3 }
+      }
+    },
+    {
+      "sequence_number": 7,
+      "event_type": "ChildWorkflowCompleted",
+      "data": {
+        "childExecutionName": "child-3",
+        "childworkflowExecutionId": "child-exec-3",
+        "output": { "processed": 3 }
+      }
+    },
+    {
+      "sequence_number": 8,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "results": [1, 2, 3] }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "ScheduleChildWorkflow", "workflowName": "child-1", "workflowKind": "process-child" },
+    { "type": "ScheduleChildWorkflow", "workflowName": "child-2", "workflowKind": "process-child" },
+    { "type": "ScheduleChildWorkflow", "workflowName": "child-3", "workflowKind": "process-child" },
+    { "type": "CompleteWorkflow" }
+  ],
+  "determinism_test": {
+    "type": "valid_replay",
+    "description": "Multiple child workflows should match by per-type sequence order"
+  }
+}

@@ -904,6 +904,14 @@ impl WorkflowExecutorWorker {
                     timer_id: timer_id.clone(),
                 })),
             ),
+            // Cancellation request commands are handled internally but don't have
+            // proto definitions yet. For now, we skip them in the command stream.
+            // TODO: Add proto support for RequestCancelTask and RequestCancelChildWorkflow
+            WorkflowCommand::RequestCancelTask { .. }
+            | WorkflowCommand::RequestCancelChildWorkflow { .. } => {
+                // Use Unspecified with empty data - server should ignore these
+                (flovyn_v1::CommandType::Unspecified as i32, None)
+            }
         };
 
         flovyn_v1::WorkflowCommand {

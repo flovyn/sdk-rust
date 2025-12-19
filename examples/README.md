@@ -108,6 +108,13 @@ Demonstrations of advanced workflow patterns:
 - `retry-workflow`: Exponential backoff
 - `circuit-breaker-workflow`: Circuit breaker pattern
 
+**5. Parallel Execution**
+- `fan-out-fan-in-workflow`: Process items in parallel, aggregate results using `join_all`
+- `racing-workflow`: Race multiple operations, take first result using `select`
+- `timeout-workflow`: Add timeouts to operations using `with_timeout`
+- `batch-with-concurrency-workflow`: Process items with controlled parallelism
+- `partial-completion-workflow`: Wait for N of M operations using `join_n`
+
 ```bash
 cargo run -p patterns-sample
 ```
@@ -172,7 +179,8 @@ examples/
         ├── timer_workflow.rs
         ├── promise_workflow.rs
         ├── child_workflow.rs
-        └── retry_workflow.rs
+        ├── retry_workflow.rs
+        └── parallel_workflow.rs
 ```
 
 ## Key Concepts

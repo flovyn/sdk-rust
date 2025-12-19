@@ -24,13 +24,18 @@ mod error_tests;
 mod fixtures;
 mod harness;
 mod promise_tests;
+mod replay_tests;
+mod replay_utils;
 mod state_tests;
 mod task_tests;
 mod test_env;
 mod timer_tests;
 mod workflow_tests;
 
-pub use harness::TestHarness;
+pub use harness::{TestHarness, WorkflowEventResponse, WorkflowExecutionResponse};
+pub use replay_utils::{
+    create_replay_context, parse_event_type, to_replay_event, to_replay_events,
+};
 pub use test_env::{E2ETestEnvBuilder, E2ETestEnvironment, WorkflowResult, WorkflowStatus};
 
 use harness::register_atexit_handler;

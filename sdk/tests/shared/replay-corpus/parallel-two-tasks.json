@@ -1,0 +1,71 @@
+{
+  "name": "parallel-two-tasks",
+  "description": "Two tasks scheduled in parallel and awaited - tests per-type sequence matching",
+  "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000100",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "parallel-tasks-workflow",
+  "input": { "items": ["a", "b"] },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "items": ["a", "b"] }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "process-item",
+        "taskExecutionId": "11111111-1111-1111-1111-111111111111",
+        "input": { "item": "a" }
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "process-item",
+        "taskExecutionId": "22222222-2222-2222-2222-222222222222",
+        "input": { "item": "b" }
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "TaskCompleted",
+      "data": {
+        "taskExecutionId": "22222222-2222-2222-2222-222222222222",
+        "result": { "processed": "b" }
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "TaskCompleted",
+      "data": {
+        "taskExecutionId": "11111111-1111-1111-1111-111111111111",
+        "result": { "processed": "a" }
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "results": ["a", "b"] }
+      }
+    }
+  ],
+  "replay_commands": [
+    { "type": "ScheduleTask", "taskType": "process-item", "input": { "item": "a" } },
+    { "type": "ScheduleTask", "taskType": "process-item", "input": { "item": "b" } }
+  ],
+  "expected_commands": [
+    { "type": "ScheduleTask", "taskType": "process-item", "input": { "item": "a" } },
+    { "type": "ScheduleTask", "taskType": "process-item", "input": { "item": "b" } },
+    { "type": "CompleteWorkflow", "output": { "results": ["a", "b"] } }
+  ],
+  "determinism_test": {
+    "type": "valid_replay",
+    "description": "Two parallel tasks of the same type match by per-type sequence number, completion order does not matter"
+  }
+}

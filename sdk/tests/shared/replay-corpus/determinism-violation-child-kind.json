@@ -1,0 +1,52 @@
+{
+  "name": "determinism-violation-child-kind",
+  "description": "Child workflow kind mismatch - workflow changed child workflow kind",
+  "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000006",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "child-kind-change-workflow",
+  "input": {},
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": {}
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "ChildWorkflowInitiated",
+      "data": {
+        "childExecutionName": "child-workflow",
+        "childWorkflowKind": "original-kind",
+        "childworkflowExecutionId": "child-exec-1",
+        "input": {}
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "ChildWorkflowCompleted",
+      "data": {
+        "childExecutionName": "child-workflow",
+        "childworkflowExecutionId": "child-exec-1",
+        "output": { "done": true }
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "success": true }
+      }
+    }
+  ],
+  "replay_commands": [
+    { "type": "ScheduleChildWorkflow", "workflowName": "child-workflow", "workflowKind": "changed-kind" }
+  ],
+  "determinism_test": {
+    "type": "expect_violation",
+    "violation_type": "ChildWorkflowMismatch",
+    "description": "ChildWorkflow(0) scheduled kind 'changed-kind' but history has 'original-kind'",
+    "expected_error_contains": ["Child workflow", "kind", "mismatch", "original-kind", "changed-kind"]
+  }
+}

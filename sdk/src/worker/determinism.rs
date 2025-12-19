@@ -364,6 +364,9 @@ impl DeterminismValidator {
             | WorkflowCommand::FailWorkflow { .. }
             | WorkflowCommand::SuspendWorkflow { .. }
             | WorkflowCommand::CancelWorkflow { .. } => {}
+            // Cancellation requests don't need field validation (they're fire-and-forget)
+            WorkflowCommand::RequestCancelTask { .. }
+            | WorkflowCommand::RequestCancelChildWorkflow { .. } => {}
         }
 
         DeterminismValidationResult::Valid
@@ -385,6 +388,10 @@ impl DeterminismValidator {
             WorkflowCommand::ResolvePromise { .. } => EventType::PromiseResolved,
             WorkflowCommand::StartTimer { .. } => EventType::TimerStarted,
             WorkflowCommand::CancelTimer { .. } => EventType::TimerCancelled,
+            // Cancellation requests map to the corresponding cancelled event types
+            // Note: These are requests that may or may not result in actual cancellation
+            WorkflowCommand::RequestCancelTask { .. } => EventType::TaskCancelled,
+            WorkflowCommand::RequestCancelChildWorkflow { .. } => EventType::ChildWorkflowCancelled,
         }
     }
 }

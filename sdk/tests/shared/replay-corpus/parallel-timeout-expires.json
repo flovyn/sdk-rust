@@ -1,0 +1,65 @@
+{
+  "name": "parallel-timeout-expires",
+  "description": "Timeout fires before task completes - task is cancelled, workflow returns timeout error",
+  "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000105",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "timeout-workflow",
+  "input": { "timeout_ms": 1000 },
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": { "timeout_ms": 1000 }
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "slow-operation",
+        "taskExecutionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "input": {}
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "TimerStarted",
+      "data": {
+        "timerId": "sleep-1",
+        "durationMs": 1000
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "TimerFired",
+      "data": {
+        "timerId": "sleep-1"
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "TaskCancelled",
+      "data": {
+        "taskExecutionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "WorkflowExecutionFailed",
+      "data": {
+        "error": "Operation timed out after 1000ms"
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "ScheduleTask", "taskType": "slow-operation" },
+    { "type": "StartTimer", "timerId": "sleep-1" },
+    { "type": "RequestCancelTask", "taskExecutionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    { "type": "FailWorkflow", "error": "Operation timed out after 1000ms" }
+  ],
+  "determinism_test": {
+    "type": "valid_replay",
+    "description": "Timeout fires first, task is cancelled, workflow returns timeout error"
+  }
+}

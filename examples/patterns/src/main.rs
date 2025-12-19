@@ -6,14 +6,21 @@
 //! 2. **Promises** - External signals and human-in-the-loop workflows
 //! 3. **Child Workflows** - Parent-child workflow orchestration
 //! 4. **Retry Patterns** - Exponential backoff and circuit breaker
+//! 5. **Parallel Execution** - Fan-out/fan-in, racing, timeouts, batch processing
 
 pub mod child_workflow;
+pub mod parallel_tasks;
+pub mod parallel_workflow;
 pub mod promise_workflow;
 pub mod retry_workflow;
 pub mod timer_workflow;
 
 use child_workflow::{BatchProcessingWorkflow, ControlledParallelWorkflow, ItemProcessorWorkflow};
 use flovyn_sdk::prelude::*;
+use parallel_workflow::{
+    BatchWithConcurrencyWorkflow, DynamicParallelismWorkflow, FanOutFanInWorkflow,
+    PartialCompletionWorkflow, RacingWorkflow, TimeoutWorkflow,
+};
 use promise_workflow::{ApprovalWorkflow, MultiApprovalWorkflow};
 use retry_workflow::{CircuitBreakerWorkflow, RetryWorkflow};
 use timer_workflow::{MultiStepTimerWorkflow, ReminderWorkflow};
@@ -85,6 +92,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Retry pattern workflows
         .register_workflow(RetryWorkflow)
         .register_workflow(CircuitBreakerWorkflow)
+        // Parallel execution workflows
+        .register_workflow(FanOutFanInWorkflow)
+        .register_workflow(RacingWorkflow)
+        .register_workflow(TimeoutWorkflow)
+        .register_workflow(BatchWithConcurrencyWorkflow)
+        .register_workflow(PartialCompletionWorkflow)
+        .register_workflow(DynamicParallelismWorkflow)
         .build()
         .await?;
 
@@ -99,6 +113,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             "controlled-parallel-workflow",
             "retry-workflow",
             "circuit-breaker-workflow",
+            "fan-out-fan-in-workflow",
+            "racing-workflow",
+            "timeout-workflow",
+            "batch-with-concurrency-workflow",
+            "partial-completion-workflow",
+            "dynamic-parallelism-workflow",
         ],
         "Registered pattern showcase workflows"
     );
@@ -125,6 +145,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("4. RETRY PATTERNS");
     info!("   - retry-workflow: Exponential backoff retry");
     info!("   - circuit-breaker-workflow: Circuit breaker pattern");
+    info!("");
+    info!("5. PARALLEL EXECUTION");
+    info!("   - fan-out-fan-in-workflow: Process items in parallel, aggregate results");
+    info!("   - racing-workflow: Race multiple operations, take first result");
+    info!("   - timeout-workflow: Add timeouts to operations");
+    info!("   - batch-with-concurrency-workflow: Process with controlled parallelism");
+    info!("   - partial-completion-workflow: Wait for N of M to complete");
+    info!("   - dynamic-parallelism-workflow: Runtime-determined parallelism");
     info!("");
     info!("Example: Start a reminder workflow:");
     info!("  curl -X POST http://localhost:8080/api/workflows/reminder-workflow \\");

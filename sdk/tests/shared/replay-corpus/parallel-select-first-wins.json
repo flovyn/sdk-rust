@@ -1,0 +1,67 @@
+{
+  "name": "parallel-select-first-wins",
+  "description": "Select pattern - first task to complete wins, other is cancelled",
+  "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000103",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "workflow_kind": "racing-tasks-workflow",
+  "input": {},
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": {}
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "fetch-primary",
+        "taskExecutionId": "77777777-7777-7777-7777-777777777777",
+        "input": {}
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "fetch-fallback",
+        "taskExecutionId": "88888888-8888-8888-8888-888888888888",
+        "input": {}
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "TaskCompleted",
+      "data": {
+        "taskExecutionId": "88888888-8888-8888-8888-888888888888",
+        "result": { "source": "fallback", "data": "from-fallback" }
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "TaskCancelled",
+      "data": {
+        "taskExecutionId": "77777777-7777-7777-7777-777777777777"
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "WorkflowCompleted",
+      "data": {
+        "output": { "source": "fallback", "data": "from-fallback" }
+      }
+    }
+  ],
+  "expected_commands": [
+    { "type": "ScheduleTask", "taskType": "fetch-primary" },
+    { "type": "ScheduleTask", "taskType": "fetch-fallback" },
+    { "type": "RequestCancelTask", "taskExecutionId": "77777777-7777-7777-7777-777777777777" },
+    { "type": "CompleteWorkflow" }
+  ],
+  "determinism_test": {
+    "type": "valid_replay",
+    "description": "Select returns first completed task result and cancels the remaining task"
+  }
+}

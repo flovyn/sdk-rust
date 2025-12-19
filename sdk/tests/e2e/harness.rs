@@ -335,6 +335,73 @@ impl TestHarness {
         &self.worker_token
     }
 
+    /// Get workflow events from the server for a given workflow execution.
+    /// Returns the events as JSON value for replay testing.
+    pub async fn get_workflow_events(
+        &self,
+        workflow_execution_id: &str,
+    ) -> Vec<WorkflowEventResponse> {
+        let base_url = format!("http://localhost:{}", self.server_http_port);
+        let client = reqwest::Client::new();
+        let jwt = Self::generate_test_jwt();
+
+        let url = format!(
+            "{}/api/tenants/{}/workflow-executions/{}/events",
+            base_url, self.tenant_slug, workflow_execution_id
+        );
+
+        let response = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", jwt))
+            .send()
+            .await
+            .expect("Failed to get workflow events");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            panic!("Failed to get workflow events: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .expect("Failed to parse workflow events response")
+    }
+
+    /// Get workflow execution details from the server.
+    pub async fn get_workflow_execution(
+        &self,
+        workflow_execution_id: &str,
+    ) -> WorkflowExecutionResponse {
+        let base_url = format!("http://localhost:{}", self.server_http_port);
+        let client = reqwest::Client::new();
+        let jwt = Self::generate_test_jwt();
+
+        let url = format!(
+            "{}/api/tenants/{}/workflow-executions/{}",
+            base_url, self.tenant_slug, workflow_execution_id
+        );
+
+        let response = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", jwt))
+            .send()
+            .await
+            .expect("Failed to get workflow execution");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            panic!("Failed to get workflow execution: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .expect("Failed to parse workflow execution response")
+    }
+
     /// Generate a self-signed JWT for REST API authentication.
     /// The server with security disabled accepts any JWT with valid structure.
     fn generate_test_jwt() -> String {
@@ -385,6 +452,34 @@ struct TenantResponse {
 #[derive(Debug, Deserialize)]
 struct WorkerTokenResponse {
     token: String,
+}
+
+/// Workflow event response from the server API.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowEventResponse {
+    pub sequence_number: i32,
+    pub event_type: String,
+    pub data: serde_json::Value,
+    pub created_at: String,
+}
+
+/// Workflow execution response from the server API.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowExecutionResponse {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub workflow_kind: String,
+    pub status: String,
+    pub input: serde_json::Value,
+    #[serde(default)]
+    pub output: Option<serde_json::Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
 }
 
 /// Pre-generated RSA private key for JWT signing (test purposes only).

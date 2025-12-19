@@ -77,6 +77,7 @@ impl ScenarioEvent {
 }
 
 /// Load all replay scenarios from the corpus directory
+/// Note: Skips determinism-*.json files which are handled by TCK determinism_corpus tests
 pub fn load_replay_corpus() -> Vec<ReplayScenario> {
     let corpus_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -90,12 +91,19 @@ pub fn load_replay_corpus() -> Vec<ReplayScenario> {
             let entry = entry.expect("Failed to read directory entry");
             let path = entry.path();
 
-            if path.extension().is_some_and(|e| e == "json") {
-                let content = fs::read_to_string(&path)
-                    .unwrap_or_else(|_| panic!("Failed to read {:?}", path));
-                let scenario: ReplayScenario = serde_json::from_str(&content)
-                    .unwrap_or_else(|_| panic!("Failed to parse {:?}", path));
-                scenarios.push(scenario);
+            if let Some(name) = path.file_name() {
+                let name_str = name.to_string_lossy();
+                // Skip determinism-*.json files - they're handled by TCK determinism_corpus tests
+                if name_str.starts_with("determinism-") {
+                    continue;
+                }
+                if name_str.ends_with(".json") {
+                    let content = fs::read_to_string(&path)
+                        .unwrap_or_else(|_| panic!("Failed to read {:?}", path));
+                    let scenario: ReplayScenario = serde_json::from_str(&content)
+                        .unwrap_or_else(|_| panic!("Failed to parse {:?}", path));
+                    scenarios.push(scenario);
+                }
             }
         }
     }

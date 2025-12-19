@@ -1,18 +1,23 @@
 //! WorkflowContextImpl - Concrete implementation of WorkflowContext
 
-use crate::error::{FlovynError, Result};
+use crate::error::{DeterminismViolationError, FlovynError, Result};
 use crate::generated::flovyn_v1::ExecutionSpan;
 use crate::workflow::command::WorkflowCommand;
 use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, WorkflowContext};
 use crate::workflow::event::{EventType, ReplayEvent};
+use crate::workflow::future::{
+    ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
+    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, TaskFuture,
+    TaskFutureContext, TaskFutureRaw, TimerFuture, TimerFutureContext,
+};
 use crate::workflow::recorder::CommandRecorder;
 use crate::workflow::task_submitter::TaskSubmitter;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -68,7 +73,7 @@ impl DeterministicRandom for SeededRandom {
     }
 
     fn next_bool(&self) -> bool {
-        self.next_u64() % 2 == 0
+        self.next_u64().is_multiple_of(2)
     }
 }
 
@@ -127,9 +132,37 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
     /// which changes between executions. This counter ensures timer IDs are consistent.
     sleep_call_counter: AtomicI32,
 
-    /// Tracking for consumed task execution IDs during replay.
-    /// This ensures multiple schedule() calls with the same taskType consume different events.
-    consumed_task_execution_ids: RwLock<std::collections::HashSet<String>>,
+    // ============= Per-Type Event Lists for Sequence-Based Replay =============
+    // Pre-filtered event lists for O(1) lookup by per-type index.
+    // During replay, commands are matched to events by (type, per_type_index).
+    /// TaskScheduled events only
+    task_events: Vec<ReplayEvent>,
+    /// ChildWorkflowInitiated events only
+    child_workflow_events: Vec<ReplayEvent>,
+    /// TimerStarted events only
+    timer_events: Vec<ReplayEvent>,
+    /// OperationCompleted events only
+    operation_events: Vec<ReplayEvent>,
+    /// PromiseCreated events only
+    promise_events: Vec<ReplayEvent>,
+    /// StateSet and StateCleared events only
+    state_events: Vec<ReplayEvent>,
+
+    // ============= Per-Type Sequence Counters =============
+    // Counters for tracking which event to match next within each type.
+    // Commands are matched by position in their type-specific event list.
+    /// Counter for task scheduling (Task(0), Task(1), ...)
+    next_task_seq: AtomicU32,
+    /// Counter for child workflows (ChildWorkflow(0), ChildWorkflow(1), ...)
+    next_child_workflow_seq: AtomicU32,
+    /// Counter for timers (Timer(0), Timer(1), ...)
+    next_timer_seq: AtomicU32,
+    /// Counter for operations (Operation(0), Operation(1), ...)
+    next_operation_seq: AtomicU32,
+    /// Counter for promises (Promise(0), Promise(1), ...)
+    next_promise_seq: AtomicU32,
+    /// Counter for state operations (State(0), State(1), ...)
+    next_state_seq: AtomicU32,
 
     /// Task submitter for submitting tasks to the server.
     /// If None, scheduling tasks will fail with an error.
@@ -186,6 +219,7 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
     }
 
     /// Create a new WorkflowContextImpl with task submitter and telemetry
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_telemetry(
         workflow_execution_id: Uuid,
         tenant_id: Uuid,
@@ -228,6 +262,49 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             }
         }
 
+        // Pre-filter events by type for O(1) lookup during replay
+        // Each list contains events of a specific type, in sequence order
+        let task_events: Vec<ReplayEvent> = existing_events
+            .iter()
+            .filter(|e| e.event_type() == EventType::TaskScheduled)
+            .cloned()
+            .collect();
+
+        let child_workflow_events: Vec<ReplayEvent> = existing_events
+            .iter()
+            .filter(|e| e.event_type() == EventType::ChildWorkflowInitiated)
+            .cloned()
+            .collect();
+
+        let timer_events: Vec<ReplayEvent> = existing_events
+            .iter()
+            .filter(|e| e.event_type() == EventType::TimerStarted)
+            .cloned()
+            .collect();
+
+        let operation_events: Vec<ReplayEvent> = existing_events
+            .iter()
+            .filter(|e| e.event_type() == EventType::OperationCompleted)
+            .cloned()
+            .collect();
+
+        let promise_events: Vec<ReplayEvent> = existing_events
+            .iter()
+            .filter(|e| e.event_type() == EventType::PromiseCreated)
+            .cloned()
+            .collect();
+
+        let state_events: Vec<ReplayEvent> = existing_events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.event_type(),
+                    EventType::StateSet | EventType::StateCleared
+                )
+            })
+            .cloned()
+            .collect();
+
         // Start sequence number from the next available position
         // If there are existing events (replay), continue from after them
         let initial_sequence = (existing_events.len() as i32) + 1;
@@ -250,7 +327,18 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             pending_timers: RwLock::new(HashMap::new()),
             pending_child_workflows: RwLock::new(HashMap::new()),
             sleep_call_counter: AtomicI32::new(0),
-            consumed_task_execution_ids: RwLock::new(std::collections::HashSet::new()),
+            task_events,
+            child_workflow_events,
+            timer_events,
+            operation_events,
+            promise_events,
+            state_events,
+            next_task_seq: AtomicU32::new(0),
+            next_child_workflow_seq: AtomicU32::new(0),
+            next_timer_seq: AtomicU32::new(0),
+            next_operation_seq: AtomicU32::new(0),
+            next_promise_seq: AtomicU32::new(0),
+            next_state_seq: AtomicU32::new(0),
             task_submitter,
             enable_telemetry,
             recorded_spans: RwLock::new(Vec::new()),
@@ -270,26 +358,70 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             .map_err(FlovynError::DeterminismViolation)
     }
 
-    /// Find an event by sequence number and type
-    fn find_event(&self, sequence: i32, event_type: EventType) -> Option<&ReplayEvent> {
+    /// Find terminal event (TaskCompleted or TaskFailed) for a task by taskExecutionId.
+    /// Returns the latest terminal event if multiple exist (e.g., retries).
+    fn find_terminal_task_event(&self, task_execution_id: &str) -> Option<&ReplayEvent> {
         self.existing_events
             .iter()
-            .find(|e| e.sequence_number() == sequence && e.event_type() == event_type)
+            .filter(|e| {
+                let matches_id = e
+                    .get_string("taskExecutionId")
+                    .or_else(|| e.get_string("taskId"))
+                    .map(|id| id == task_execution_id)
+                    .unwrap_or(false);
+                matches_id
+                    && (e.event_type() == EventType::TaskCompleted
+                        || e.event_type() == EventType::TaskFailed)
+            })
+            .max_by_key(|e| e.sequence_number())
     }
 
-    /// Find an event by type and a field value (e.g., timer_id)
-    fn find_event_by_field(
-        &self,
-        event_type: EventType,
-        field_name: &str,
-        field_value: &str,
-    ) -> Option<&ReplayEvent> {
-        self.existing_events.iter().find(|e| {
-            e.event_type() == event_type
-                && e.get_string(field_name)
-                    .map(|v| v == field_value)
+    /// Find terminal event (ChildWorkflowCompleted or ChildWorkflowFailed) for a child workflow by name.
+    /// Returns the terminal event if it exists.
+    fn find_terminal_child_workflow_event(&self, name: &str) -> Option<&ReplayEvent> {
+        self.existing_events
+            .iter()
+            .filter(|e| {
+                e.get_string("childExecutionName")
+                    .map(|n| n == name)
                     .unwrap_or(false)
-        })
+                    && (e.event_type() == EventType::ChildWorkflowCompleted
+                        || e.event_type() == EventType::ChildWorkflowFailed)
+            })
+            .max_by_key(|e| e.sequence_number())
+    }
+
+    /// Find terminal event (TimerFired or TimerCancelled) for a timer by timerId.
+    fn find_terminal_timer_event(&self, timer_id: &str) -> Option<&ReplayEvent> {
+        self.existing_events
+            .iter()
+            .filter(|e| {
+                e.get_string("timerId")
+                    .map(|id| id == timer_id)
+                    .unwrap_or(false)
+                    && (e.event_type() == EventType::TimerFired
+                        || e.event_type() == EventType::TimerCancelled)
+            })
+            .max_by_key(|e| e.sequence_number())
+    }
+
+    /// Find terminal event (PromiseResolved, PromiseRejected, or PromiseTimeout) for a promise.
+    fn find_terminal_promise_event(&self, promise_name: &str) -> Option<&ReplayEvent> {
+        self.existing_events
+            .iter()
+            .filter(|e| {
+                // PromiseCreated uses promiseId, terminal events use promiseName
+                let matches_name = e
+                    .get_string("promiseName")
+                    .or_else(|| e.get_string("promiseId"))
+                    .map(|n| n == promise_name)
+                    .unwrap_or(false);
+                matches_name
+                    && (e.event_type() == EventType::PromiseResolved
+                        || e.event_type() == EventType::PromiseRejected
+                        || e.event_type() == EventType::PromiseTimeout)
+            })
+            .max_by_key(|e| e.sequence_number())
     }
 
     /// Request cancellation
@@ -368,48 +500,45 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn run_raw(&self, name: &str, result: Value) -> Result<Value> {
-        let sequence = self.next_sequence();
+        // Get per-type sequence and increment atomically.
+        // This assigns Operation(0), Operation(1), etc. to each run() call.
+        let op_seq = self.next_operation_seq.fetch_add(1, Ordering::SeqCst) as usize;
 
-        // Check if we have a cached result from replay
-        {
-            let cache = self.operation_cache.read();
-            if let Some(cached) = cache.get(name) {
-                // Record the command for validation
-                self.record_command(WorkflowCommand::RecordOperation {
-                    sequence_number: sequence,
-                    operation_name: name.to_string(),
-                    result: cached.clone(),
-                })?;
-                return Ok(cached.clone());
+        // Look for event at this per-type index
+        if let Some(operation_event) = self.operation_events.get(op_seq) {
+            // Validate operation name matches
+            let event_op_name = operation_event
+                .get_string("operationName")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_op_name != name {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::OperationNameMismatch {
+                        sequence: op_seq as i32,
+                        expected: event_op_name,
+                        actual: name.to_string(),
+                    },
+                ));
             }
+
+            // Return the cached result from the event
+            let cached_result = operation_event
+                .get("result")
+                .cloned()
+                .unwrap_or(Value::Null);
+
+            return Ok(cached_result);
         }
 
-        // Check existing events for replay
-        if let Some(event) = self.find_event(sequence, EventType::OperationCompleted) {
-            if let Some(cached_result) = event.get("result") {
-                // Cache it for future lookups
-                {
-                    let mut cache = self.operation_cache.write();
-                    cache.insert(name.to_string(), cached_result.clone());
-                }
-
-                // Record the command
-                self.record_command(WorkflowCommand::RecordOperation {
-                    sequence_number: sequence,
-                    operation_name: name.to_string(),
-                    result: cached_result.clone(),
-                })?;
-
-                return Ok(cached_result.clone());
-            }
-        }
-
-        // New operation - record and cache the result
+        // No event at this per-type index → new operation
+        // Record and cache the result
         {
             let mut cache = self.operation_cache.write();
             cache.insert(name.to_string(), result.clone());
         }
 
+        let sequence = self.next_sequence();
         self.record_command(WorkflowCommand::RecordOperation {
             sequence_number: sequence,
             operation_name: name.to_string(),
@@ -438,64 +567,43 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         input: Value,
         options: ScheduleTaskOptions,
     ) -> Result<Value> {
-        // Find the FIRST UNCONSUMED TASK_SCHEDULED event for this taskType (by sequence order).
-        // This is critical for handling multiple schedule() calls with the same taskType.
-        // Each call must consume a different task event, not reuse the same one.
-        let unconsumed_scheduled_event = {
-            let consumed = self.consumed_task_execution_ids.read();
-            self.existing_events
-                .iter()
-                .filter(|e| {
-                    e.event_type() == EventType::TaskScheduled
-                        && e.get_string("taskType")
-                            .map(|t| t == task_type)
-                            .unwrap_or(false)
-                        && !consumed.contains(
-                            &e.get_string("taskExecutionId")
-                                .or_else(|| e.get_string("taskId"))
-                                .unwrap_or_default()
-                                .to_string(),
-                        )
-                })
-                .min_by_key(|e| e.sequence_number())
-                .cloned()
-        };
+        // Get per-type sequence and increment atomically.
+        // This assigns Task(0), Task(1), etc. to each schedule() call.
+        let task_seq = self.next_task_seq.fetch_add(1, Ordering::SeqCst) as usize;
 
-        // If we found an unconsumed SCHEDULED event, look for its completion/failure
-        if let Some(scheduled_event) = unconsumed_scheduled_event {
+        // Look for event at this per-type index
+        if let Some(scheduled_event) = self.task_events.get(task_seq) {
+            // Validate task type matches
+            let event_task_type = scheduled_event
+                .get_string("taskType")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_task_type != task_type {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::TaskTypeMismatch {
+                        sequence: task_seq as i32,
+                        expected: event_task_type,
+                        actual: task_type.to_string(),
+                    },
+                ));
+            }
+
+            // Get task execution ID from the scheduled event
             let task_execution_id = scheduled_event
                 .get_string("taskExecutionId")
                 .or_else(|| scheduled_event.get_string("taskId"))
                 .ok_or_else(|| {
-                    FlovynError::Other("TASK_SCHEDULED event missing taskExecutionId".to_string())
+                    FlovynError::Other("TaskScheduled event missing taskExecutionId".to_string())
                 })?
                 .to_string();
 
-            // Find terminal event (COMPLETED or FAILED) for this specific task
-            let terminal_event = self
-                .existing_events
-                .iter()
-                .filter(|e| {
-                    let matches_id = e
-                        .get_string("taskExecutionId")
-                        .or_else(|| e.get_string("taskId"))
-                        .map(|id| id == task_execution_id)
-                        .unwrap_or(false);
-                    matches_id
-                        && (e.event_type() == EventType::TaskCompleted
-                            || e.event_type() == EventType::TaskFailed)
-                })
-                .max_by_key(|e| e.sequence_number());
+            // Look for terminal event (completed/failed) for this task by ID
+            let terminal_event = self.find_terminal_task_event(&task_execution_id);
 
             match terminal_event {
                 Some(event) if event.event_type() == EventType::TaskCompleted => {
-                    // Task completed - mark as consumed and return result
-                    {
-                        let mut consumed = self.consumed_task_execution_ids.write();
-                        consumed.insert(task_execution_id);
-                    }
-
-                    // Get result from "result" or "output" field
+                    // Task completed - return result
                     let result = event
                         .get("result")
                         .or_else(|| event.get("output"))
@@ -504,12 +612,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                     return Ok(result);
                 }
                 Some(event) if event.event_type() == EventType::TaskFailed => {
-                    // Task failed - mark as consumed and return error
-                    {
-                        let mut consumed = self.consumed_task_execution_ids.write();
-                        consumed.insert(task_execution_id);
-                    }
-
+                    // Task failed - return error
                     let error = event
                         .get_string("error")
                         .unwrap_or("Task failed")
@@ -525,8 +628,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             }
         }
 
-        // No unconsumed task event found → submit new task
-        // First, submit the task to the server to create the TaskExecution entity
+        // No event at this per-type index → new command, submit task
         let task_submitter = self.task_submitter.as_ref().ok_or_else(|| {
             FlovynError::Other(format!(
                 "TaskSubmitter is not configured. Cannot schedule task '{}'",
@@ -573,9 +675,47 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn set_raw(&self, key: &str, value: Value) -> Result<()> {
-        let sequence = self.next_sequence();
+        // Get per-type sequence and increment atomically.
+        // This assigns State(0), State(1), etc. to each set()/clear() call.
+        let state_seq = self.next_state_seq.fetch_add(1, Ordering::SeqCst) as usize;
 
-        // Record command
+        // Look for event at this per-type index
+        if let Some(state_event) = self.state_events.get(state_seq) {
+            // Validate event type is StateSet
+            if state_event.event_type() != EventType::StateSet {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::TypeMismatch {
+                        sequence: state_seq as i32,
+                        expected: EventType::StateSet,
+                        actual: state_event.event_type(),
+                    },
+                ));
+            }
+
+            // Validate key matches
+            let event_key = state_event
+                .get_string("key")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_key != key {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::StateKeyMismatch {
+                        sequence: state_seq as i32,
+                        expected: event_key,
+                        actual: key.to_string(),
+                    },
+                ));
+            }
+
+            // State was already set - update local state (it's already up to date from constructor)
+            let mut state = self.state.write();
+            state.insert(key.to_string(), value);
+            return Ok(());
+        }
+
+        // No event at this per-type index → new command
+        let sequence = self.next_sequence();
         self.record_command(WorkflowCommand::SetState {
             sequence_number: sequence,
             key: key.to_string(),
@@ -589,9 +729,47 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn clear(&self, key: &str) -> Result<()> {
-        let sequence = self.next_sequence();
+        // Get per-type sequence and increment atomically.
+        // This assigns State(0), State(1), etc. to each set()/clear() call.
+        let state_seq = self.next_state_seq.fetch_add(1, Ordering::SeqCst) as usize;
 
-        // Record command
+        // Look for event at this per-type index
+        if let Some(state_event) = self.state_events.get(state_seq) {
+            // Validate event type is StateCleared
+            if state_event.event_type() != EventType::StateCleared {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::TypeMismatch {
+                        sequence: state_seq as i32,
+                        expected: EventType::StateCleared,
+                        actual: state_event.event_type(),
+                    },
+                ));
+            }
+
+            // Validate key matches
+            let event_key = state_event
+                .get_string("key")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_key != key {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::StateKeyMismatch {
+                        sequence: state_seq as i32,
+                        expected: event_key,
+                        actual: key.to_string(),
+                    },
+                ));
+            }
+
+            // State was already cleared - update local state
+            let mut state = self.state.write();
+            state.remove(key);
+            return Ok(());
+        }
+
+        // No event at this per-type index → new command
+        let sequence = self.next_sequence();
         self.record_command(WorkflowCommand::ClearState {
             sequence_number: sequence,
             key: key.to_string(),
@@ -622,6 +800,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn sleep(&self, duration: Duration) -> Result<()> {
+        // Get per-type sequence and increment atomically.
+        // This assigns Timer(0), Timer(1), etc. to each sleep() call.
+        let timer_seq = self.next_timer_seq.fetch_add(1, Ordering::SeqCst) as usize;
+
         // Generate deterministic timer ID using dedicated counter.
         // This counter is separate from sequence_number to ensure timer IDs are
         // consistent across replays (sequence depends on existingEvents.size).
@@ -629,28 +811,58 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         let timer_id = format!("sleep-{}", sleep_count);
         let duration_ms = duration.as_millis() as i64;
 
-        // Check for existing TIMER_FIRED event (during replay) by timer_id
-        let fired_event = self.find_event_by_field(EventType::TimerFired, "timerId", &timer_id);
-        if fired_event.is_some() {
-            // Timer already fired during replay - return immediately (no new command)
-            return Ok(());
+        // Look for event at this per-type index
+        if let Some(started_event) = self.timer_events.get(timer_seq) {
+            // Validate timer ID matches
+            let event_timer_id = started_event
+                .get_string("timerId")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_timer_id != timer_id {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::TimerIdMismatch {
+                        sequence: timer_seq as i32,
+                        expected: event_timer_id,
+                        actual: timer_id,
+                    },
+                ));
+            }
+
+            // Look for terminal event (TimerFired or TimerCancelled) for this timer
+            let terminal_event = self.find_terminal_timer_event(&event_timer_id);
+
+            match terminal_event {
+                Some(event) if event.event_type() == EventType::TimerFired => {
+                    // Timer already fired - return immediately
+                    return Ok(());
+                }
+                Some(event) if event.event_type() == EventType::TimerCancelled => {
+                    // Timer was cancelled - return error
+                    return Err(FlovynError::TimerError(format!(
+                        "Timer '{}' was cancelled",
+                        event_timer_id
+                    )));
+                }
+                _ => {
+                    // Timer started but no terminal event - still waiting, suspend
+                    return Err(FlovynError::Suspended {
+                        reason: format!("Waiting for timer: {}", event_timer_id),
+                    });
+                }
+            }
         }
 
-        // Check for existing TIMER_STARTED event (during replay)
-        let started_event = self.find_event_by_field(EventType::TimerStarted, "timerId", &timer_id);
+        // No event at this per-type index → new command
+        // Record START_TIMER command
+        let sequence = self.next_sequence();
+        self.record_command(WorkflowCommand::StartTimer {
+            sequence_number: sequence,
+            timer_id: timer_id.clone(),
+            duration_ms,
+        })?;
 
-        if started_event.is_none() {
-            // New timer - record START_TIMER command
-            let sequence = self.next_sequence();
-            self.record_command(WorkflowCommand::StartTimer {
-                sequence_number: sequence,
-                timer_id: timer_id.clone(),
-                duration_ms,
-            })?;
-        }
-
-        // Throw exception to suspend workflow execution (will be resumed when timer fires)
-        // NOTE: The SuspendWorkflow command will be added by workflow_worker when it catches this error
+        // Suspend workflow execution (will be resumed when timer fires)
         Err(FlovynError::Suspended {
             reason: format!("Waiting for timer: {}", timer_id),
         })
@@ -662,59 +874,78 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn promise_with_timeout_raw(&self, name: &str, timeout: Duration) -> Result<Value> {
+        // Get per-type sequence and increment atomically.
+        // This assigns Promise(0), Promise(1), etc. to each promise() call.
+        let promise_seq = self.next_promise_seq.fetch_add(1, Ordering::SeqCst) as usize;
+
         let timeout_ms = if timeout.as_secs() == u64::MAX {
             None
         } else {
             Some(timeout.as_millis() as i64)
         };
 
-        // Check for existing PROMISE_RESOLVED event (during replay) by promise name
-        if let Some(event) =
-            self.find_event_by_field(EventType::PromiseResolved, "promiseName", name)
-        {
-            if let Some(value) = event.get("value") {
-                // Promise already resolved during replay - return immediately (no new command)
-                return Ok(value.clone());
+        // Look for event at this per-type index
+        if let Some(created_event) = self.promise_events.get(promise_seq) {
+            // Validate promise name/ID matches
+            let event_promise_id = created_event
+                .get_string("promiseId")
+                .or_else(|| created_event.get_string("promiseName"))
+                .unwrap_or_default()
+                .to_string();
+
+            if event_promise_id != name {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::PromiseNameMismatch {
+                        sequence: promise_seq as i32,
+                        expected: event_promise_id,
+                        actual: name.to_string(),
+                    },
+                ));
+            }
+
+            // Look for terminal event (resolved/rejected/timeout) for this promise
+            let terminal_event = self.find_terminal_promise_event(&event_promise_id);
+
+            match terminal_event {
+                Some(event) if event.event_type() == EventType::PromiseResolved => {
+                    // Promise resolved - return value
+                    let value = event.get("value").cloned().unwrap_or(Value::Null);
+                    return Ok(value);
+                }
+                Some(event) if event.event_type() == EventType::PromiseRejected => {
+                    // Promise rejected - return error
+                    let error = event
+                        .get_string("error")
+                        .unwrap_or("Promise rejected")
+                        .to_string();
+                    return Err(FlovynError::PromiseRejected {
+                        name: name.to_string(),
+                        error,
+                    });
+                }
+                Some(event) if event.event_type() == EventType::PromiseTimeout => {
+                    // Promise timed out - return error
+                    return Err(FlovynError::PromiseTimeout {
+                        name: name.to_string(),
+                    });
+                }
+                _ => {
+                    // Promise created but no terminal event - still waiting, suspend
+                    return Err(FlovynError::Suspended {
+                        reason: format!("Waiting for promise: {}", name),
+                    });
+                }
             }
         }
 
-        // Check for existing PROMISE_REJECTED event (during replay) by promise name
-        if let Some(event) =
-            self.find_event_by_field(EventType::PromiseRejected, "promiseName", name)
-        {
-            let error = event
-                .get_string("error")
-                .unwrap_or("Promise rejected")
-                .to_string();
-            return Err(FlovynError::PromiseRejected {
-                name: name.to_string(),
-                error,
-            });
-        }
-
-        // Check for timeout event (during replay) by promise name
-        if self
-            .find_event_by_field(EventType::PromiseTimeout, "promiseName", name)
-            .is_some()
-        {
-            // Promise already timed out during replay - return error (no new command)
-            return Err(FlovynError::PromiseTimeout {
-                name: name.to_string(),
-            });
-        }
-
-        // Check for existing PROMISE_CREATED event (during replay)
-        let created_event = self.find_event_by_field(EventType::PromiseCreated, "promiseId", name);
-
-        if created_event.is_none() {
-            // New promise - record CREATE_PROMISE command
-            let sequence = self.next_sequence();
-            self.record_command(WorkflowCommand::CreatePromise {
-                sequence_number: sequence,
-                promise_id: name.to_string(),
-                timeout_ms,
-            })?;
-        }
+        // No event at this per-type index → new command
+        // Record CREATE_PROMISE command
+        let sequence = self.next_sequence();
+        self.record_command(WorkflowCommand::CreatePromise {
+            sequence_number: sequence,
+            promise_id: name.to_string(),
+            timeout_ms,
+        })?;
 
         // Check if already resolved in pending_promises (for in-process testing)
         {
@@ -731,59 +962,94 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn schedule_workflow_raw(&self, name: &str, kind: &str, input: Value) -> Result<Value> {
-        // Check for existing CHILD_WORKFLOW_COMPLETED event (during replay) by childExecutionName
-        if let Some(event) = self.find_event_by_field(
-            EventType::ChildWorkflowCompleted,
-            "childExecutionName",
-            name,
-        ) {
-            if let Some(result) = event.get("output") {
-                // Child workflow already completed during replay - return immediately (no new command)
-                return Ok(result.clone());
+        // Get per-type sequence and increment atomically.
+        // This assigns ChildWorkflow(0), ChildWorkflow(1), etc. to each schedule_workflow() call.
+        let cw_seq = self.next_child_workflow_seq.fetch_add(1, Ordering::SeqCst) as usize;
+
+        // Look for event at this per-type index
+        if let Some(initiated_event) = self.child_workflow_events.get(cw_seq) {
+            // Validate child workflow name matches
+            let event_name = initiated_event
+                .get_string("childExecutionName")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_name != name {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::ChildWorkflowMismatch {
+                        sequence: cw_seq as i32,
+                        field: "name".to_string(),
+                        expected: event_name,
+                        actual: name.to_string(),
+                    },
+                ));
+            }
+
+            // Validate child workflow kind matches
+            let event_kind = initiated_event
+                .get_string("childWorkflowKind")
+                .unwrap_or_default()
+                .to_string();
+
+            if !event_kind.is_empty() && event_kind != kind {
+                return Err(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::ChildWorkflowMismatch {
+                        sequence: cw_seq as i32,
+                        field: "kind".to_string(),
+                        expected: event_kind,
+                        actual: kind.to_string(),
+                    },
+                ));
+            }
+
+            // Look for terminal event (completed/failed) for this child workflow by name
+            let terminal_event = self.find_terminal_child_workflow_event(&event_name);
+
+            match terminal_event {
+                Some(event) if event.event_type() == EventType::ChildWorkflowCompleted => {
+                    // Child workflow completed - return result
+                    let result = event.get("output").cloned().unwrap_or(Value::Null);
+                    return Ok(result);
+                }
+                Some(event) if event.event_type() == EventType::ChildWorkflowFailed => {
+                    // Child workflow failed - return error
+                    let error = event
+                        .get_string("error")
+                        .unwrap_or("Child workflow failed")
+                        .to_string();
+                    let execution_id = event
+                        .get_string("childworkflowExecutionId")
+                        .unwrap_or("unknown")
+                        .to_string();
+                    return Err(FlovynError::ChildWorkflowFailed {
+                        execution_id,
+                        name: name.to_string(),
+                        error,
+                    });
+                }
+                _ => {
+                    // Child workflow initiated but no terminal event - still running, suspend
+                    return Err(FlovynError::Suspended {
+                        reason: format!("Waiting for child workflow: {}", name),
+                    });
+                }
             }
         }
 
-        // Check for existing CHILD_WORKFLOW_FAILED event (during replay) by childExecutionName
-        if let Some(event) =
-            self.find_event_by_field(EventType::ChildWorkflowFailed, "childExecutionName", name)
-        {
-            let error = event
-                .get_string("error")
-                .unwrap_or("Child workflow failed")
-                .to_string();
-            let execution_id = event
-                .get_string("childworkflowExecutionId")
-                .unwrap_or("unknown")
-                .to_string();
-            return Err(FlovynError::ChildWorkflowFailed {
-                execution_id,
-                name: name.to_string(),
-                error,
-            });
-        }
-
-        // Check for existing CHILD_WORKFLOW_INITIATED event (during replay)
-        let initiated_event = self.find_event_by_field(
-            EventType::ChildWorkflowInitiated,
-            "childExecutionName",
-            name,
-        );
-
-        if initiated_event.is_none() {
-            // New child workflow - record SCHEDULE_CHILD_WORKFLOW command
-            let sequence = self.next_sequence();
-            let child_execution_id = self.random_uuid();
-            self.record_command(WorkflowCommand::ScheduleChildWorkflow {
-                sequence_number: sequence,
-                name: name.to_string(),
-                kind: Some(kind.to_string()),
-                definition_id: None,
-                child_execution_id,
-                input,
-                task_queue: String::new(), // Empty = inherit from parent
-                priority_seconds: 0,
-            })?;
-        }
+        // No event at this per-type index → new command
+        // Record SCHEDULE_CHILD_WORKFLOW command
+        let sequence = self.next_sequence();
+        let child_execution_id = self.random_uuid();
+        self.record_command(WorkflowCommand::ScheduleChildWorkflow {
+            sequence_number: sequence,
+            name: name.to_string(),
+            kind: Some(kind.to_string()),
+            definition_id: None,
+            child_execution_id,
+            input,
+            task_queue: String::new(), // Empty = inherit from parent
+            priority_seconds: 0,
+        })?;
 
         // Check if already resolved in pending_child_workflows (for in-process testing)
         {
@@ -811,6 +1077,470 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         } else {
             Ok(())
         }
+    }
+
+    // =========================================================================
+    // Async Operation Methods for Parallel Execution
+    // =========================================================================
+
+    fn schedule_async_raw(&self, task_type: &str, input: Value) -> TaskFutureRaw {
+        self.schedule_async_with_options_raw(task_type, input, ScheduleTaskOptions::default())
+    }
+
+    fn schedule_async_with_options_raw(
+        &self,
+        task_type: &str,
+        input: Value,
+        options: ScheduleTaskOptions,
+    ) -> TaskFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let task_seq = self.next_task_seq.fetch_add(1, Ordering::SeqCst);
+
+        // Look for event at this per-type index (replay case)
+        if let Some(scheduled_event) = self.task_events.get(task_seq as usize) {
+            // Validate task type matches
+            let event_task_type = scheduled_event
+                .get_string("taskType")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_task_type != task_type {
+                return TaskFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::TaskTypeMismatch {
+                        sequence: task_seq as i32,
+                        expected: event_task_type,
+                        actual: task_type.to_string(),
+                    },
+                ));
+            }
+
+            // Get task execution ID from the scheduled event
+            let task_execution_id = scheduled_event
+                .get_string("taskExecutionId")
+                .or_else(|| scheduled_event.get_string("taskId"))
+                .map(|s| Uuid::parse_str(s).unwrap_or(Uuid::nil()))
+                .unwrap_or(Uuid::nil());
+
+            // Look for terminal event (completed/failed) for this task
+            if let Some(terminal_event) =
+                self.find_terminal_task_event(&task_execution_id.to_string())
+            {
+                if terminal_event.event_type() == EventType::TaskCompleted {
+                    let result = terminal_event
+                        .get("result")
+                        .or_else(|| terminal_event.get("output"))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    return TaskFuture::from_replay(
+                        task_seq,
+                        task_execution_id,
+                        Weak::<DummyTaskFutureContext>::new(),
+                        Ok(result),
+                    );
+                } else {
+                    let error = terminal_event
+                        .get_string("error")
+                        .unwrap_or("Task failed")
+                        .to_string();
+                    return TaskFuture::from_replay(
+                        task_seq,
+                        task_execution_id,
+                        Weak::<DummyTaskFutureContext>::new(),
+                        Err(FlovynError::TaskFailed(error)),
+                    );
+                }
+            }
+
+            // Task scheduled but not completed yet - return pending future
+            return TaskFuture::new(
+                task_seq,
+                task_execution_id,
+                Weak::<DummyTaskFutureContext>::new(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        // Generate task execution ID
+        let task_execution_id = self.random_uuid();
+
+        // Record the command
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::ScheduleTask {
+            sequence_number: sequence,
+            task_type: task_type.to_string(),
+            task_execution_id,
+            input,
+            priority_seconds: options.priority_seconds,
+        }) {
+            return TaskFuture::with_error(e);
+        }
+
+        // Return pending future
+        TaskFuture::new(
+            task_seq,
+            task_execution_id,
+            Weak::<DummyTaskFutureContext>::new(),
+        )
+    }
+
+    fn sleep_async(&self, duration: Duration) -> TimerFuture {
+        // Get per-type sequence and increment atomically.
+        let timer_seq = self.next_timer_seq.fetch_add(1, Ordering::SeqCst);
+
+        // Generate deterministic timer ID
+        let sleep_count = self.sleep_call_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        let timer_id = format!("sleep-{}", sleep_count);
+        let duration_ms = duration.as_millis() as i64;
+
+        // Look for event at this per-type index (replay case)
+        if let Some(started_event) = self.timer_events.get(timer_seq as usize) {
+            // Validate timer ID matches
+            let event_timer_id = started_event
+                .get_string("timerId")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_timer_id != timer_id {
+                return TimerFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::TimerIdMismatch {
+                        sequence: timer_seq as i32,
+                        expected: event_timer_id,
+                        actual: timer_id,
+                    },
+                ));
+            }
+
+            // Look for terminal event (fired/cancelled) for this timer
+            if let Some(terminal_event) = self.find_terminal_timer_event(&event_timer_id) {
+                if terminal_event.event_type() == EventType::TimerFired {
+                    return TimerFuture::from_replay(
+                        timer_seq,
+                        event_timer_id,
+                        Weak::<DummyTimerFutureContext>::new(),
+                        true,
+                    );
+                } else {
+                    return TimerFuture::from_replay(
+                        timer_seq,
+                        event_timer_id,
+                        Weak::<DummyTimerFutureContext>::new(),
+                        false,
+                    );
+                }
+            }
+
+            // Timer started but not fired yet - return pending future
+            return TimerFuture::new(
+                timer_seq,
+                event_timer_id,
+                Weak::<DummyTimerFutureContext>::new(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::StartTimer {
+            sequence_number: sequence,
+            timer_id: timer_id.clone(),
+            duration_ms,
+        }) {
+            return TimerFuture::with_error(e);
+        }
+
+        // Return pending future
+        TimerFuture::new(timer_seq, timer_id, Weak::<DummyTimerFutureContext>::new())
+    }
+
+    fn schedule_workflow_async_raw(
+        &self,
+        name: &str,
+        kind: &str,
+        input: Value,
+    ) -> ChildWorkflowFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let cw_seq = self.next_child_workflow_seq.fetch_add(1, Ordering::SeqCst);
+
+        // Look for event at this per-type index (replay case)
+        if let Some(initiated_event) = self.child_workflow_events.get(cw_seq as usize) {
+            // Validate child workflow name matches
+            let event_name = initiated_event
+                .get_string("childExecutionName")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_name != name {
+                return ChildWorkflowFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::ChildWorkflowMismatch {
+                        sequence: cw_seq as i32,
+                        field: "name".to_string(),
+                        expected: event_name,
+                        actual: name.to_string(),
+                    },
+                ));
+            }
+
+            // Validate child workflow kind matches
+            let event_kind = initiated_event
+                .get_string("childWorkflowKind")
+                .unwrap_or_default()
+                .to_string();
+
+            if !event_kind.is_empty() && event_kind != kind {
+                return ChildWorkflowFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::ChildWorkflowMismatch {
+                        sequence: cw_seq as i32,
+                        field: "kind".to_string(),
+                        expected: event_kind,
+                        actual: kind.to_string(),
+                    },
+                ));
+            }
+
+            // Get child execution ID
+            let child_execution_id = initiated_event
+                .get_string("childExecutionId")
+                .map(|s| Uuid::parse_str(s).unwrap_or(Uuid::nil()))
+                .unwrap_or(Uuid::nil());
+
+            // Look for terminal event (completed/failed) for this child workflow
+            if let Some(terminal_event) = self.find_terminal_child_workflow_event(&event_name) {
+                if terminal_event.event_type() == EventType::ChildWorkflowCompleted {
+                    let result = terminal_event.get("output").cloned().unwrap_or(Value::Null);
+                    return ChildWorkflowFuture::from_replay(
+                        cw_seq,
+                        child_execution_id,
+                        event_name,
+                        Weak::<DummyChildWorkflowFutureContext>::new(),
+                        Ok(result),
+                    );
+                } else {
+                    let error = terminal_event
+                        .get_string("error")
+                        .unwrap_or("Child workflow failed")
+                        .to_string();
+                    let exec_id = terminal_event
+                        .get_string("childworkflowExecutionId")
+                        .unwrap_or("unknown")
+                        .to_string();
+                    return ChildWorkflowFuture::from_replay(
+                        cw_seq,
+                        child_execution_id,
+                        name.to_string(),
+                        Weak::<DummyChildWorkflowFutureContext>::new(),
+                        Err(FlovynError::ChildWorkflowFailed {
+                            execution_id: exec_id,
+                            name: name.to_string(),
+                            error,
+                        }),
+                    );
+                }
+            }
+
+            // Child workflow initiated but not completed yet - return pending future
+            return ChildWorkflowFuture::new(
+                cw_seq,
+                child_execution_id,
+                event_name,
+                Weak::<DummyChildWorkflowFutureContext>::new(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        let child_execution_id = self.random_uuid();
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::ScheduleChildWorkflow {
+            sequence_number: sequence,
+            name: name.to_string(),
+            kind: Some(kind.to_string()),
+            definition_id: None,
+            child_execution_id,
+            input,
+            task_queue: String::new(),
+            priority_seconds: 0,
+        }) {
+            return ChildWorkflowFuture::with_error(e);
+        }
+
+        // Return pending future
+        ChildWorkflowFuture::new(
+            cw_seq,
+            child_execution_id,
+            name.to_string(),
+            Weak::<DummyChildWorkflowFutureContext>::new(),
+        )
+    }
+
+    fn promise_async_raw(&self, name: &str) -> PromiseFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let promise_seq = self.next_promise_seq.fetch_add(1, Ordering::SeqCst);
+
+        // Look for event at this per-type index (replay case)
+        if let Some(created_event) = self.promise_events.get(promise_seq as usize) {
+            // Validate promise name/ID matches
+            let event_promise_id = created_event
+                .get_string("promiseId")
+                .or_else(|| created_event.get_string("promiseName"))
+                .unwrap_or_default()
+                .to_string();
+
+            if event_promise_id != name {
+                return PromiseFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::PromiseNameMismatch {
+                        sequence: promise_seq as i32,
+                        expected: event_promise_id,
+                        actual: name.to_string(),
+                    },
+                ));
+            }
+
+            // Look for terminal event (resolved/rejected/timeout)
+            if let Some(terminal_event) = self.find_terminal_promise_event(&event_promise_id) {
+                match terminal_event.event_type() {
+                    EventType::PromiseResolved => {
+                        let value = terminal_event.get("value").cloned().unwrap_or(Value::Null);
+                        return PromiseFuture::from_replay(
+                            promise_seq,
+                            event_promise_id,
+                            Weak::<DummyPromiseFutureContext>::new(),
+                            Ok(value),
+                        );
+                    }
+                    EventType::PromiseRejected => {
+                        let error = terminal_event
+                            .get_string("error")
+                            .unwrap_or("Promise rejected")
+                            .to_string();
+                        return PromiseFuture::from_replay(
+                            promise_seq,
+                            event_promise_id,
+                            Weak::<DummyPromiseFutureContext>::new(),
+                            Err(FlovynError::PromiseRejected {
+                                name: name.to_string(),
+                                error,
+                            }),
+                        );
+                    }
+                    EventType::PromiseTimeout => {
+                        return PromiseFuture::from_replay(
+                            promise_seq,
+                            event_promise_id,
+                            Weak::<DummyPromiseFutureContext>::new(),
+                            Err(FlovynError::PromiseTimeout {
+                                name: name.to_string(),
+                            }),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
+            // Promise created but not resolved yet - return pending future
+            return PromiseFuture::new(
+                promise_seq,
+                event_promise_id,
+                Weak::<DummyPromiseFutureContext>::new(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::CreatePromise {
+            sequence_number: sequence,
+            promise_id: name.to_string(),
+            timeout_ms: None,
+        }) {
+            return PromiseFuture::with_error(e);
+        }
+
+        // Return pending future
+        PromiseFuture::new(
+            promise_seq,
+            name.to_string(),
+            Weak::<DummyPromiseFutureContext>::new(),
+        )
+    }
+
+    fn run_async_raw(&self, name: &str, result: Value) -> OperationFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let op_seq = self.next_operation_seq.fetch_add(1, Ordering::SeqCst);
+
+        // Look for event at this per-type index (replay case)
+        if let Some(operation_event) = self.operation_events.get(op_seq as usize) {
+            // Validate operation name matches
+            let event_op_name = operation_event
+                .get_string("operationName")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_op_name != name {
+                return OperationFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::OperationNameMismatch {
+                        sequence: op_seq as i32,
+                        expected: event_op_name,
+                        actual: name.to_string(),
+                    },
+                ));
+            }
+
+            // Return the cached result from the event
+            let cached_result = operation_event
+                .get("result")
+                .cloned()
+                .unwrap_or(Value::Null);
+
+            return OperationFuture::new(op_seq, name.to_string(), Ok(cached_result));
+        }
+
+        // No event at this per-type index → new operation
+        // Record and cache the result
+        {
+            let mut cache = self.operation_cache.write();
+            cache.insert(name.to_string(), result.clone());
+        }
+
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::RecordOperation {
+            sequence_number: sequence,
+            operation_name: name.to_string(),
+            result: result.clone(),
+        }) {
+            return OperationFuture::with_error(e);
+        }
+
+        // Operations complete immediately - return ready future
+        OperationFuture::new(op_seq, name.to_string(), Ok(result))
+    }
+}
+
+// Dummy context types for futures that don't need context reference
+struct DummyTaskFutureContext;
+impl TaskFutureContext for DummyTaskFutureContext {
+    fn find_task_result(&self, _: &Uuid) -> Option<Result<Value>> {
+        None
+    }
+    fn record_cancel_task(&self, _: &Uuid) {}
+}
+
+struct DummyTimerFutureContext;
+impl TimerFutureContext for DummyTimerFutureContext {
+    fn find_timer_result(&self, _: &str) -> Option<Result<()>> {
+        None
+    }
+    fn record_cancel_timer(&self, _: &str) {}
+}
+
+struct DummyChildWorkflowFutureContext;
+impl ChildWorkflowFutureContext for DummyChildWorkflowFutureContext {
+    fn find_child_workflow_result(&self, _: &str) -> Option<Result<Value>> {
+        None
+    }
+    fn record_cancel_child_workflow(&self, _: &Uuid) {}
+}
+
+struct DummyPromiseFutureContext;
+impl PromiseFutureContext for DummyPromiseFutureContext {
+    fn find_promise_result(&self, _: &str) -> Option<Result<Value>> {
+        None
     }
 }
 
@@ -1073,23 +1803,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_raw_caches_result() {
+    async fn test_run_raw_each_call_is_distinct_operation() {
+        // With sequence-based replay, each run_raw call is a distinct operation
+        // (Operation(0), Operation(1), etc.) regardless of name
         let ctx = create_test_context();
 
-        // First call
+        // First call - Operation(0)
         let result1 = ctx
-            .run_raw("cached-op", serde_json::json!({"first": true}))
+            .run_raw("op-name", serde_json::json!({"first": true}))
             .await
             .unwrap();
 
-        // Second call with different value - should return cached
+        // Second call - Operation(1), distinct from first
         let result2 = ctx
-            .run_raw("cached-op", serde_json::json!({"second": true}))
+            .run_raw("op-name", serde_json::json!({"second": true}))
             .await
             .unwrap();
 
+        // Each call returns its own result
         assert_eq!(result1, serde_json::json!({"first": true}));
-        assert_eq!(result2, serde_json::json!({"first": true})); // Cached!
+        assert_eq!(result2, serde_json::json!({"second": true}));
+
+        // Both operations are recorded as separate commands
+        let commands = ctx.get_commands();
+        assert_eq!(commands.len(), 2);
     }
 
     #[tokio::test]
@@ -1697,5 +2434,1233 @@ mod tests {
         // No command should be recorded (child workflow was already initiated)
         let commands = ctx.get_commands();
         assert!(commands.is_empty());
+    }
+
+    // ============= Sequence-Based Replay Tests =============
+    // Tests for the per-type cursor matching behavior
+
+    #[tokio::test]
+    async fn test_sequence_based_task_type_mismatch_violation() {
+        use chrono::Utc;
+        // Create context with replay event for a different task type
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::TaskScheduled,
+            serde_json::json!({
+                "taskType": "send-email",
+                "taskExecutionId": "task-abc-123"
+            }),
+            Utc::now(),
+        )];
+
+        let ctx: WorkflowContextImpl<CommandCollector> =
+            WorkflowContextImpl::new_with_task_submitter(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                serde_json::json!({}),
+                CommandCollector::new(),
+                replay_events,
+                1700000000000,
+                Some(Arc::new(MockTaskSubmitter)),
+            );
+
+        // Try to schedule a different task type - should get determinism violation
+        let result = ctx
+            .schedule_raw("process-payment", serde_json::json!({}))
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::TaskTypeMismatch { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_operation_name_mismatch_violation() {
+        use chrono::Utc;
+        // Create context with replay event for a different operation name
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::OperationCompleted,
+            serde_json::json!({
+                "operationName": "fetch-user",
+                "result": {"id": 123}
+            }),
+            Utc::now(),
+        )];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Try to run a different operation - should get determinism violation
+        let result = ctx.run_raw("calculate-total", serde_json::json!(100)).await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::OperationNameMismatch { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_timer_id_mismatch_violation() {
+        use chrono::Utc;
+        // Create context with replay event for a timer with different ID
+        // The timer ID is generated as "sleep-N" based on the sleep_call_counter
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::TimerStarted,
+            serde_json::json!({
+                "timerId": "sleep-99",  // Mismatched - first sleep should have ID "sleep-1"
+                "durationMs": 5000
+            }),
+            Utc::now(),
+        )];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Try to sleep - should get determinism violation because timer ID doesn't match
+        let result = ctx.sleep(Duration::from_secs(5)).await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::TimerIdMismatch { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_promise_name_mismatch_violation() {
+        use chrono::Utc;
+        // Create context with replay event for a different promise name
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::PromiseCreated,
+            serde_json::json!({
+                "promiseId": "approval-promise"
+            }),
+            Utc::now(),
+        )];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Try to create a different promise - should get determinism violation
+        let result = ctx.promise_raw("payment-confirmation").await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::PromiseNameMismatch { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_child_workflow_name_mismatch_violation() {
+        use chrono::Utc;
+        // Create context with replay event for a different child workflow name
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::ChildWorkflowInitiated,
+            serde_json::json!({
+                "childExecutionName": "email-notification",
+                "childworkflowExecutionId": "child-xyz"
+            }),
+            Utc::now(),
+        )];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Try to schedule a different child workflow - should get determinism violation
+        let result = ctx
+            .schedule_workflow_raw("payment-processor", "payment-wf", serde_json::json!({}))
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::ChildWorkflowMismatch { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_interleaved_operations_replay_correctly() {
+        use chrono::Utc;
+        // Create context with interleaved operations of different types
+        let replay_events = vec![
+            // Operation(0)
+            ReplayEvent::new(
+                1,
+                EventType::OperationCompleted,
+                serde_json::json!({
+                    "operationName": "op-1",
+                    "result": "result-1"
+                }),
+                Utc::now(),
+            ),
+            // Timer(0)
+            ReplayEvent::new(
+                2,
+                EventType::TimerStarted,
+                serde_json::json!({
+                    "timerId": "sleep-1",
+                    "durationMs": 1000
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                3,
+                EventType::TimerFired,
+                serde_json::json!({
+                    "timerId": "sleep-1"
+                }),
+                Utc::now(),
+            ),
+            // Operation(1)
+            ReplayEvent::new(
+                4,
+                EventType::OperationCompleted,
+                serde_json::json!({
+                    "operationName": "op-2",
+                    "result": "result-2"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Execute in the same order as the replay events
+        let result1 = ctx
+            .run_raw("op-1", serde_json::json!("new-1"))
+            .await
+            .unwrap();
+        assert_eq!(result1, serde_json::json!("result-1")); // Returns replayed value
+
+        let sleep_result = ctx.sleep(Duration::from_secs(1)).await;
+        assert!(sleep_result.is_ok()); // Timer already fired
+
+        let result2 = ctx
+            .run_raw("op-2", serde_json::json!("new-2"))
+            .await
+            .unwrap();
+        assert_eq!(result2, serde_json::json!("result-2")); // Returns replayed value
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_state_operations_validate_key() {
+        use chrono::Utc;
+        // Create context with replay events for state operations
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::StateSet,
+                serde_json::json!({
+                    "key": "counter",
+                    "value": 42
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::StateCleared,
+                serde_json::json!({
+                    "key": "temp-data"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // These should succeed because keys match
+        ctx.set_raw("counter", serde_json::json!(100))
+            .await
+            .unwrap();
+        ctx.clear("temp-data").await.unwrap();
+
+        // No new commands should be recorded (replaying)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_state_key_mismatch_violation() {
+        use chrono::Utc;
+        // Create context with replay event for a different state key
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::StateSet,
+            serde_json::json!({
+                "key": "user-id",
+                "value": 123
+            }),
+            Utc::now(),
+        )];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Try to set a different key - should get determinism violation
+        let result = ctx.set_raw("order-id", serde_json::json!(456)).await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::StateKeyMismatch { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_new_commands_beyond_replay_history() {
+        use chrono::Utc;
+        // Create context with one operation in history
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::OperationCompleted,
+            serde_json::json!({
+                "operationName": "op-1",
+                "result": "cached-result"
+            }),
+            Utc::now(),
+        )];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // First operation - replays from history
+        let result1 = ctx
+            .run_raw("op-1", serde_json::json!("ignored"))
+            .await
+            .unwrap();
+        assert_eq!(result1, serde_json::json!("cached-result"));
+
+        // Second operation - new, beyond history
+        let result2 = ctx
+            .run_raw("op-2", serde_json::json!("new-result"))
+            .await
+            .unwrap();
+        assert_eq!(result2, serde_json::json!("new-result"));
+
+        // Only the second operation should have recorded a command
+        let commands = ctx.get_commands();
+        assert_eq!(commands.len(), 1);
+        assert!(matches!(
+            &commands[0],
+            WorkflowCommand::RecordOperation { operation_name, .. } if operation_name == "op-2"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_loop_extended_is_valid() {
+        use chrono::Utc;
+        // Original execution: 2 tasks in a loop
+        // New execution: 3 tasks in a loop (loop extended)
+        // This should be valid - new commands beyond history are allowed
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::OperationCompleted,
+                serde_json::json!({
+                    "operationName": "loop-item-0",
+                    "result": "done-0"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::OperationCompleted,
+                serde_json::json!({
+                    "operationName": "loop-item-1",
+                    "result": "done-1"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Simulate loop with 3 iterations (extended from original 2)
+        for i in 0..3 {
+            let op_name = format!("loop-item-{}", i);
+            let result = ctx
+                .run_raw(&op_name, serde_json::json!(format!("new-{}", i)))
+                .await
+                .unwrap();
+
+            if i < 2 {
+                // First 2 iterations replay from history
+                assert_eq!(result, serde_json::json!(format!("done-{}", i)));
+            } else {
+                // 3rd iteration is new
+                assert_eq!(result, serde_json::json!("new-2"));
+            }
+        }
+
+        // Only the 3rd operation (new) should have recorded a command
+        let commands = ctx.get_commands();
+        assert_eq!(commands.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_mixed_task_types_in_loop_must_match_order() {
+        use chrono::Utc;
+        // History: task-A, task-B, task-A, task-B (alternating pattern)
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "task-A",
+                    "taskExecutionId": "task-1"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-1",
+                    "result": "A-result-1"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                3,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "task-B",
+                    "taskExecutionId": "task-2"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                4,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-2",
+                    "result": "B-result-1"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                5,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "task-A",
+                    "taskExecutionId": "task-3"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                6,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-3",
+                    "result": "A-result-2"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx: WorkflowContextImpl<CommandCollector> =
+            WorkflowContextImpl::new_with_task_submitter(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                serde_json::json!({}),
+                CommandCollector::new(),
+                replay_events,
+                1700000000000,
+                Some(Arc::new(MockTaskSubmitter)),
+            );
+
+        // Replay in same order: A, B, A - should succeed
+        let result_a1 = ctx
+            .schedule_raw("task-A", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result_a1, serde_json::json!("A-result-1"));
+
+        let result_b1 = ctx
+            .schedule_raw("task-B", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result_b1, serde_json::json!("B-result-1"));
+
+        let result_a2 = ctx
+            .schedule_raw("task-A", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result_a2, serde_json::json!("A-result-2"));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_mixed_task_types_wrong_order_raises_violation() {
+        use chrono::Utc;
+        // History: task-A first
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "task-A",
+                    "taskExecutionId": "task-1"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-1",
+                    "result": "A-result"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx: WorkflowContextImpl<CommandCollector> =
+            WorkflowContextImpl::new_with_task_submitter(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                serde_json::json!({}),
+                CommandCollector::new(),
+                replay_events,
+                1700000000000,
+                Some(Arc::new(MockTaskSubmitter)),
+            );
+
+        // Try to schedule task-B first (wrong order) - should fail
+        let result = ctx.schedule_raw("task-B", serde_json::json!({})).await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::TaskTypeMismatch { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_child_workflow_kind_mismatch_violation() {
+        use chrono::Utc;
+        // Create context with replay event for a different child workflow kind
+        let replay_events = vec![ReplayEvent::new(
+            1,
+            EventType::ChildWorkflowInitiated,
+            serde_json::json!({
+                "childExecutionName": "payment-child",
+                "childWorkflowKind": "payment-workflow-v1",
+                "childworkflowExecutionId": "child-xyz"
+            }),
+            Utc::now(),
+        )];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Try to schedule with different kind - should get determinism violation
+        let result = ctx
+            .schedule_workflow_raw(
+                "payment-child",
+                "payment-workflow-v2",
+                serde_json::json!({}),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(FlovynError::DeterminismViolation(
+                crate::error::DeterminismViolationError::ChildWorkflowMismatch { field, .. }
+            )) if field == "kind"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_task_matches_at_correct_sequence() {
+        use chrono::Utc;
+        // Create context with task that completed successfully
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "process-order",
+                    "taskExecutionId": "task-abc"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-abc",
+                    "result": {"orderId": 12345, "status": "processed"}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx: WorkflowContextImpl<CommandCollector> =
+            WorkflowContextImpl::new_with_task_submitter(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                serde_json::json!({}),
+                CommandCollector::new(),
+                replay_events,
+                1700000000000,
+                Some(Arc::new(MockTaskSubmitter)),
+            );
+
+        // Should match the task at sequence 0 and return result
+        let result = ctx
+            .schedule_raw("process-order", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            serde_json::json!({"orderId": 12345, "status": "processed"})
+        );
+
+        // No new commands should be recorded (replaying)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sequence_based_child_workflow_matches_by_sequence_and_name() {
+        use chrono::Utc;
+        // Create context with child workflow that completed
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::ChildWorkflowInitiated,
+                serde_json::json!({
+                    "childExecutionName": "notify-user",
+                    "childWorkflowKind": "notification-workflow",
+                    "childworkflowExecutionId": "child-123"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::ChildWorkflowCompleted,
+                serde_json::json!({
+                    "childExecutionName": "notify-user",
+                    "childworkflowExecutionId": "child-123",
+                    "output": {"notified": true, "channel": "email"}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // Should match by sequence (0) and validate name matches
+        let result = ctx
+            .schedule_workflow_raw(
+                "notify-user",
+                "notification-workflow",
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            serde_json::json!({"notified": true, "channel": "email"})
+        );
+
+        // No new commands should be recorded (replaying)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    /// Test that a workflow can complete with fewer iterations than the original.
+    /// Orphaned events (not accessed during replay) are allowed.
+    #[tokio::test]
+    async fn test_sequence_based_loop_shortened_is_valid() {
+        use chrono::Utc;
+        // Original execution: 3 task iterations
+        // Replay execution: 2 task iterations (workflow code changed)
+        // Expected: Valid - orphaned events are allowed
+        let replay_events = vec![
+            // Task iteration 1
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "process-item",
+                    "taskExecutionId": "task-1"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-1",
+                    "result": {"value": 1}
+                }),
+                Utc::now(),
+            ),
+            // Task iteration 2
+            ReplayEvent::new(
+                3,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "process-item",
+                    "taskExecutionId": "task-2"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                4,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-2",
+                    "result": {"value": 2}
+                }),
+                Utc::now(),
+            ),
+            // Task iteration 3 (will be orphaned - never accessed)
+            ReplayEvent::new(
+                5,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "process-item",
+                    "taskExecutionId": "task-3"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                6,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-3",
+                    "result": {"value": 3}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx: WorkflowContextImpl<CommandCollector> =
+            WorkflowContextImpl::new_with_task_submitter(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                serde_json::json!({}),
+                CommandCollector::new(),
+                replay_events,
+                1700000000000,
+                Some(Arc::new(MockTaskSubmitter)),
+            );
+
+        // Shortened workflow: only 2 iterations instead of 3
+        let result1 = ctx
+            .schedule_raw("process-item", serde_json::json!({}))
+            .await;
+        assert!(result1.is_ok(), "First task should replay: {:?}", result1);
+        assert_eq!(result1.unwrap(), serde_json::json!({"value": 1}));
+
+        let result2 = ctx
+            .schedule_raw("process-item", serde_json::json!({}))
+            .await;
+        assert!(result2.is_ok(), "Second task should replay: {:?}", result2);
+        assert_eq!(result2.unwrap(), serde_json::json!({"value": 2}));
+
+        // Workflow completes here without accessing task-3
+        // Events 5-6 are orphaned, but this is valid behavior
+        // No determinism violation should occur
+
+        // No new commands should be recorded (both tasks were replayed)
+        let commands = ctx.get_commands();
+        assert!(commands.is_empty());
+    }
+
+    // === Async Method Tests ===
+
+    #[test]
+    fn test_schedule_async_assigns_sequence_at_creation() {
+        let ctx = create_test_context_with_task_submitter();
+
+        // Create a future - sequence should be assigned immediately
+        let future1 = ctx.schedule_async_raw("task-a", serde_json::json!({}));
+        let future2 = ctx.schedule_async_raw("task-b", serde_json::json!({}));
+
+        // Verify futures have different sequence numbers
+        assert_eq!(future1.task_seq, 0);
+        assert_eq!(future2.task_seq, 1);
+    }
+
+    #[test]
+    fn test_schedule_async_multiple_tasks_get_sequential_ids() {
+        let ctx = create_test_context_with_task_submitter();
+
+        // Create multiple futures of the same type
+        let futures: Vec<_> = (0..5)
+            .map(|i| ctx.schedule_async_raw("same-task", serde_json::json!({"i": i})))
+            .collect();
+
+        // Each should have a unique, sequential sequence number
+        for (i, f) in futures.iter().enumerate() {
+            assert_eq!(f.task_seq, i as u32, "Future {} has wrong sequence", i);
+        }
+    }
+
+    #[test]
+    fn test_sleep_async_returns_timer_future() {
+        let ctx = create_test_context();
+
+        let timer = ctx.sleep_async(Duration::from_secs(60));
+
+        // Verify it's a timer future with proper sequence
+        assert_eq!(timer.timer_seq, 0);
+        assert!(!timer.timer_id.is_empty());
+    }
+
+    #[test]
+    fn test_async_methods_record_commands_immediately() {
+        let ctx = create_test_context_with_task_submitter();
+
+        // Commands should be empty initially
+        assert!(ctx.get_commands().is_empty());
+
+        // Create futures - commands should be recorded immediately
+        let _task1 = ctx.schedule_async_raw("task-1", serde_json::json!({}));
+        assert_eq!(ctx.get_commands().len(), 1);
+
+        let _task2 = ctx.schedule_async_raw("task-2", serde_json::json!({}));
+        assert_eq!(ctx.get_commands().len(), 2);
+
+        let _timer = ctx.sleep_async(Duration::from_secs(30));
+        assert_eq!(ctx.get_commands().len(), 3);
+
+        // Verify command types
+        let commands = ctx.get_commands();
+        assert!(matches!(
+            &commands[0],
+            WorkflowCommand::ScheduleTask { task_type, .. } if task_type == "task-1"
+        ));
+        assert!(matches!(
+            &commands[1],
+            WorkflowCommand::ScheduleTask { task_type, .. } if task_type == "task-2"
+        ));
+        assert!(matches!(&commands[2], WorkflowCommand::StartTimer { .. }));
+    }
+
+    #[test]
+    fn test_parallel_tasks_match_by_per_type_sequence() {
+        use chrono::Utc;
+        // Test that parallel tasks are matched by their per-type sequence number,
+        // not by task type name alone
+
+        let replay_events = vec![
+            // Task(0) - first "task-a"
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "task-a",
+                    "taskExecutionId": "exec-a-0"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "exec-a-0",
+                    "output": {"result": "a0"}
+                }),
+                Utc::now(),
+            ),
+            // Task(1) - first "task-b"
+            ReplayEvent::new(
+                3,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "task-b",
+                    "taskExecutionId": "exec-b-0"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                4,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "exec-b-0",
+                    "output": {"result": "b0"}
+                }),
+                Utc::now(),
+            ),
+            // Task(2) - second "task-a"
+            ReplayEvent::new(
+                5,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "task-a",
+                    "taskExecutionId": "exec-a-1"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                6,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "exec-a-1",
+                    "output": {"result": "a1"}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new_with_task_submitter(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+            Some(Arc::new(MockTaskSubmitter)),
+        );
+
+        // Create futures in parallel (same order as replay)
+        let future_a0 = ctx.schedule_async_raw("task-a", serde_json::json!({}));
+        let future_b0 = ctx.schedule_async_raw("task-b", serde_json::json!({}));
+        let future_a1 = ctx.schedule_async_raw("task-a", serde_json::json!({}));
+
+        // Verify sequence numbers
+        assert_eq!(future_a0.task_seq, 0);
+        assert_eq!(future_b0.task_seq, 1);
+        assert_eq!(future_a1.task_seq, 2);
+    }
+
+    #[test]
+    fn test_parallel_tasks_and_timer_independent_matching() {
+        use chrono::Utc;
+        // Tasks and timers should have independent sequence counters
+
+        let replay_events = vec![
+            // Task(0)
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "my-task",
+                    "taskExecutionId": "task-0"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-0",
+                    "output": {"value": 1}
+                }),
+                Utc::now(),
+            ),
+            // Timer(0)
+            ReplayEvent::new(
+                3,
+                EventType::TimerStarted,
+                serde_json::json!({
+                    "timerId": "timer-0",
+                    "durationMs": 1000
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                4,
+                EventType::TimerFired,
+                serde_json::json!({
+                    "timerId": "timer-0"
+                }),
+                Utc::now(),
+            ),
+            // Task(1) - another task after timer
+            ReplayEvent::new(
+                5,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "my-task",
+                    "taskExecutionId": "task-1"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                6,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": "task-1",
+                    "output": {"value": 2}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new_with_task_submitter(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+            Some(Arc::new(MockTaskSubmitter)),
+        );
+
+        // Create futures in parallel
+        let task0 = ctx.schedule_async_raw("my-task", serde_json::json!({}));
+        let timer0 = ctx.sleep_async(Duration::from_secs(1));
+        let task1 = ctx.schedule_async_raw("my-task", serde_json::json!({}));
+
+        // Task sequence: 0, 1
+        assert_eq!(task0.task_seq, 0);
+        assert_eq!(task1.task_seq, 1);
+
+        // Timer sequence: 0 (independent from tasks)
+        assert_eq!(timer0.timer_seq, 0);
+    }
+
+    #[tokio::test]
+    async fn test_parallel_completion_order_does_not_affect_replay() {
+        use chrono::Utc;
+        // Test that futures can be awaited in any order and still get correct results
+
+        // Use valid UUIDs for task execution IDs
+        let slow_exec_id = "11111111-1111-1111-1111-111111111111";
+        let fast_exec_id = "22222222-2222-2222-2222-222222222222";
+
+        let replay_events = vec![
+            // Task(0) scheduled first, completes last
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "slow-task",
+                    "taskExecutionId": slow_exec_id
+                }),
+                Utc::now(),
+            ),
+            // Task(1) scheduled second, completes first
+            ReplayEvent::new(
+                2,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "fast-task",
+                    "taskExecutionId": fast_exec_id
+                }),
+                Utc::now(),
+            ),
+            // Fast task completes first
+            ReplayEvent::new(
+                3,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": fast_exec_id,
+                    "output": {"result": "fast"}
+                }),
+                Utc::now(),
+            ),
+            // Slow task completes second
+            ReplayEvent::new(
+                4,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": slow_exec_id,
+                    "output": {"result": "slow"}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new_with_task_submitter(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+            Some(Arc::new(MockTaskSubmitter)),
+        );
+
+        // Create futures
+        let slow_future = ctx.schedule_async_raw("slow-task", serde_json::json!({}));
+        let fast_future = ctx.schedule_async_raw("fast-task", serde_json::json!({}));
+
+        // Await in different order than scheduled
+        // Fast future first (even though slow was scheduled first)
+        let fast_result = fast_future.await.unwrap();
+        assert_eq!(fast_result, serde_json::json!({"result": "fast"}));
+
+        // Slow future second
+        let slow_result = slow_future.await.unwrap();
+        assert_eq!(slow_result, serde_json::json!({"result": "slow"}));
+    }
+
+    #[tokio::test]
+    async fn test_mixed_parallel_operations_replay_correctly() {
+        use chrono::Utc;
+        // Test mixing tasks, timers, and operations in parallel
+
+        // Use valid UUID for task execution ID
+        let fetch_exec_id = "33333333-3333-3333-3333-333333333333";
+
+        let replay_events = vec![
+            // Task(0)
+            ReplayEvent::new(
+                1,
+                EventType::TaskScheduled,
+                serde_json::json!({
+                    "taskType": "fetch-data",
+                    "taskExecutionId": fetch_exec_id
+                }),
+                Utc::now(),
+            ),
+            // Timer(0) - timer ID matches what sleep_async generates: "sleep-1"
+            ReplayEvent::new(
+                2,
+                EventType::TimerStarted,
+                serde_json::json!({
+                    "timerId": "sleep-1",
+                    "durationMs": 5000
+                }),
+                Utc::now(),
+            ),
+            // Operation(0)
+            ReplayEvent::new(
+                3,
+                EventType::OperationCompleted,
+                serde_json::json!({
+                    "operationName": "compute",
+                    "result": {"computed": true}
+                }),
+                Utc::now(),
+            ),
+            // Task completes
+            ReplayEvent::new(
+                4,
+                EventType::TaskCompleted,
+                serde_json::json!({
+                    "taskExecutionId": fetch_exec_id,
+                    "output": {"data": "fetched"}
+                }),
+                Utc::now(),
+            ),
+            // Timer fires
+            ReplayEvent::new(
+                5,
+                EventType::TimerFired,
+                serde_json::json!({
+                    "timerId": "sleep-1"
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new_with_task_submitter(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+            Some(Arc::new(MockTaskSubmitter)),
+        );
+
+        // Create all futures in parallel
+        let task = ctx.schedule_async_raw("fetch-data", serde_json::json!({}));
+        let timer = ctx.sleep_async(Duration::from_secs(5));
+        let op = ctx.run_async_raw("compute", serde_json::json!({"computed": true}));
+
+        // Await in any order
+        let op_result = op.await.unwrap();
+        assert_eq!(op_result, serde_json::json!({"computed": true}));
+
+        let task_result = task.await.unwrap();
+        assert_eq!(task_result, serde_json::json!({"data": "fetched"}));
+
+        let timer_result = timer.await;
+        assert!(timer_result.is_ok());
     }
 }

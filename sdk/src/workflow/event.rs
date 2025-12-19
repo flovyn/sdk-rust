@@ -26,6 +26,7 @@ pub enum EventType {
     TaskScheduled,
     TaskCompleted,
     TaskFailed,
+    TaskCancelled,
 
     // Promise events
     PromiseCreated,
@@ -38,6 +39,7 @@ pub enum EventType {
     ChildWorkflowStarted,
     ChildWorkflowCompleted,
     ChildWorkflowFailed,
+    ChildWorkflowCancelled,
 
     // Timer events
     TimerStarted,
@@ -56,14 +58,17 @@ impl EventType {
 
     /// Check if this event type is a terminal task event
     pub fn is_task_terminal(&self) -> bool {
-        matches!(self, Self::TaskCompleted | Self::TaskFailed)
+        matches!(
+            self,
+            Self::TaskCompleted | Self::TaskFailed | Self::TaskCancelled
+        )
     }
 
     /// Check if this event type is a terminal child workflow event
     pub fn is_child_workflow_terminal(&self) -> bool {
         matches!(
             self,
-            Self::ChildWorkflowCompleted | Self::ChildWorkflowFailed
+            Self::ChildWorkflowCompleted | Self::ChildWorkflowFailed | Self::ChildWorkflowCancelled
         )
     }
 
@@ -89,6 +94,7 @@ impl EventType {
             Self::TaskScheduled => "TASK_SCHEDULED",
             Self::TaskCompleted => "TASK_COMPLETED",
             Self::TaskFailed => "TASK_FAILED",
+            Self::TaskCancelled => "TASK_CANCELLED",
             Self::PromiseCreated => "PROMISE_CREATED",
             Self::PromiseResolved => "PROMISE_RESOLVED",
             Self::PromiseRejected => "PROMISE_REJECTED",
@@ -97,6 +103,7 @@ impl EventType {
             Self::ChildWorkflowStarted => "CHILD_WORKFLOW_STARTED",
             Self::ChildWorkflowCompleted => "CHILD_WORKFLOW_COMPLETED",
             Self::ChildWorkflowFailed => "CHILD_WORKFLOW_FAILED",
+            Self::ChildWorkflowCancelled => "CHILD_WORKFLOW_CANCELLED",
             Self::TimerStarted => "TIMER_STARTED",
             Self::TimerFired => "TIMER_FIRED",
             Self::TimerCancelled => "TIMER_CANCELLED",

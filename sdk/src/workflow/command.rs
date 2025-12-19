@@ -112,6 +112,20 @@ pub enum WorkflowCommand {
         #[serde(rename = "timerId")]
         timer_id: String,
     },
+
+    /// Request cancellation of a scheduled task
+    RequestCancelTask {
+        sequence_number: i32,
+        #[serde(rename = "taskExecutionId")]
+        task_execution_id: Uuid,
+    },
+
+    /// Request cancellation of a child workflow
+    RequestCancelChildWorkflow {
+        sequence_number: i32,
+        #[serde(rename = "childExecutionId")]
+        child_execution_id: Uuid,
+    },
 }
 
 impl WorkflowCommand {
@@ -155,6 +169,12 @@ impl WorkflowCommand {
                 sequence_number, ..
             } => *sequence_number,
             Self::CancelTimer {
+                sequence_number, ..
+            } => *sequence_number,
+            Self::RequestCancelTask {
+                sequence_number, ..
+            } => *sequence_number,
+            Self::RequestCancelChildWorkflow {
                 sequence_number, ..
             } => *sequence_number,
         }
@@ -202,6 +222,12 @@ impl WorkflowCommand {
             Self::CancelTimer {
                 sequence_number, ..
             } => *sequence_number = seq,
+            Self::RequestCancelTask {
+                sequence_number, ..
+            } => *sequence_number = seq,
+            Self::RequestCancelChildWorkflow {
+                sequence_number, ..
+            } => *sequence_number = seq,
         }
     }
 
@@ -221,6 +247,8 @@ impl WorkflowCommand {
             Self::ResolvePromise { .. } => "ResolvePromise",
             Self::StartTimer { .. } => "StartTimer",
             Self::CancelTimer { .. } => "CancelTimer",
+            Self::RequestCancelTask { .. } => "RequestCancelTask",
+            Self::RequestCancelChildWorkflow { .. } => "RequestCancelChildWorkflow",
         }
     }
 }
@@ -444,6 +472,14 @@ mod tests {
             WorkflowCommand::CancelTimer {
                 sequence_number: 13,
                 timer_id: "t".to_string(),
+            },
+            WorkflowCommand::RequestCancelTask {
+                sequence_number: 14,
+                task_execution_id: Uuid::nil(),
+            },
+            WorkflowCommand::RequestCancelChildWorkflow {
+                sequence_number: 15,
+                child_execution_id: Uuid::nil(),
             },
         ];
 

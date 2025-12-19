@@ -620,3 +620,247 @@ impl DynamicWorkflow for ComprehensiveWithTaskWorkflow {
         Ok(output)
     }
 }
+
+// ============================================================================
+// Replay Test Fixtures
+// ============================================================================
+// Workflows designed for testing sequence-based replay and determinism validation.
+
+/// Workflow that schedules N tasks of the same type in a loop.
+/// Tests sequence-based replay with multiple tasks of the same type.
+pub struct TaskLoopWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for TaskLoopWorkflow {
+    fn kind(&self) -> &str {
+        "task-loop-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let items: Vec<String> = input
+            .get("items")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                vec![
+                    "item-1".to_string(),
+                    "item-2".to_string(),
+                    "item-3".to_string(),
+                ]
+            });
+
+        let mut results = Vec::new();
+
+        // Schedule a task for each item
+        for item in &items {
+            let task_result = ctx
+                .schedule_raw("process-item", serde_json::json!({ "item": item }))
+                .await?;
+            let processed = task_result
+                .get("processed")
+                .and_then(|v| v.as_str())
+                .unwrap_or(item)
+                .to_string();
+            results.push(processed);
+        }
+
+        let mut output = DynamicOutput::new();
+        output.insert(
+            "results".to_string(),
+            Value::Array(results.into_iter().map(Value::String).collect()),
+        );
+        Ok(output)
+    }
+}
+
+/// Workflow that schedules N child workflows of the same type in a loop.
+/// Tests sequence-based replay with multiple child workflows.
+pub struct ChildWorkflowLoopWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ChildWorkflowLoopWorkflow {
+    fn kind(&self) -> &str {
+        "child-workflow-loop-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let count = input.get("count").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+
+        let mut results = Vec::new();
+
+        // Schedule a child workflow for each index
+        for i in 1..=count {
+            let child_name = format!("child-{}", i);
+            let child_result = ctx
+                .schedule_workflow_raw(
+                    &child_name,
+                    "process-child",
+                    serde_json::json!({ "index": i }),
+                )
+                .await?;
+            let processed = child_result
+                .get("processed")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(i as u64);
+            results.push(processed as i64);
+        }
+
+        let mut output = DynamicOutput::new();
+        output.insert(
+            "results".to_string(),
+            Value::Array(
+                results
+                    .into_iter()
+                    .map(|n| Value::Number(n.into()))
+                    .collect(),
+            ),
+        );
+        Ok(output)
+    }
+}
+
+/// Child workflow that processes an index.
+pub struct ProcessChildWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ProcessChildWorkflow {
+    fn kind(&self) -> &str {
+        "process-child"
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let index = input.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let mut output = DynamicOutput::new();
+        output.insert("processed".to_string(), Value::Number(index.into()));
+        Ok(output)
+    }
+}
+
+/// Workflow that mixes tasks, timers, and child workflows.
+/// Tests per-type sequence matching with interleaved command types.
+pub struct MixedCommandWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for MixedCommandWorkflow {
+    fn kind(&self) -> &str {
+        "mixed-commands-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let mut output = DynamicOutput::new();
+
+        // Task 1: Fetch data
+        let fetch_result = ctx
+            .schedule_raw("fetch-data", serde_json::json!({ "source": "api" }))
+            .await?;
+        output.insert("fetchResult".to_string(), fetch_result);
+
+        // Timer: Wait 100ms
+        ctx.sleep(std::time::Duration::from_millis(100)).await?;
+
+        // Child workflow: Process data
+        let process_result = ctx
+            .schedule_workflow_raw(
+                "process-data",
+                "processor",
+                serde_json::json!({ "data": "fetched" }),
+            )
+            .await?;
+        output.insert("processResult".to_string(), process_result);
+
+        // Task 2: Send notification
+        let notify_result = ctx
+            .schedule_raw(
+                "send-notification",
+                serde_json::json!({ "message": "done" }),
+            )
+            .await?;
+        output.insert("notifyResult".to_string(), notify_result);
+
+        output.insert("success".to_string(), Value::Bool(true));
+        Ok(output)
+    }
+}
+
+/// Workflow that schedules different task types.
+/// Original version: schedules task-A then task-B.
+pub struct OriginalTaskOrderWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for OriginalTaskOrderWorkflow {
+    fn kind(&self) -> &str {
+        "task-order-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // Original order: A then B
+        let result_a = ctx
+            .schedule_raw("task-A", serde_json::json!({ "order": 1 }))
+            .await?;
+
+        let result_b = ctx
+            .schedule_raw("task-B", serde_json::json!({ "order": 2 }))
+            .await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("resultA".to_string(), result_a);
+        output.insert("resultB".to_string(), result_b);
+        Ok(output)
+    }
+}
+
+/// Changed workflow that swaps task order (for determinism violation testing).
+/// Changed version: schedules task-B then task-A (violates determinism).
+pub struct ChangedTaskOrderWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ChangedTaskOrderWorkflow {
+    fn kind(&self) -> &str {
+        "task-order-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // CHANGED order: B then A (violates determinism)
+        let result_b = ctx
+            .schedule_raw("task-B", serde_json::json!({ "order": 1 }))
+            .await?;
+
+        let result_a = ctx
+            .schedule_raw("task-A", serde_json::json!({ "order": 2 }))
+            .await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("resultB".to_string(), result_b);
+        output.insert("resultA".to_string(), result_a);
+        Ok(output)
+    }
+}

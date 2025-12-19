@@ -2,14 +2,18 @@
 
 use crate::error::{FlovynError, Result};
 use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, WorkflowContext};
+use crate::workflow::future::{
+    ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFuture, OperationFutureRaw,
+    PromiseFuture, PromiseFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -61,6 +65,12 @@ struct MockWorkflowContextInner {
     cancellation_requested: AtomicBool,
     uuid_counter: AtomicU64,
     rng_seed: u64,
+    // Async method sequence counters
+    next_task_seq: AtomicU32,
+    next_timer_seq: AtomicU32,
+    next_child_workflow_seq: AtomicU32,
+    next_promise_seq: AtomicU32,
+    next_operation_seq: AtomicU32,
 }
 
 impl Clone for MockWorkflowContext {
@@ -301,6 +311,11 @@ impl MockWorkflowContextBuilder {
                 cancellation_requested: AtomicBool::new(false),
                 uuid_counter: AtomicU64::new(0),
                 rng_seed: self.rng_seed.unwrap_or(12345),
+                next_task_seq: AtomicU32::new(0),
+                next_timer_seq: AtomicU32::new(0),
+                next_child_workflow_seq: AtomicU32::new(0),
+                next_promise_seq: AtomicU32::new(0),
+                next_operation_seq: AtomicU32::new(0),
             }),
         }
     }
@@ -499,6 +514,177 @@ impl WorkflowContext for MockWorkflowContext {
         } else {
             Ok(())
         }
+    }
+
+    // =========================================================================
+    // Async Operation Methods for Parallel Execution
+    // =========================================================================
+
+    fn schedule_async_raw(&self, task_type: &str, input: Value) -> TaskFutureRaw {
+        self.schedule_async_with_options_raw(task_type, input, ScheduleTaskOptions::default())
+    }
+
+    fn schedule_async_with_options_raw(
+        &self,
+        task_type: &str,
+        input: Value,
+        options: ScheduleTaskOptions,
+    ) -> TaskFutureRaw {
+        let task_seq = self.inner.next_task_seq.fetch_add(1, Ordering::SeqCst);
+        let task_execution_id = self.random_uuid();
+
+        // Record the scheduled task
+        self.inner.scheduled_tasks.write().push(ScheduledTask {
+            task_type: task_type.to_string(),
+            input: input.clone(),
+            options,
+        });
+
+        // Look up the mock result
+        match self.inner.task_results.read().get(task_type) {
+            Some(result) => TaskFuture::from_replay(
+                task_seq,
+                task_execution_id,
+                Weak::<DummyMockTaskContext>::new(),
+                Ok(result.clone()),
+            ),
+            None => TaskFuture::with_error(FlovynError::Other(format!(
+                "No mock result configured for task type: {}",
+                task_type
+            ))),
+        }
+    }
+
+    fn sleep_async(&self, duration: Duration) -> TimerFuture {
+        let timer_seq = self.inner.next_timer_seq.fetch_add(1, Ordering::SeqCst);
+        let timer_id = format!(
+            "sleep-{}",
+            self.inner.uuid_counter.fetch_add(1, Ordering::SeqCst)
+        );
+
+        // Register the timer
+        self.inner
+            .time_controller
+            .register_timer_after(&timer_id, duration);
+
+        // For mock context, timers complete immediately (mock behavior)
+        TimerFuture::from_replay(
+            timer_seq,
+            timer_id,
+            Weak::<DummyMockTimerContext>::new(),
+            true,
+        )
+    }
+
+    fn schedule_workflow_async_raw(
+        &self,
+        name: &str,
+        kind: &str,
+        input: Value,
+    ) -> ChildWorkflowFutureRaw {
+        let cw_seq = self
+            .inner
+            .next_child_workflow_seq
+            .fetch_add(1, Ordering::SeqCst);
+        let child_execution_id = self.random_uuid();
+
+        // Record the scheduled workflow
+        self.inner
+            .scheduled_workflows
+            .write()
+            .push(ScheduledWorkflow {
+                name: name.to_string(),
+                kind: kind.to_string(),
+                input: input.clone(),
+            });
+
+        // Look up the mock result
+        match self.inner.child_workflow_results.read().get(kind) {
+            Some(result) => ChildWorkflowFuture::from_replay(
+                cw_seq,
+                child_execution_id,
+                name.to_string(),
+                Weak::<DummyMockChildWorkflowContext>::new(),
+                Ok(result.clone()),
+            ),
+            None => ChildWorkflowFuture::with_error(FlovynError::Other(format!(
+                "No mock result configured for child workflow kind: {}",
+                kind
+            ))),
+        }
+    }
+
+    fn promise_async_raw(&self, name: &str) -> PromiseFutureRaw {
+        let promise_seq = self.inner.next_promise_seq.fetch_add(1, Ordering::SeqCst);
+
+        // Record the promise creation
+        self.inner.created_promises.write().push(name.to_string());
+
+        // Look up the mock result
+        match self.inner.promise_results.read().get(name) {
+            Some(result) => PromiseFuture::from_replay(
+                promise_seq,
+                name.to_string(),
+                Weak::<DummyMockPromiseFutureContext>::new(),
+                Ok(result.clone()),
+            ),
+            None => PromiseFuture::with_error(FlovynError::Other(format!(
+                "No mock result configured for promise: {}",
+                name
+            ))),
+        }
+    }
+
+    fn run_async_raw(&self, name: &str, result: Value) -> OperationFutureRaw {
+        let op_seq = self.inner.next_operation_seq.fetch_add(1, Ordering::SeqCst);
+
+        // Record the operation
+        self.inner
+            .recorded_operations
+            .write()
+            .push(RecordedOperation {
+                name: name.to_string(),
+                result: result.clone(),
+            });
+
+        // Operations complete immediately with their result
+        OperationFuture::new(op_seq, name.to_string(), Ok(result))
+    }
+}
+
+// Dummy context types for mock futures
+use crate::workflow::future::{
+    ChildWorkflowFutureContext, PromiseFutureContext, TaskFutureContext, TimerFutureContext,
+};
+
+struct DummyMockTaskContext;
+impl TaskFutureContext for DummyMockTaskContext {
+    fn find_task_result(&self, _: &Uuid) -> Option<Result<Value>> {
+        None
+    }
+    fn record_cancel_task(&self, _: &Uuid) {}
+}
+
+struct DummyMockTimerContext;
+impl TimerFutureContext for DummyMockTimerContext {
+    fn find_timer_result(&self, _: &str) -> Option<Result<()>> {
+        None
+    }
+    fn record_cancel_timer(&self, _: &str) {}
+}
+
+struct DummyMockChildWorkflowContext;
+impl ChildWorkflowFutureContext for DummyMockChildWorkflowContext {
+    fn find_child_workflow_result(&self, _: &str) -> Option<Result<Value>> {
+        None
+    }
+    fn record_cancel_child_workflow(&self, _: &Uuid) {}
+}
+
+struct DummyMockPromiseFutureContext;
+impl PromiseFutureContext for DummyMockPromiseFutureContext {
+    fn find_promise_result(&self, _: &str) -> Option<Result<Value>> {
+        None
     }
 }
 

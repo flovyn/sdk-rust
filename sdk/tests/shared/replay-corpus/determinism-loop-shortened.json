@@ -1,0 +1,91 @@
+{
+  "name": "determinism-loop-shortened",
+  "description": "Validates that a shortened loop (fewer iterations than original) is valid - orphaned events are allowed",
+  "workflow_execution_id": "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "workflow_kind": "loop-workflow",
+  "input": {"iterations": 2},
+  "events": [
+    {
+      "sequence_number": 1,
+      "event_type": "WorkflowStarted",
+      "data": {
+        "input": {"iterations": 2}
+      }
+    },
+    {
+      "sequence_number": 2,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "process-item",
+        "taskExecutionId": "task-1"
+      }
+    },
+    {
+      "sequence_number": 3,
+      "event_type": "TaskCompleted",
+      "data": {
+        "taskExecutionId": "task-1",
+        "result": {"value": 1}
+      }
+    },
+    {
+      "sequence_number": 4,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "process-item",
+        "taskExecutionId": "task-2"
+      }
+    },
+    {
+      "sequence_number": 5,
+      "event_type": "TaskCompleted",
+      "data": {
+        "taskExecutionId": "task-2",
+        "result": {"value": 2}
+      }
+    },
+    {
+      "sequence_number": 6,
+      "event_type": "TaskScheduled",
+      "data": {
+        "taskType": "process-item",
+        "taskExecutionId": "task-3"
+      }
+    },
+    {
+      "sequence_number": 7,
+      "event_type": "TaskCompleted",
+      "data": {
+        "taskExecutionId": "task-3",
+        "result": {"value": 3}
+      }
+    }
+  ],
+  "expected_commands": [
+    {
+      "type": "ScheduleTask",
+      "taskType": "process-item"
+    },
+    {
+      "type": "ScheduleTask",
+      "taskType": "process-item"
+    }
+  ],
+  "replay_commands": [
+    {
+      "type": "ScheduleTask",
+      "taskType": "process-item",
+      "input": {}
+    },
+    {
+      "type": "ScheduleTask",
+      "taskType": "process-item",
+      "input": {}
+    }
+  ],
+  "determinism_test": {
+    "type": "valid_replay",
+    "description": "Workflow code changed to 2 iterations (originally 3). Events 6-7 (task-3) are orphaned but this is valid behavior."
+  }
+}
