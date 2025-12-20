@@ -85,7 +85,7 @@ impl Default for FutureState {
 
 /// Future for a scheduled task.
 ///
-/// Created by `WorkflowContext::schedule_async()` and related methods.
+/// Created by `WorkflowContext::schedule()` and related methods.
 /// Resolves when the task completes or fails.
 ///
 /// # Cancellation
@@ -197,8 +197,10 @@ impl<T: DeserializeOwned> Future for TaskFuture<T> {
             }
         }
 
-        // Not ready yet - workflow will be suspended
-        Poll::Pending
+        // Not ready yet - signal workflow suspension
+        Poll::Ready(Err(FlovynError::Suspended {
+            reason: format!("Waiting for task {} to complete", self.task_execution_id),
+        }))
     }
 }
 
@@ -227,7 +229,7 @@ where
 
 /// Future for a timer/sleep operation.
 ///
-/// Created by `WorkflowContext::sleep_async()`.
+/// Created by `WorkflowContext::sleep()`.
 /// Resolves when the timer fires or is cancelled.
 ///
 /// # Cancellation
@@ -333,7 +335,10 @@ impl Future for TimerFuture {
             }
         }
 
-        Poll::Pending
+        // Not ready yet - signal workflow suspension
+        Poll::Ready(Err(FlovynError::Suspended {
+            reason: format!("Waiting for timer {} to fire", self.timer_id),
+        }))
     }
 }
 
@@ -364,7 +369,7 @@ impl CancellableFuture for TimerFuture {
 
 /// Future for a child workflow.
 ///
-/// Created by `WorkflowContext::schedule_workflow_async()`.
+/// Created by `WorkflowContext::schedule_workflow()`.
 /// Resolves when the child workflow completes or fails.
 ///
 /// # Cancellation
@@ -485,7 +490,13 @@ impl<T: DeserializeOwned> Future for ChildWorkflowFuture<T> {
             }
         }
 
-        Poll::Pending
+        // Not ready yet - signal workflow suspension
+        Poll::Ready(Err(FlovynError::Suspended {
+            reason: format!(
+                "Waiting for child workflow {} to complete",
+                self.child_execution_name
+            ),
+        }))
     }
 }
 
@@ -511,7 +522,7 @@ impl<T: DeserializeOwned> CancellableFuture for ChildWorkflowFuture<T> {
 
 /// Future for a durable promise.
 ///
-/// Created by `WorkflowContext::promise_async()`.
+/// Created by `WorkflowContext::promise()`.
 /// Resolves when the promise is resolved externally via a signal.
 ///
 /// # Cancellation
@@ -615,7 +626,10 @@ impl<T: DeserializeOwned> Future for PromiseFuture<T> {
             }
         }
 
-        Poll::Pending
+        // Not ready yet - signal workflow suspension
+        Poll::Ready(Err(FlovynError::Suspended {
+            reason: format!("Waiting for promise {} to be resolved", self.promise_id),
+        }))
     }
 }
 
@@ -635,7 +649,7 @@ impl<T: DeserializeOwned> CancellableFuture for PromiseFuture<T> {
 
 /// Future for a run() operation.
 ///
-/// Created by `WorkflowContext::run_async()`.
+/// Created by `WorkflowContext::run()`.
 /// Operations are synchronous and complete immediately, so this future
 /// is always ready with its result.
 ///
@@ -771,8 +785,8 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_task_future_returns_pending_when_not_completed() {
-        // Create a TaskFuture with no result - it should return Pending
+    fn test_task_future_returns_suspended_when_not_completed() {
+        // Create a TaskFuture with no result - it should return Suspended
         let future: TaskFuture<i32> =
             TaskFuture::new(0, Uuid::new_v4(), Weak::<DummyTaskFutureContext>::new());
         let mut future = std::pin::pin!(future);
@@ -781,8 +795,8 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Pending => {} // Expected
-            other => panic!("Expected Pending, got {:?}", other),
+            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
+            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
         }
     }
 
@@ -913,7 +927,7 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_timer_future_returns_pending_when_not_fired() {
+    fn test_timer_future_returns_suspended_when_not_fired() {
         let future = TimerFuture::new(
             0,
             "timer-1".to_string(),
@@ -925,8 +939,8 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Pending => {} // Expected
-            other => panic!("Expected Pending, got {:?}", other),
+            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
+            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
         }
     }
 
@@ -1005,7 +1019,7 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_child_workflow_future_returns_pending_when_running() {
+    fn test_child_workflow_future_returns_suspended_when_running() {
         let future: ChildWorkflowFuture<i32> = ChildWorkflowFuture::new(
             0,
             Uuid::new_v4(),
@@ -1018,8 +1032,8 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Pending => {} // Expected
-            other => panic!("Expected Pending, got {:?}", other),
+            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
+            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
         }
     }
 
@@ -1145,7 +1159,7 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_promise_future_returns_pending_when_not_resolved() {
+    fn test_promise_future_returns_suspended_when_not_resolved() {
         let future: PromiseFuture<i32> = PromiseFuture::new(
             0,
             "promise-1".to_string(),
@@ -1157,8 +1171,8 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Pending => {} // Expected
-            other => panic!("Expected Pending, got {:?}", other),
+            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
+            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
         }
     }
 

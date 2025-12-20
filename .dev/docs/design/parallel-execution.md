@@ -1,7 +1,23 @@
 # Design: Parallel Execution Support
 
 ## Status
-**Proposed** - Builds on [Sequence-Based Replay](./sequence-based-replay.md)
+**DEPRECATED** - Superseded by [Synchronous Scheduling](./synchronous-scheduling.md)
+
+> **Note**: This document described an approach using async scheduling methods (`schedule_async_raw`)
+> that required awkward double-await patterns. The new [Synchronous Scheduling](./synchronous-scheduling.md)
+> design uses synchronous scheduling methods that return Futures immediately,
+> enabling natural `join!(a, b, c).await` patterns. Please refer to that document for the current design.
+
+---
+
+## Original Design (Deprecated)
+
+*The content below is preserved for historical reference only.*
+
+---
+
+## Original Status
+~~Proposed~~ - Builds on [Sequence-Based Replay](./sequence-based-replay.md)
 
 ## Problem Statement
 

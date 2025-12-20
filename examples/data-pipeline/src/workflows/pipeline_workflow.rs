@@ -190,7 +190,7 @@ impl WorkflowDefinition for DataPipelineWorkflow {
 
         // Execute transformations sequentially (in real implementation, could be parallel)
         // Note: The SDK currently executes these sequentially; true parallelism would
-        // require schedule_async/Deferred pattern when implemented
+        // require schedule/Deferred pattern when implemented
         for transformation_type in input.transformations.iter() {
             ctx.check_cancellation().await?;
 

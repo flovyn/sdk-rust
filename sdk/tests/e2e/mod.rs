@@ -23,6 +23,7 @@ mod concurrency_tests;
 mod error_tests;
 mod fixtures;
 mod harness;
+mod parallel_tests;
 mod promise_tests;
 mod replay_tests;
 mod replay_utils;
@@ -49,8 +50,30 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// This ensures all tests share the same server container.
 static GLOBAL_HARNESS: OnceCell<TestHarness> = OnceCell::const_new();
 
+/// Initialize tracing once for all tests
+static TRACING_INITIALIZED: std::sync::Once = std::sync::Once::new();
+
+fn init_tracing() {
+    TRACING_INITIALIZED.call_once(|| {
+        use tracing_subscriber::{fmt, EnvFilter};
+
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+        fmt()
+            .with_env_filter(filter)
+            .with_target(true)
+            .with_thread_ids(false)
+            .with_file(false)
+            .with_line_number(false)
+            .init();
+    });
+}
+
 /// Get or initialize the global test harness.
 pub async fn get_harness() -> &'static TestHarness {
+    // Initialize tracing before anything else
+    init_tracing();
+
     // Register atexit handler before creating any containers
     register_atexit_handler();
 

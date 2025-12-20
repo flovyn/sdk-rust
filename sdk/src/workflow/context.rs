@@ -45,8 +45,19 @@ pub trait DeterministicRandom: Send + Sync {
 
 /// Context for workflow execution providing deterministic APIs and side effect management.
 ///
-/// This trait uses `Value` types for object-safety. For typed APIs, use the extension
-/// methods provided by `WorkflowContextExt`.
+/// All scheduling methods return Futures immediately, enabling both sequential and
+/// parallel execution patterns:
+///
+/// ```ignore
+/// // Sequential - just await directly
+/// let result = ctx.schedule_raw("task", input).await?;
+///
+/// // Parallel - collect futures, then await together
+/// let futures: Vec<_> = items.iter()
+///     .map(|item| ctx.schedule_raw("task", json!({ "item": item })))
+///     .collect();
+/// let results = join_all(futures).await?;
+/// ```
 #[async_trait]
 pub trait WorkflowContext: Send + Sync {
     // === Identifiers ===
@@ -71,26 +82,78 @@ pub trait WorkflowContext: Send + Sync {
     /// Get a deterministic random number generator (same sequence on replay)
     fn random(&self) -> &dyn DeterministicRandom;
 
-    // === Side Effects (cached via event sourcing) ===
+    // =========================================================================
+    // Task Scheduling - Returns Future for parallel execution
+    // =========================================================================
 
-    /// Execute a side effect and cache the result (raw Value version).
-    /// On replay, returns the cached result without re-executing.
-    async fn run_raw(&self, name: &str, result: Value) -> Result<Value>;
+    /// Schedule a task and return a future for its result.
+    ///
+    /// This method is synchronous and returns a `TaskFuture` immediately.
+    /// The task is queued internally and submitted when the workflow suspends.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Sequential: schedule and await result
+    /// let result = ctx.schedule_raw("task", input).await?;
+    ///
+    /// // Parallel: schedule multiple tasks, then await all results
+    /// let futures = vec![
+    ///     ctx.schedule_raw("task-a", input_a),
+    ///     ctx.schedule_raw("task-b", input_b),
+    /// ];
+    /// let results = join_all(futures).await?;
+    /// ```
+    fn schedule_raw(&self, task_type: &str, input: Value) -> TaskFutureRaw;
 
-    // === Task Scheduling ===
-
-    /// Schedule a task and wait for its completion (raw Value version)
-    async fn schedule_raw(&self, task_type: &str, input: Value) -> Result<Value>;
-
-    /// Schedule a task with custom options (raw Value version)
-    async fn schedule_with_options_raw(
+    /// Schedule a task with custom options.
+    fn schedule_with_options_raw(
         &self,
         task_type: &str,
         input: Value,
         options: ScheduleTaskOptions,
-    ) -> Result<Value>;
+    ) -> TaskFutureRaw;
 
-    // === State Management ===
+    // =========================================================================
+    // Timers - Returns Future for parallel execution
+    // =========================================================================
+
+    /// Sleep for the specified duration (durable - survives restarts).
+    ///
+    /// Returns a future that completes after the duration.
+    fn sleep(&self, duration: Duration) -> TimerFuture;
+
+    // =========================================================================
+    // Promises (Signals) - Returns Future for parallel execution
+    // =========================================================================
+
+    /// Create a durable promise that can be resolved externally.
+    ///
+    /// Returns a future that completes when the promise is resolved.
+    fn promise_raw(&self, name: &str) -> PromiseFutureRaw;
+
+    /// Create a durable promise with a timeout.
+    fn promise_with_timeout_raw(&self, name: &str, timeout: Duration) -> PromiseFutureRaw;
+
+    // =========================================================================
+    // Child Workflows - Returns Future for parallel execution
+    // =========================================================================
+
+    /// Schedule a child workflow and return a future for its result.
+    fn schedule_workflow_raw(&self, name: &str, kind: &str, input: Value)
+        -> ChildWorkflowFutureRaw;
+
+    // =========================================================================
+    // Side Effects - Returns Future for parallel execution
+    // =========================================================================
+
+    /// Execute a side effect and cache the result.
+    ///
+    /// On replay, returns the cached result without re-executing.
+    fn run_raw(&self, name: &str, result: Value) -> OperationFutureRaw;
+
+    // =========================================================================
+    // State Management - Async functions (not parallelizable)
+    // =========================================================================
 
     /// Get a value from workflow state (raw Value version)
     async fn get_raw(&self, key: &str) -> Result<Option<Value>>;
@@ -107,89 +170,15 @@ pub trait WorkflowContext: Send + Sync {
     /// Get all keys in workflow state
     async fn state_keys(&self) -> Result<Vec<String>>;
 
-    // === Timers ===
-
-    /// Sleep for the specified duration (durable - survives restarts)
-    async fn sleep(&self, duration: Duration) -> Result<()>;
-
-    // === Promises (Signals) ===
-
-    /// Create a durable promise that can be resolved externally (raw Value version)
-    async fn promise_raw(&self, name: &str) -> Result<Value>;
-
-    /// Create a durable promise with a timeout (raw Value version)
-    async fn promise_with_timeout_raw(&self, name: &str, timeout: Duration) -> Result<Value>;
-
-    // === Child Workflows ===
-
-    /// Schedule a child workflow and wait for its completion (raw Value version)
-    async fn schedule_workflow_raw(&self, name: &str, kind: &str, input: Value) -> Result<Value>;
-
-    // === Cancellation ===
+    // =========================================================================
+    // Cancellation
+    // =========================================================================
 
     /// Check if cancellation has been requested
     fn is_cancellation_requested(&self) -> bool;
 
     /// Check for cancellation and return error if cancelled
     async fn check_cancellation(&self) -> Result<()>;
-
-    // =========================================================================
-    // Async Operation Methods for Parallel Execution
-    // =========================================================================
-    // These methods schedule operations and return futures immediately,
-    // allowing multiple operations to be scheduled and awaited in parallel.
-    // The sequence number is assigned at call time (not await time) for
-    // deterministic replay.
-
-    // === Async Task Scheduling ===
-
-    /// Schedule a task asynchronously, returning a future.
-    ///
-    /// Unlike `schedule_raw`, this method returns immediately with a future
-    /// that can be awaited later, enabling parallel task execution.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let task_a = ctx.schedule_async_raw("task-a", input_a);
-    /// let task_b = ctx.schedule_async_raw("task-b", input_b);
-    /// let (result_a, result_b) = tokio::join!(task_a, task_b);
-    /// ```
-    fn schedule_async_raw(&self, task_type: &str, input: Value) -> TaskFutureRaw;
-
-    /// Schedule a task asynchronously with custom options.
-    fn schedule_async_with_options_raw(
-        &self,
-        task_type: &str,
-        input: Value,
-        options: ScheduleTaskOptions,
-    ) -> TaskFutureRaw;
-
-    // === Async Timers ===
-
-    /// Sleep asynchronously, returning a timer future.
-    ///
-    /// Unlike `sleep`, this returns immediately with a future.
-    fn sleep_async(&self, duration: Duration) -> TimerFuture;
-
-    // === Async Child Workflows ===
-
-    /// Schedule a child workflow asynchronously.
-    fn schedule_workflow_async_raw(
-        &self,
-        name: &str,
-        kind: &str,
-        input: Value,
-    ) -> ChildWorkflowFutureRaw;
-
-    // === Async Promises ===
-
-    /// Create a durable promise asynchronously.
-    fn promise_async_raw(&self, name: &str) -> PromiseFutureRaw;
-
-    // === Async Operations ===
-
-    /// Run an operation asynchronously, returning a future with the cached result.
-    fn run_async_raw(&self, name: &str, result: Value) -> OperationFutureRaw;
 }
 
 /// Extension trait for typed workflow context operations.
@@ -236,40 +225,28 @@ pub trait WorkflowContextExt: WorkflowContext {
     }
 
     // =========================================================================
-    // Typed Async Methods for Parallel Execution
+    // Typed Methods for Parallel Execution
     // =========================================================================
-    // These methods provide compile-time type safety by leveraging TaskDefinition
-    // and WorkflowDefinition traits. They wrap the raw Value methods with
-    // automatic serialization/deserialization.
 
-    /// Schedule a typed task asynchronously.
+    /// Schedule a typed task.
     ///
     /// This method provides compile-time type safety by using the `TaskDefinition` trait
     /// to determine the task type and ensure correct input/output types.
     ///
-    /// # Type Parameters
-    ///
-    /// * `T` - A type implementing `TaskDefinition + Default`. The `Default` bound
-    ///   allows accessing the task type without requiring an instance.
-    ///
     /// # Example
     ///
     /// ```ignore
-    /// #[derive(Default)]
-    /// struct SendEmailTask;
+    /// // Sequential
+    /// let result = ctx.schedule::<SendEmailTask>(request).await?;
     ///
-    /// impl TaskDefinition for SendEmailTask {
-    ///     type Input = EmailRequest;
-    ///     type Output = EmailResponse;
-    ///     fn kind(&self) -> &str { "send-email" }
-    ///     // ...
-    /// }
-    ///
-    /// // Schedule with type safety
-    /// let future: TaskFuture<EmailResponse> = ctx.schedule_async::<SendEmailTask>(request);
-    /// let response = future.await?;
+    /// // Parallel
+    /// let futures = vec![
+    ///     ctx.schedule::<SendEmailTask>(request1),
+    ///     ctx.schedule::<SendEmailTask>(request2),
+    /// ];
+    /// let results = join_all(futures).await?;
     /// ```
-    fn schedule_async<T: TaskDefinition + Default>(&self, input: T::Input) -> TaskFuture<T::Output>
+    fn schedule<T: TaskDefinition + Default>(&self, input: T::Input) -> TaskFuture<T::Output>
     where
         T::Input: Serialize,
         T::Output: DeserializeOwned,
@@ -282,7 +259,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             Err(e) => return TaskFuture::with_error(FlovynError::Serialization(e)),
         };
 
-        let raw_future = self.schedule_async_raw(task_type, input_value);
+        let raw_future = self.schedule_raw(task_type, input_value);
 
         // Convert TaskFuture<Value> to TaskFuture<T::Output>
         TaskFuture {
@@ -295,21 +272,7 @@ pub trait WorkflowContextExt: WorkflowContext {
     }
 
     /// Schedule a typed task with custom options.
-    ///
-    /// Similar to `schedule_async`, but allows specifying task options like
-    /// priority, timeout, queue, and max retries.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let options = ScheduleTaskOptions {
-    ///     timeout: Some(Duration::from_secs(30)),
-    ///     max_retries: Some(3),
-    ///     ..Default::default()
-    /// };
-    /// let future = ctx.schedule_async_with_options::<SendEmailTask>(request, options);
-    /// ```
-    fn schedule_async_with_options<T: TaskDefinition + Default>(
+    fn schedule_with_options<T: TaskDefinition + Default>(
         &self,
         input: T::Input,
         options: ScheduleTaskOptions,
@@ -326,7 +289,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             Err(e) => return TaskFuture::with_error(FlovynError::Serialization(e)),
         };
 
-        let raw_future = self.schedule_async_with_options_raw(task_type, input_value, options);
+        let raw_future = self.schedule_with_options_raw(task_type, input_value, options);
 
         TaskFuture {
             task_seq: raw_future.task_seq,
@@ -337,28 +300,8 @@ pub trait WorkflowContextExt: WorkflowContext {
         }
     }
 
-    /// Schedule a typed child workflow asynchronously.
-    ///
-    /// This method provides compile-time type safety for child workflow scheduling
-    /// using the `WorkflowDefinition` trait.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// #[derive(Default)]
-    /// struct PaymentWorkflow;
-    ///
-    /// impl WorkflowDefinition for PaymentWorkflow {
-    ///     type Input = PaymentRequest;
-    ///     type Output = PaymentResult;
-    ///     fn kind(&self) -> &str { "payment-workflow" }
-    ///     // ...
-    /// }
-    ///
-    /// let future = ctx.schedule_workflow_async::<PaymentWorkflow>("payment-1", request);
-    /// let result = future.await?;
-    /// ```
-    fn schedule_workflow_async<W: WorkflowDefinition + Default>(
+    /// Schedule a typed child workflow.
+    fn schedule_workflow<W: WorkflowDefinition + Default>(
         &self,
         name: &str,
         input: W::Input,
@@ -375,7 +318,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             Err(e) => return ChildWorkflowFuture::with_error(FlovynError::Serialization(e)),
         };
 
-        let raw_future = self.schedule_workflow_async_raw(name, kind, input_value);
+        let raw_future = self.schedule_workflow_raw(name, kind, input_value);
 
         ChildWorkflowFuture {
             child_workflow_seq: raw_future.child_workflow_seq,
@@ -387,19 +330,9 @@ pub trait WorkflowContextExt: WorkflowContext {
         }
     }
 
-    /// Create a typed promise asynchronously.
-    ///
-    /// Returns a future that resolves when the promise is resolved externally
-    /// with a value of type `T`.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let future: PromiseFuture<ApprovalDecision> = ctx.promise_async("approval");
-    /// let decision = future.await?;
-    /// ```
-    fn promise_async<T: DeserializeOwned>(&self, name: &str) -> PromiseFuture<T> {
-        let raw_future = self.promise_async_raw(name);
+    /// Create a typed promise.
+    fn promise<T: DeserializeOwned>(&self, name: &str) -> PromiseFuture<T> {
+        let raw_future = self.promise_raw(name);
 
         PromiseFuture {
             promise_seq: raw_future.promise_seq,
@@ -441,7 +374,7 @@ mod tests {
 }
 
 #[cfg(all(test, feature = "testing"))]
-mod typed_async_tests {
+mod typed_tests {
     use super::*;
     use crate::task::context::TaskContext;
     use crate::testing::MockWorkflowContext;
@@ -532,11 +465,11 @@ mod typed_async_tests {
     }
 
     // ========================================================================
-    // Tests for schedule_async
+    // Tests for schedule
     // ========================================================================
 
     #[test]
-    fn test_schedule_async_typed_serializes_input() {
+    fn test_schedule_typed_serializes_input() {
         let ctx = MockWorkflowContext::builder()
             .task_result(
                 "send-email",
@@ -552,7 +485,7 @@ mod typed_async_tests {
             subject: "Hello".to_string(),
         };
 
-        let _future: TaskFuture<EmailResponse> = ctx.schedule_async::<SendEmailTask>(input.clone());
+        let _future: TaskFuture<EmailResponse> = ctx.schedule::<SendEmailTask>(input.clone());
 
         // Verify the task was scheduled with the correct task type
         assert!(ctx.was_task_scheduled("send-email"));
@@ -566,7 +499,7 @@ mod typed_async_tests {
     }
 
     #[tokio::test]
-    async fn test_schedule_async_typed_returns_typed_future() {
+    async fn test_schedule_typed_returns_typed_future() {
         let ctx = MockWorkflowContext::builder()
             .task_result(
                 "send-email",
@@ -582,7 +515,7 @@ mod typed_async_tests {
             subject: "Hello".to_string(),
         };
 
-        let future: TaskFuture<EmailResponse> = ctx.schedule_async::<SendEmailTask>(input);
+        let future: TaskFuture<EmailResponse> = ctx.schedule::<SendEmailTask>(input);
         let result = future.await;
 
         assert!(result.is_ok());
@@ -592,40 +525,7 @@ mod typed_async_tests {
     }
 
     #[test]
-    fn test_schedule_async_serialization_error_returns_error_future() {
-        // Test with a type that has custom serialization that might fail
-        // For this test, we'll use a working type since it's hard to make
-        // serde_json::to_value fail with standard types
-        // Instead, we verify the error handling path works by checking
-        // the future mechanism works correctly
-
-        let ctx = MockWorkflowContext::new();
-
-        let input = EmailRequest {
-            to: "test@example.com".to_string(),
-            subject: "Hello".to_string(),
-        };
-
-        // Without a configured result, the mock will return an error
-        let future: TaskFuture<EmailResponse> = ctx.schedule_async::<SendEmailTask>(input);
-
-        // Create a waker and poll the future
-        let waker = futures::task::noop_waker();
-        let mut cx = Context::from_waker(&waker);
-        let mut future = std::pin::pin!(future);
-
-        match future.as_mut().poll(&mut cx) {
-            Poll::Ready(Err(_)) => {} // Expected - no mock result configured
-            other => panic!("Expected Ready(Err), got {:?}", other),
-        }
-    }
-
-    // ========================================================================
-    // Tests for schedule_async_with_options
-    // ========================================================================
-
-    #[test]
-    fn test_schedule_async_with_options_typed() {
+    fn test_schedule_with_options_typed() {
         let ctx = MockWorkflowContext::builder()
             .task_result(
                 "send-email",
@@ -648,7 +548,7 @@ mod typed_async_tests {
         };
 
         let _future: TaskFuture<EmailResponse> =
-            ctx.schedule_async_with_options::<SendEmailTask>(input.clone(), options.clone());
+            ctx.schedule_with_options::<SendEmailTask>(input.clone(), options.clone());
 
         // Verify the task was scheduled
         assert!(ctx.was_task_scheduled("send-email"));
@@ -664,11 +564,11 @@ mod typed_async_tests {
     }
 
     // ========================================================================
-    // Tests for schedule_workflow_async
+    // Tests for schedule_workflow
     // ========================================================================
 
     #[test]
-    fn test_schedule_workflow_async_typed() {
+    fn test_schedule_workflow_typed() {
         let ctx = MockWorkflowContext::builder()
             .child_workflow_result(
                 "payment-workflow",
@@ -685,7 +585,7 @@ mod typed_async_tests {
         };
 
         let _future: ChildWorkflowFuture<PaymentResult> =
-            ctx.schedule_workflow_async::<PaymentWorkflow>("payment-1", input.clone());
+            ctx.schedule_workflow::<PaymentWorkflow>("payment-1", input.clone());
 
         // Verify the workflow was scheduled with the correct kind
         assert!(ctx.was_workflow_scheduled("payment-workflow"));
@@ -702,7 +602,7 @@ mod typed_async_tests {
     }
 
     #[tokio::test]
-    async fn test_schedule_workflow_async_typed_returns_result() {
+    async fn test_schedule_workflow_typed_returns_result() {
         let ctx = MockWorkflowContext::builder()
             .child_workflow_result(
                 "payment-workflow",
@@ -719,7 +619,7 @@ mod typed_async_tests {
         };
 
         let future: ChildWorkflowFuture<PaymentResult> =
-            ctx.schedule_workflow_async::<PaymentWorkflow>("payment-1", input);
+            ctx.schedule_workflow::<PaymentWorkflow>("payment-1", input);
         let result = future.await;
 
         assert!(result.is_ok());
@@ -729,11 +629,11 @@ mod typed_async_tests {
     }
 
     // ========================================================================
-    // Tests for promise_async
+    // Tests for promise
     // ========================================================================
 
     #[test]
-    fn test_promise_async_typed() {
+    fn test_promise_typed() {
         let ctx = MockWorkflowContext::builder()
             .promise_result(
                 "approval",
@@ -750,14 +650,14 @@ mod typed_async_tests {
             approver: String,
         }
 
-        let _future: PromiseFuture<ApprovalDecision> = ctx.promise_async("approval");
+        let _future: PromiseFuture<ApprovalDecision> = ctx.promise("approval");
 
         // Verify the promise was created
         assert!(ctx.was_promise_created("approval"));
     }
 
     #[tokio::test]
-    async fn test_promise_async_typed_returns_result() {
+    async fn test_promise_typed_returns_result() {
         let ctx = MockWorkflowContext::builder()
             .promise_result(
                 "approval",
@@ -774,7 +674,7 @@ mod typed_async_tests {
             approver: String,
         }
 
-        let future: PromiseFuture<ApprovalDecision> = ctx.promise_async("approval");
+        let future: PromiseFuture<ApprovalDecision> = ctx.promise("approval");
         let result = future.await;
 
         assert!(result.is_ok());
@@ -788,7 +688,7 @@ mod typed_async_tests {
     // ========================================================================
 
     #[test]
-    fn test_schedule_async_without_mock_result_returns_error() {
+    fn test_schedule_without_mock_result_returns_error() {
         let ctx = MockWorkflowContext::new();
 
         let input = EmailRequest {
@@ -796,7 +696,7 @@ mod typed_async_tests {
             subject: "Hello".to_string(),
         };
 
-        let future: TaskFuture<EmailResponse> = ctx.schedule_async::<SendEmailTask>(input);
+        let future: TaskFuture<EmailResponse> = ctx.schedule::<SendEmailTask>(input);
 
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
@@ -812,7 +712,7 @@ mod typed_async_tests {
     }
 
     #[test]
-    fn test_schedule_workflow_async_without_mock_result_returns_error() {
+    fn test_schedule_workflow_without_mock_result_returns_error() {
         let ctx = MockWorkflowContext::new();
 
         let input = PaymentRequest {
@@ -821,7 +721,7 @@ mod typed_async_tests {
         };
 
         let future: ChildWorkflowFuture<PaymentResult> =
-            ctx.schedule_workflow_async::<PaymentWorkflow>("payment-1", input);
+            ctx.schedule_workflow::<PaymentWorkflow>("payment-1", input);
 
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
@@ -837,7 +737,7 @@ mod typed_async_tests {
     }
 
     #[test]
-    fn test_promise_async_without_mock_result_returns_error() {
+    fn test_promise_without_mock_result_returns_error() {
         let ctx = MockWorkflowContext::new();
 
         #[derive(Debug, Deserialize)]
@@ -846,7 +746,7 @@ mod typed_async_tests {
             approved: bool,
         }
 
-        let future: PromiseFuture<ApprovalDecision> = ctx.promise_async("approval");
+        let future: PromiseFuture<ApprovalDecision> = ctx.promise("approval");
 
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);

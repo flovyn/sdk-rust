@@ -864,3 +864,289 @@ impl DynamicWorkflow for ChangedTaskOrderWorkflow {
         Ok(output)
     }
 }
+
+// ============================================================================
+// Parallel Execution Test Fixtures
+// ============================================================================
+// Workflows designed for testing parallel execution patterns.
+
+use flovyn_sdk::workflow::combinators::join_all;
+
+/// Workflow that schedules multiple tasks in parallel using join_all.
+/// This is the fan-out/fan-in pattern.
+pub struct ParallelTasksWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for ParallelTasksWorkflow {
+    fn kind(&self) -> &str {
+        "parallel-tasks-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // Get items to process (default: 3 items)
+        let items: Vec<String> = input
+            .get("items")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                vec![
+                    "item-1".to_string(),
+                    "item-2".to_string(),
+                    "item-3".to_string(),
+                ]
+            });
+
+        // Schedule all tasks in parallel (synchronous - returns futures directly)
+        let task_futures: Vec<_> = items
+            .iter()
+            .map(|item| ctx.schedule_raw("process-item", serde_json::json!({ "item": item })))
+            .collect();
+
+        // Wait for all tasks to complete
+        let results = join_all(task_futures).await?;
+
+        // Collect processed items
+        let processed: Vec<Value> = results
+            .into_iter()
+            .map(|r| r.get("processed").cloned().unwrap_or(Value::Null))
+            .collect();
+
+        let mut output = DynamicOutput::new();
+        output.insert("itemCount".to_string(), Value::Number(items.len().into()));
+        output.insert("results".to_string(), Value::Array(processed));
+        Ok(output)
+    }
+}
+
+/// Workflow that races two tasks - first one to complete wins.
+/// Tests the select combinator pattern.
+pub struct RacingTasksWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for RacingTasksWorkflow {
+    fn kind(&self) -> &str {
+        "racing-tasks-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        use flovyn_sdk::workflow::combinators::select;
+
+        let primary_url = input
+            .get("primaryUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("http://primary.example.com");
+        let fallback_url = input
+            .get("fallbackUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("http://fallback.example.com");
+
+        // Schedule both tasks (synchronous - returns futures directly)
+        let primary = ctx.schedule_raw(
+            "fetch-data",
+            serde_json::json!({ "url": primary_url, "name": "primary" }),
+        );
+        let fallback = ctx.schedule_raw(
+            "fetch-data",
+            serde_json::json!({ "url": fallback_url, "name": "fallback" }),
+        );
+
+        // Race them - first to complete wins
+        // select returns (index, result) tuple
+        let (winner_index, winner_result) = select(vec![primary, fallback]).await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert(
+            "winnerIndex".to_string(),
+            Value::Number(winner_index.into()),
+        );
+        output.insert("winner".to_string(), winner_result);
+        Ok(output)
+    }
+}
+
+/// Workflow that adds timeout protection to a slow task.
+/// Tests the with_timeout combinator.
+pub struct TimeoutTaskWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for TimeoutTaskWorkflow {
+    fn kind(&self) -> &str {
+        "timeout-task-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        use flovyn_sdk::workflow::combinators::with_timeout;
+        use std::time::Duration;
+
+        let timeout_ms = input
+            .get("timeoutMs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5000);
+        let operation = input
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("slow-operation");
+
+        // Schedule the task (synchronous - returns future directly)
+        let slow_task = ctx.schedule_raw("slow-operation", serde_json::json!({ "op": operation }));
+
+        // Create timer for timeout
+        let timer = ctx.sleep(Duration::from_millis(timeout_ms));
+
+        // Add timeout protection
+        let result = with_timeout(slow_task, timer).await;
+
+        let mut output = DynamicOutput::new();
+        match result {
+            Ok(task_result) => {
+                output.insert("completed".to_string(), Value::Bool(true));
+                output.insert("result".to_string(), task_result);
+            }
+            Err(FlovynError::Timeout(msg)) => {
+                // Actual timeout - task didn't complete in time
+                output.insert("completed".to_string(), Value::Bool(false));
+                output.insert("error".to_string(), Value::String(msg));
+            }
+            Err(e) => {
+                // Propagate all other errors (including Suspended)
+                return Err(e);
+            }
+        }
+        Ok(output)
+    }
+}
+
+/// Workflow that demonstrates fan-out/fan-in with result aggregation.
+pub struct FanOutFanInWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for FanOutFanInWorkflow {
+    fn kind(&self) -> &str {
+        "fan-out-fan-in-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // Get items to process
+        let items: Vec<String> = input
+            .get("items")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                vec![
+                    "apple".to_string(),
+                    "banana".to_string(),
+                    "cherry".to_string(),
+                    "date".to_string(),
+                ]
+            });
+
+        let item_count = items.len();
+
+        // Fan-out: Schedule all tasks in parallel (synchronous - returns futures directly)
+        let task_futures: Vec<_> = items
+            .iter()
+            .map(|item| ctx.schedule_raw("process-item", serde_json::json!({ "item": item })))
+            .collect();
+
+        // Wait for all tasks to complete
+        let results = join_all(task_futures).await?;
+
+        // Fan-in: aggregate results
+        let processed_items: Vec<String> = results
+            .into_iter()
+            .filter_map(|r| {
+                r.get("processed")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
+            .collect();
+
+        let mut output = DynamicOutput::new();
+        output.insert("inputCount".to_string(), Value::Number(item_count.into()));
+        output.insert(
+            "outputCount".to_string(),
+            Value::Number(processed_items.len().into()),
+        );
+        output.insert(
+            "processedItems".to_string(),
+            Value::Array(processed_items.into_iter().map(Value::String).collect()),
+        );
+        Ok(output)
+    }
+}
+
+/// Workflow that combines parallel tasks with timers.
+/// Tests mixing different parallel operation types.
+pub struct MixedParallelWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for MixedParallelWorkflow {
+    fn kind(&self) -> &str {
+        "mixed-parallel-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        use std::time::Duration;
+
+        let mut output = DynamicOutput::new();
+
+        // Phase 1: Schedule two tasks in parallel (synchronous - returns futures directly)
+        let task1 = ctx.schedule_raw("process-item", serde_json::json!({ "item": "phase1-a" }));
+        let task2 = ctx.schedule_raw("process-item", serde_json::json!({ "item": "phase1-b" }));
+        let phase1_results = join_all(vec![task1, task2]).await?;
+        output.insert(
+            "phase1".to_string(),
+            Value::Array(phase1_results.into_iter().collect()),
+        );
+
+        // Phase 2: Timer + task in sequence
+        ctx.sleep(Duration::from_millis(100)).await?;
+        let task3_result = ctx
+            .schedule_raw("slow-operation", serde_json::json!({ "op": "fast" }))
+            .await?;
+
+        output.insert("timerFired".to_string(), Value::Bool(true));
+        output.insert("phase2TaskResult".to_string(), task3_result);
+
+        // Phase 3: Final parallel batch (synchronous - returns futures directly)
+        let task4 = ctx.schedule_raw("process-item", serde_json::json!({ "item": "phase3-a" }));
+        let task5 = ctx.schedule_raw("process-item", serde_json::json!({ "item": "phase3-b" }));
+        let task6 = ctx.schedule_raw("process-item", serde_json::json!({ "item": "phase3-c" }));
+        let phase3_results = join_all(vec![task4, task5, task6]).await?;
+        output.insert(
+            "phase3".to_string(),
+            Value::Array(phase3_results.into_iter().collect()),
+        );
+
+        output.insert("success".to_string(), Value::Bool(true));
+        Ok(output)
+    }
+}

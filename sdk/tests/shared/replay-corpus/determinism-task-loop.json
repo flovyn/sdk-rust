@@ -20,7 +20,7 @@
       "event_type": "TaskScheduled",
       "data": {
         "taskType": "process-item",
-        "taskExecutionId": "task-1",
+        "taskExecutionId": "11111111-1111-1111-1111-000000000001",
         "input": { "item": "item-1" }
       }
     },
@@ -28,7 +28,7 @@
       "sequence_number": 3,
       "event_type": "TaskCompleted",
       "data": {
-        "taskExecutionId": "task-1",
+        "taskExecutionId": "11111111-1111-1111-1111-000000000001",
         "result": { "processed": "item-1" }
       }
     },
@@ -37,7 +37,7 @@
       "event_type": "TaskScheduled",
       "data": {
         "taskType": "process-item",
-        "taskExecutionId": "task-2",
+        "taskExecutionId": "11111111-1111-1111-1111-000000000002",
         "input": { "item": "item-2" }
       }
     },
@@ -45,7 +45,7 @@
       "sequence_number": 5,
       "event_type": "TaskCompleted",
       "data": {
-        "taskExecutionId": "task-2",
+        "taskExecutionId": "11111111-1111-1111-1111-000000000002",
         "result": { "processed": "item-2" }
       }
     },
@@ -54,7 +54,7 @@
       "event_type": "TaskScheduled",
       "data": {
         "taskType": "process-item",
-        "taskExecutionId": "task-3",
+        "taskExecutionId": "11111111-1111-1111-1111-000000000003",
         "input": { "item": "item-3" }
       }
     },
@@ -62,7 +62,7 @@
       "sequence_number": 7,
       "event_type": "TaskCompleted",
       "data": {
-        "taskExecutionId": "task-3",
+        "taskExecutionId": "11111111-1111-1111-1111-000000000003",
         "result": { "processed": "item-3" }
       }
     },

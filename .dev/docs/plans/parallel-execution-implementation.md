@@ -662,21 +662,21 @@ Add section documenting parallel execution patterns with code snippets.
 - [x] Update `determinism_corpus.rs` for parallel tests
 
 ### Phase 7: E2E Tests
-- [ ] Create `sdk/tests/e2e/fixtures/parallel_workflows.rs`
-- [ ] Implement `ParallelTasksWorkflow`
-- [ ] Implement `RacingTasksWorkflow`
-- [ ] Implement `TimeoutWorkflow`
-- [ ] Implement `FanOutFanInWorkflow`
-- [ ] Create `sdk/tests/e2e/parallel_tests.rs`
-- [ ] Add `test_e2e_parallel_tasks_execute_concurrently`
-- [ ] Add `test_e2e_parallel_tasks_replay_correctly`
-- [ ] Add `test_e2e_select_returns_first_result`
-- [ ] Add `test_e2e_select_cancels_remaining`
-- [ ] Add `test_e2e_timeout_success`
-- [ ] Add `test_e2e_timeout_expires`
-- [ ] Add `test_e2e_fan_out_fan_in`
-- [ ] Add `test_e2e_mixed_parallel_operations`
-- [ ] Update `sdk/tests/e2e/mod.rs`
+- [x] Create `sdk/tests/e2e/fixtures/parallel_workflows.rs` (workflows added to existing workflows.rs)
+- [x] Implement `ParallelTasksWorkflow`
+- [x] Implement `RacingTasksWorkflow`
+- [x] Implement `TimeoutTaskWorkflow`
+- [x] Implement `FanOutFanInWorkflow`
+- [x] Implement `MixedParallelWorkflow`
+- [x] Create `sdk/tests/e2e/parallel_tests.rs`
+- [x] Add parallel task fixtures (ProcessItemTask, FetchDataTask, SlowOperationTask) to tasks.rs
+- [x] Add `test_e2e_parallel_tasks_join_all`
+- [x] Add `test_e2e_racing_tasks_select`
+- [x] Add `test_e2e_timeout_success`
+- [x] Add `test_e2e_fan_out_fan_in`
+- [x] Add `test_e2e_mixed_parallel_operations`
+- [x] Add `test_e2e_parallel_large_batch`
+- [x] Update `sdk/tests/e2e/mod.rs`
 
 ### Phase 8: MockWorkflowContext Updates
 - [x] Add async methods to `MockWorkflowContext`
@@ -738,7 +738,7 @@ After implementation:
 - [x] `cargo test --test tck -p flovyn-sdk` passes
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` passes
 - [x] `cargo fmt --all -- --check` passes
-- [ ] E2E tests pass with server running (E2E parallel tests not yet created)
+- [x] E2E tests created and compile (run with server: `./bin/dev/run-e2e-tests.sh parallel`)
 - [x] Examples compile and run correctly
 
 ---

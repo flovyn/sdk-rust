@@ -147,7 +147,7 @@ impl TestHarness {
         let image_name = std::env::var("FLOVYN_SERVER_IMAGE")
             .unwrap_or_else(|_| "flovyn-server-test".to_string());
         let server_image = GenericImage::new(image_name, "latest".to_string())
-            .with_exposed_port(ContainerPort::Tcp(8080))
+            .with_exposed_port(ContainerPort::Tcp(8000))
             .with_exposed_port(ContainerPort::Tcp(9090))
             .with_label("flovyn-test", "true")
             .with_label("flovyn-test-session", session_id);
@@ -167,10 +167,8 @@ impl TestHarness {
                 "NATS_SERVERS_0",
                 format!("nats://host.docker.internal:{}", nats_host_port),
             )
-            .with_env_var("SERVER_PORT", "8080")
+            .with_env_var("SERVER_PORT", "8000")
             .with_env_var("GRPC_SERVER_PORT", "9090")
-            .with_env_var("SPRING_FLYWAY_ENABLED", "true")
-            .with_env_var("SPRING_FLYWAY_BASELINE_ON_MIGRATE", "true")
             // Enable security with signature verification skipped (for self-signed JWTs)
             .with_env_var("FLOVYN_SECURITY_ENABLED", "true")
             .with_env_var("FLOVYN_SECURITY_JWT_SKIP_SIGNATURE_VERIFICATION", "true")
@@ -180,7 +178,7 @@ impl TestHarness {
             .expect("Failed to start Flovyn server");
 
         let server_grpc_port = server.get_host_port_ipv4(9090).await.unwrap();
-        let server_http_port = server.get_host_port_ipv4(8080).await.unwrap();
+        let server_http_port = server.get_host_port_ipv4(8000).await.unwrap();
         println!(
             "Flovyn server started - HTTP: {}, gRPC: {}",
             server_http_port, server_grpc_port
@@ -222,7 +220,7 @@ impl TestHarness {
     /// Wait for server health endpoint to respond (max 30 seconds).
     async fn wait_for_health(server: &ContainerAsync<GenericImage>, http_port: u16) {
         let client = reqwest::Client::new();
-        let url = format!("http://localhost:{}/actuator/health", http_port);
+        let url = format!("http://localhost:{}/_/health", http_port);
 
         for i in 0..15 {
             match client.get(&url).send().await {

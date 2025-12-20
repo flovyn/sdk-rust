@@ -2,7 +2,7 @@
 
 use crate::client::hook::WorkflowHook;
 use crate::client::worker_lifecycle::{WorkerLifecycleClient, WorkerType};
-use crate::client::{GrpcTaskSubmitter, WorkflowDispatch, WorkflowExecutionInfo};
+use crate::client::{WorkflowDispatch, WorkflowExecutionInfo};
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
 use crate::telemetry::{workflow_execute_span, workflow_replay_span, SpanCollector};
@@ -12,7 +12,6 @@ use crate::workflow::command::WorkflowCommand;
 use crate::workflow::context_impl::WorkflowContextImpl;
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::recorder::CommandCollector;
-use crate::workflow::task_submitter::TaskSubmitter;
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -90,8 +89,6 @@ pub struct WorkflowExecutorWorker {
     ready_notify: Arc<Notify>,
     /// Notify when work is available (from notification subscription)
     work_available_notify: Arc<Notify>,
-    /// Task submitter for workflows to submit tasks to the server
-    task_submitter: Arc<dyn TaskSubmitter>,
     /// Span collector for telemetry
     span_collector: SpanCollector,
     /// External shutdown signal receiver
@@ -107,10 +104,6 @@ impl WorkflowExecutorWorker {
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
         let client = WorkflowDispatch::new(channel.clone(), &config.worker_token);
-        let task_submitter = Arc::new(GrpcTaskSubmitter::new(
-            channel.clone(),
-            &config.worker_token,
-        ));
         let span_collector = SpanCollector::new(config.enable_telemetry);
         Self {
             config,
@@ -124,7 +117,6 @@ impl WorkflowExecutorWorker {
             workflow_hook: None,
             ready_notify: Arc::new(Notify::new()),
             work_available_notify: Arc::new(Notify::new()),
-            task_submitter,
             span_collector,
             external_shutdown_rx: None,
         }
@@ -343,7 +335,6 @@ impl WorkflowExecutorWorker {
         let mut client = self.client.clone();
         let config = self.config.clone();
         let workflow_hook = self.workflow_hook.clone();
-        let task_submitter = self.task_submitter.clone();
         let span_collector = self.span_collector.clone();
 
         // Start heartbeat loop in background
@@ -416,7 +407,6 @@ impl WorkflowExecutorWorker {
                     running.clone(),
                     workflow_hook.clone(),
                     work_available_notify.clone(),
-                    task_submitter.clone(),
                     span_collector.clone(),
                 ) => {
                     if let Err(e) = result {
@@ -467,7 +457,6 @@ impl WorkflowExecutorWorker {
         running: Arc<AtomicBool>,
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
         work_available_notify: Arc<Notify>,
-        task_submitter: Arc<dyn TaskSubmitter>,
         span_collector: SpanCollector,
     ) -> Result<()> {
         // Acquire semaphore permit
@@ -491,22 +480,15 @@ impl WorkflowExecutorWorker {
                 // Spawn execution in background
                 let mut client = client.clone();
                 let hook = workflow_hook.clone();
-                let task_submitter = task_submitter.clone();
                 let span_collector = span_collector.clone();
 
                 tokio::spawn(async move {
                     let _permit = permit; // Keep permit alive during execution
                     let _running = running; // Keep reference
 
-                    if let Err(e) = Self::execute_workflow(
-                        &mut client,
-                        &registry,
-                        info,
-                        hook,
-                        task_submitter,
-                        span_collector,
-                    )
-                    .await
+                    if let Err(e) =
+                        Self::execute_workflow(&mut client, &registry, info, hook, span_collector)
+                            .await
                     {
                         error!("Workflow execution error: {}", e);
                     }
@@ -563,13 +545,11 @@ impl WorkflowExecutorWorker {
     }
 
     /// Execute a single workflow
-    #[allow(clippy::too_many_arguments)]
     async fn execute_workflow(
         client: &mut WorkflowDispatch,
         registry: &WorkflowRegistry,
         workflow_info: WorkflowExecutionInfo,
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
-        task_submitter: Arc<dyn TaskSubmitter>,
         span_collector: SpanCollector,
     ) -> Result<()> {
         let workflow_id = workflow_info.id;
@@ -603,14 +583,6 @@ impl WorkflowExecutorWorker {
 
         // Record replay span if there are events to replay
         if !replay_events.is_empty() {
-            debug!(
-                workflow_id = %workflow_id,
-                num_events = replay_events.len(),
-                events = ?replay_events.iter().map(|e| format!("{}:{:?} - {:?}", e.sequence_number(), e.event_type(), e.data())).collect::<Vec<_>>(),
-                "Executing workflow with replay events"
-            );
-
-            // Record workflow.replay span
             let replay_span = workflow_replay_span(&workflow_id_str, replay_events.len());
             span_collector.record(replay_span.finish());
         }
@@ -627,7 +599,6 @@ impl WorkflowExecutorWorker {
             recorder,
             replay_events.clone(),
             workflow_task_time,
-            Some(task_submitter),
             span_collector.is_enabled(),
         ));
 
@@ -1027,6 +998,9 @@ mod tests {
             input: serde_json::json!({"to": "user@example.com"}),
             task_execution_id: Uuid::new_v4(),
             priority_seconds: None,
+            max_retries: None,
+            timeout_ms: None,
+            queue: None,
         };
 
         let proto = WorkflowExecutorWorker::convert_command_to_proto(&command);

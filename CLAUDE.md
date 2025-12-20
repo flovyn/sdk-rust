@@ -82,6 +82,7 @@ Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `
 - **Bug reports**: `.dev/docs/plans/` - Bug report and fixes
 
 ### Plan Guidelines
+- Before writing a plan, think critically to find things we would have missed from the design
 - Plans should NOT repeat content already in design documents - reference them instead
 - Plans MUST include a TODO list with concrete tasks
 - No "deferred" or "optional" items unless explicitly marked as non-goal or out of scope
@@ -90,6 +91,7 @@ Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `
 ### Testing
 - Use test first approach
 - Write test one by one. Verify one test work first before moving on the next.
+- For E2E test, use different queue for tests to prevent a worker in a test might pull jobs from another tests.
 
 ## Prerequisites
 

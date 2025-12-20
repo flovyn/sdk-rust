@@ -280,7 +280,7 @@ impl WorkflowDefinition for ControlledParallelWorkflow {
                 "Processing parallel batch"
             );
 
-            // In a real implementation with schedule_async/Deferred,
+            // In a real implementation with schedule/Deferred,
             // these would be scheduled in parallel and awaited together.
             // For now, we process sequentially.
             for (idx, item) in chunk.iter().enumerate() {

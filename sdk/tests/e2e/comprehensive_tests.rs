@@ -69,11 +69,6 @@ async fn test_comprehensive_workflow_features() {
             assert_eq!(state_retrieved["message"], "state test");
             assert_eq!(state_retrieved["nested"]["a"], 1);
             assert_eq!(state_retrieved["nested"]["b"], 2);
-
-            println!(
-                "Comprehensive test passed all {} checks",
-                result["testsPassedCount"]
-            );
         },
     )
     .await;
@@ -155,16 +150,13 @@ async fn test_all_basic_workflows() {
         .await;
 
         // Test 1: Doubler workflow
-        println!("Testing DoublerWorkflow...");
         let doubler_result = env
             .start_and_await("doubler-workflow", json!({"value": 21}))
             .await
             .expect("Doubler workflow failed");
         assert_eq!(doubler_result["result"], 42, "Doubler should return 42");
-        println!("  ✓ DoublerWorkflow passed");
 
         // Test 2: Echo workflow
-        println!("Testing EchoWorkflow...");
         let echo_input = json!({
             "message": "Hello",
             "count": 123,

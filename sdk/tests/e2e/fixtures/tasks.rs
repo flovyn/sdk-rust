@@ -138,3 +138,122 @@ impl DynamicTask for ProgressTask {
         Ok(output)
     }
 }
+
+// ============================================================================
+// Parallel Execution Task Fixtures
+// ============================================================================
+
+/// Task that processes a single item.
+/// Used by parallel workflows for fan-out/fan-in patterns.
+pub struct ProcessItemTask;
+
+#[async_trait]
+impl DynamicTask for ProcessItemTask {
+    fn kind(&self) -> &str {
+        "process-item"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        _ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let item = input
+            .get("item")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        // Simulate some processing
+        let processed = format!("processed:{}", item);
+
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "processed".to_string(),
+            serde_json::Value::String(processed),
+        );
+        output.insert(
+            "originalItem".to_string(),
+            serde_json::Value::String(item.to_string()),
+        );
+        Ok(output)
+    }
+}
+
+/// Task that fetches data from a URL.
+/// Used by racing workflow tests.
+pub struct FetchDataTask;
+
+#[async_trait]
+impl DynamicTask for FetchDataTask {
+    fn kind(&self) -> &str {
+        "fetch-data"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        _ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let url = input
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("http://example.com");
+        let name = input
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+
+        // Simulate fetch (in reality, would make HTTP request)
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "source".to_string(),
+            serde_json::Value::String(url.to_string()),
+        );
+        output.insert(
+            "name".to_string(),
+            serde_json::Value::String(name.to_string()),
+        );
+        output.insert("data".to_string(), serde_json::json!({ "response": "ok" }));
+        Ok(output)
+    }
+}
+
+/// Task that simulates a slow operation.
+/// Used by timeout workflow tests.
+pub struct SlowOperationTask;
+
+#[async_trait]
+impl DynamicTask for SlowOperationTask {
+    fn kind(&self) -> &str {
+        "slow-operation"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        _ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let op = input
+            .get("op")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let delay_ms = input.get("delayMs").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        // Simulate slow operation
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "operation".to_string(),
+            serde_json::Value::String(op.to_string()),
+        );
+        output.insert("completed".to_string(), serde_json::Value::Bool(true));
+        output.insert(
+            "result".to_string(),
+            serde_json::json!({ "operation": op, "success": true }),
+        );
+        Ok(output)
+    }
+}

@@ -36,6 +36,12 @@ pub enum WorkflowCommand {
         input: Value,
         #[serde(rename = "prioritySeconds", skip_serializing_if = "Option::is_none")]
         priority_seconds: Option<i32>,
+        #[serde(rename = "maxRetries", skip_serializing_if = "Option::is_none")]
+        max_retries: Option<u32>,
+        #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        queue: Option<String>,
     },
 
     /// Schedule a child workflow
@@ -294,6 +300,9 @@ mod tests {
             task_execution_id: Uuid::new_v4(),
             input: json!({}),
             priority_seconds: None,
+            max_retries: None,
+            timeout_ms: None,
+            queue: None,
         };
         assert_eq!(cmd.type_name(), "ScheduleTask");
     }
@@ -324,6 +333,9 @@ mod tests {
             task_execution_id: task_id,
             input: json!({"amount": 100}),
             priority_seconds: Some(60),
+            max_retries: Some(3),
+            timeout_ms: Some(30000),
+            queue: Some("high-priority".to_string()),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -331,6 +343,9 @@ mod tests {
         assert!(json.contains("payment-task"));
         assert!(json.contains("taskType"));
         assert!(json.contains("prioritySeconds"));
+        assert!(json.contains("maxRetries"));
+        assert!(json.contains("timeoutMs"));
+        assert!(json.contains("high-priority"));
 
         let parsed: WorkflowCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, cmd);
@@ -425,6 +440,9 @@ mod tests {
                 task_execution_id: Uuid::nil(),
                 input: json!(null),
                 priority_seconds: None,
+                max_retries: None,
+                timeout_ms: None,
+                queue: None,
             },
             WorkflowCommand::ScheduleChildWorkflow {
                 sequence_number: 5,

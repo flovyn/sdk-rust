@@ -84,19 +84,20 @@ impl WorkflowDefinition for FanOutFanInWorkflow {
         let start_time = ctx.current_time_millis();
 
         // Fan out: Schedule all processing tasks in parallel
-        let futures: Vec<_> = input
+        // schedule_raw is now synchronous, so we can collect futures directly
+        let task_futures: Vec<_> = input
             .items
             .iter()
-            .map(|item| ctx.schedule_async_raw("process-item", json!({ "item": item })))
+            .map(|item| ctx.schedule_raw("process-item", json!({ "item": item })))
             .collect();
 
         // Wait for all tasks to complete
-        let results = join_all(futures).await?;
+        let results = join_all(task_futures).await?;
 
         // Fan in: Aggregate results
         let processed_results: Vec<String> = results
             .into_iter()
-            .filter_map(|v| {
+            .filter_map(|v: serde_json::Value| {
                 v.get("processed")
                     .and_then(|p| p.as_str())
                     .map(String::from)
@@ -177,14 +178,14 @@ impl WorkflowDefinition for RacingWorkflow {
     }
 
     async fn execute(&self, ctx: &dyn WorkflowContext, input: Self::Input) -> Result<Self::Output> {
-        // Start both requests in parallel
-        let futures = vec![
-            ctx.schedule_async_raw("fetch-data", json!({ "url": input.primary_url })),
-            ctx.schedule_async_raw("fetch-data", json!({ "url": input.fallback_url })),
+        // Schedule both tasks (synchronous - returns futures directly)
+        let task_futures = vec![
+            ctx.schedule_raw("fetch-data", json!({ "url": input.primary_url })),
+            ctx.schedule_raw("fetch-data", json!({ "url": input.fallback_url })),
         ];
 
         // Race them - first to complete wins
-        let (winner_index, response) = select(futures).await?;
+        let (winner_index, response) = select(task_futures).await?;
 
         Ok(RacingOutput {
             winner_index,
@@ -258,9 +259,10 @@ impl WorkflowDefinition for TimeoutWorkflow {
     }
 
     async fn execute(&self, ctx: &dyn WorkflowContext, input: Self::Input) -> Result<Self::Output> {
-        // Create the operation and timer futures
-        let operation = ctx.schedule_async_raw("slow-operation", json!({ "op": input.operation }));
-        let timer = ctx.sleep_async(Duration::from_secs(input.timeout_seconds));
+        // Schedule the task (synchronous - returns future directly)
+        let operation = ctx.schedule_raw("slow-operation", json!({ "op": input.operation }));
+        // Create the timer
+        let timer = ctx.sleep(Duration::from_secs(input.timeout_seconds));
 
         // Run with timeout
         match with_timeout(operation, timer).await {
@@ -358,14 +360,14 @@ impl WorkflowDefinition for BatchWithConcurrencyWorkflow {
 
         // Process items in batches
         for chunk in input.items.chunks(input.max_concurrency) {
-            // Schedule all items in this batch
-            let futures: Vec<_> = chunk
+            // Schedule all tasks in this batch (synchronous - returns futures directly)
+            let task_futures: Vec<_> = chunk
                 .iter()
-                .map(|item| ctx.schedule_async_raw("process-item", json!({ "item": item })))
+                .map(|item| ctx.schedule_raw("process-item", json!({ "item": item })))
                 .collect();
 
             // Wait for all in this batch to complete
-            let batch_results = join_all(futures).await;
+            let batch_results = join_all(task_futures).await;
 
             // Process results
             match batch_results {
@@ -468,15 +470,15 @@ impl WorkflowDefinition for PartialCompletionWorkflow {
     }
 
     async fn execute(&self, ctx: &dyn WorkflowContext, input: Self::Input) -> Result<Self::Output> {
-        // Start all operations
-        let futures: Vec<_> = input
+        // Schedule all tasks (synchronous - returns futures directly)
+        let task_futures: Vec<_> = input
             .operations
             .iter()
-            .map(|op| ctx.schedule_async_raw("run-operation", json!({ "operation": op })))
+            .map(|op| ctx.schedule_raw("run-operation", json!({ "operation": op })))
             .collect();
 
         // Wait for N to complete
-        let completed = join_n(futures, input.min_required).await?;
+        let completed = join_n(task_futures, input.min_required).await?;
 
         Ok(PartialCompletionOutput {
             results: completed,
@@ -554,14 +556,14 @@ impl WorkflowDefinition for DynamicParallelismWorkflow {
 
     async fn execute(&self, ctx: &dyn WorkflowContext, input: Self::Input) -> Result<Self::Output> {
         // Step 1: Fetch the list of items to process (count unknown until runtime)
-        let items_result = ctx
+        let items_result: serde_json::Value = ctx
             .schedule_raw("fetch-items", json!({ "source": input.source }))
             .await?;
 
         // Parse the dynamic list of items
         let items: Vec<String> = items_result
             .get("items")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .and_then(|v: &serde_json::Value| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
         if items.is_empty() {
@@ -571,17 +573,16 @@ impl WorkflowDefinition for DynamicParallelismWorkflow {
             });
         }
 
-        // Step 2: Dynamically create parallel futures based on fetched data
-        // The number of parallel operations is determined by the data
-        let futures: Vec<_> = items
+        // Step 2: Schedule all tasks in parallel (synchronous - returns futures directly)
+        let task_futures: Vec<_> = items
             .iter()
-            .map(|item| ctx.schedule_async_raw("process-item", json!({ "item": item })))
+            .map(|item| ctx.schedule_raw("process-item", json!({ "item": item })))
             .collect();
 
-        let items_count = futures.len();
+        let items_count = task_futures.len();
 
         // Step 3: Wait for all dynamically created operations
-        let results = join_all(futures).await?;
+        let results = join_all(task_futures).await?;
 
         Ok(DynamicParallelismOutput {
             items_processed: items_count,

@@ -18,7 +18,7 @@
       "event_type": "TaskScheduled",
       "data": {
         "taskType": "original-task",
-        "taskExecutionId": "task-1",
+        "taskExecutionId": "44444444-4444-4444-4444-000000000001",
         "input": {}
       }
     },
@@ -26,7 +26,7 @@
       "sequence_number": 3,
       "event_type": "TaskCompleted",
       "data": {
-        "taskExecutionId": "task-1",
+        "taskExecutionId": "44444444-4444-4444-4444-000000000001",
         "result": { "done": true }
       }
     },

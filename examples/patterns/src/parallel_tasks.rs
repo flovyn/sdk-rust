@@ -3,7 +3,7 @@
 //! This module contains task definitions that work with the parallel execution
 //! workflow patterns. In a real application, these would implement actual business logic.
 //!
-//! These tasks are referenced by the parallel workflows using `schedule_async_raw`:
+//! These tasks are referenced by the parallel workflows using `schedule_raw`:
 //! - `process-item`: General item processing
 //! - `fetch-data`: Fetch data from a URL
 //! - `slow-operation`: Simulates a slow/expensive operation

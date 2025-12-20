@@ -11,15 +11,15 @@
 //!
 //! // Run multiple tasks in parallel and wait for all
 //! let results = join_all(vec![
-//!     ctx.schedule_async_raw("task-a", json!({})),
-//!     ctx.schedule_async_raw("task-b", json!({})),
-//!     ctx.schedule_async_raw("task-c", json!({})),
+//!     ctx.schedule_raw("task-a", json!({})),
+//!     ctx.schedule_raw("task-b", json!({})),
+//!     ctx.schedule_raw("task-c", json!({})),
 //! ]).await?;
 //!
 //! // Run multiple tasks and get the first result
 //! let (index, result) = select(vec![
-//!     ctx.schedule_async_raw("fast-task", json!({})),
-//!     ctx.schedule_async_raw("slow-task", json!({})),
+//!     ctx.schedule_raw("fast-task", json!({})),
+//!     ctx.schedule_raw("slow-task", json!({})),
 //! ]).await?;
 //! ```
 
@@ -70,6 +70,8 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         let mut all_done = true;
+        let mut has_suspended = false;
+        let mut first_suspension_reason: Option<String> = None;
 
         for i in 0..this.futures.len() {
             if this.results[i].is_some() {
@@ -82,7 +84,16 @@ where
                         this.results[i] = Some(result);
                         this.futures[i] = None;
                     }
+                    Poll::Ready(Err(FlovynError::Suspended { reason })) => {
+                        // Suspended is special - treat like Pending but track it
+                        has_suspended = true;
+                        if first_suspension_reason.is_none() {
+                            first_suspension_reason = Some(reason);
+                        }
+                        all_done = false;
+                    }
                     Poll::Ready(Err(e)) => {
+                        // Non-Suspended errors are returned immediately
                         return Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
@@ -99,6 +110,11 @@ where
                 .map(|r| r.take().expect("All results should be present"))
                 .collect();
             Poll::Ready(Ok(results))
+        } else if has_suspended {
+            // If any future is suspended, propagate suspension
+            Poll::Ready(Err(FlovynError::Suspended {
+                reason: first_suspension_reason.unwrap_or_else(|| "Waiting for tasks".to_string()),
+            }))
         } else {
             Poll::Pending
         }
@@ -114,8 +130,8 @@ where
 ///
 /// ```ignore
 /// let results = join_all(vec![
-///     ctx.schedule_async_raw("task-a", json!({})),
-///     ctx.schedule_async_raw("task-b", json!({})),
+///     ctx.schedule_raw("task-a", json!({})),
+///     ctx.schedule_raw("task-b", json!({})),
 /// ]).await?;
 /// ```
 pub fn join_all<F, T>(futures: Vec<F>) -> JoinAll<F, T>
@@ -162,6 +178,8 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
+        let mut has_suspended = false;
+        let mut first_suspension_reason: Option<String> = None;
 
         for i in 0..this.futures.len() {
             if let Some(ref mut future) = this.futures[i] {
@@ -170,7 +188,15 @@ where
                         this.futures[i] = None;
                         return Poll::Ready(Ok((i, result)));
                     }
+                    Poll::Ready(Err(FlovynError::Suspended { reason })) => {
+                        // Suspended is special - treat like Pending but track it
+                        has_suspended = true;
+                        if first_suspension_reason.is_none() {
+                            first_suspension_reason = Some(reason);
+                        }
+                    }
                     Poll::Ready(Err(e)) => {
+                        // Non-Suspended errors are returned immediately
                         this.futures[i] = None;
                         return Poll::Ready(Err(e));
                     }
@@ -179,7 +205,14 @@ where
             }
         }
 
-        Poll::Pending
+        // If any future is suspended, propagate suspension
+        if has_suspended {
+            Poll::Ready(Err(FlovynError::Suspended {
+                reason: first_suspension_reason.unwrap_or_else(|| "Waiting for tasks".to_string()),
+            }))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -194,8 +227,8 @@ where
 ///
 /// ```ignore
 /// let (winner_index, result) = select(vec![
-///     ctx.schedule_async_raw("fast-task", json!({})),
-///     ctx.schedule_async_raw("slow-task", json!({})),
+///     ctx.schedule_raw("fast-task", json!({})),
+///     ctx.schedule_raw("slow-task", json!({})),
 /// ]).await?;
 ///
 /// println!("Task {} finished first", winner_index);
@@ -248,6 +281,8 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
+        let mut has_suspended = false;
+        let mut first_suspension_reason: Option<String> = None;
 
         if this.results.len() >= this.n {
             let results = std::mem::take(&mut this.results);
@@ -265,7 +300,15 @@ where
                         this.futures[i] = None;
                         this.results.push((i, result));
                     }
+                    Poll::Ready(Err(FlovynError::Suspended { reason })) => {
+                        // Suspended is special - treat like Pending but track it
+                        has_suspended = true;
+                        if first_suspension_reason.is_none() {
+                            first_suspension_reason = Some(reason);
+                        }
+                    }
                     Poll::Ready(Err(e)) => {
+                        // Non-Suspended errors are returned immediately
                         this.futures[i] = None;
                         return Poll::Ready(Err(e));
                     }
@@ -277,6 +320,11 @@ where
         if this.results.len() >= this.n {
             let results = std::mem::take(&mut this.results);
             Poll::Ready(Ok(results))
+        } else if has_suspended {
+            // If any future is suspended, propagate suspension
+            Poll::Ready(Err(FlovynError::Suspended {
+                reason: first_suspension_reason.unwrap_or_else(|| "Waiting for tasks".to_string()),
+            }))
         } else {
             Poll::Pending
         }
@@ -294,9 +342,9 @@ where
 /// ```ignore
 /// // Wait for any 2 of 3 tasks to complete
 /// let winners = join_n(vec![
-///     ctx.schedule_async_raw("task-a", json!({})),
-///     ctx.schedule_async_raw("task-b", json!({})),
-///     ctx.schedule_async_raw("task-c", json!({})),
+///     ctx.schedule_raw("task-a", json!({})),
+///     ctx.schedule_raw("task-b", json!({})),
+///     ctx.schedule_raw("task-c", json!({})),
 /// ], 2).await?;
 ///
 /// for (index, result) in winners {
@@ -353,6 +401,8 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
+        let mut has_suspended = false;
+        let mut first_suspension_reason: Option<String> = None;
 
         // Check if already timed out
         if this.timed_out {
@@ -361,12 +411,24 @@ where
 
         // Poll the inner future first
         match Pin::new(&mut this.inner).poll(cx) {
-            Poll::Ready(result) => {
+            Poll::Ready(Ok(result)) => {
                 // Cancel timer if inner completes first
                 if let Some(ref timer) = this.timer {
                     timer.cancel();
                 }
-                return Poll::Ready(result);
+                return Poll::Ready(Ok(result));
+            }
+            Poll::Ready(Err(FlovynError::Suspended { reason })) => {
+                // Inner is suspended - track it but continue to poll timer
+                has_suspended = true;
+                first_suspension_reason = Some(reason);
+            }
+            Poll::Ready(Err(e)) => {
+                // Non-Suspended error from inner
+                if let Some(ref timer) = this.timer {
+                    timer.cancel();
+                }
+                return Poll::Ready(Err(e));
             }
             Poll::Pending => {}
         }
@@ -382,6 +444,13 @@ where
                         "Operation timed out".to_string(),
                     )));
                 }
+                Poll::Ready(Err(FlovynError::Suspended { reason })) => {
+                    // Timer is suspended too
+                    has_suspended = true;
+                    if first_suspension_reason.is_none() {
+                        first_suspension_reason = Some(reason);
+                    }
+                }
                 Poll::Ready(Err(_)) => {
                     // Timer was cancelled - this shouldn't happen normally
                     this.timer = None;
@@ -390,7 +459,15 @@ where
             }
         }
 
-        Poll::Pending
+        // If any future is suspended, propagate suspension
+        if has_suspended {
+            Poll::Ready(Err(FlovynError::Suspended {
+                reason: first_suspension_reason
+                    .unwrap_or_else(|| "Waiting for operation".to_string()),
+            }))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -402,14 +479,14 @@ where
 /// # Arguments
 ///
 /// * `future` - The future to wrap
-/// * `timer` - A timer future from `ctx.sleep_async(duration)` for the timeout
+/// * `timer` - A timer future from `ctx.sleep(duration)` for the timeout
 ///
 /// # Example
 ///
 /// ```ignore
 /// // Create a task with a 30-second timeout
-/// let task = ctx.schedule_async_raw("slow-task", json!({}));
-/// let timer = ctx.sleep_async(Duration::from_secs(30));
+/// let task = ctx.schedule_raw("slow-task", json!({}));
+/// let timer = ctx.sleep(Duration::from_secs(30));
 ///
 /// match with_timeout(task, timer).await {
 ///     Ok(result) => println!("Task completed: {:?}", result),

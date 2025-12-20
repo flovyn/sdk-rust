@@ -1466,6 +1466,7 @@ dependencies = [
  "async-trait",
  "dotenvy",
  "flovyn-sdk",
+ "futures",
  "serde",
  "serde_json",
  "tokio",

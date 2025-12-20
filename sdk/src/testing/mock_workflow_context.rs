@@ -387,47 +387,6 @@ impl WorkflowContext for MockWorkflowContext {
         Box::leak(rng)
     }
 
-    async fn run_raw(&self, name: &str, result: Value) -> Result<Value> {
-        self.inner
-            .recorded_operations
-            .write()
-            .push(RecordedOperation {
-                name: name.to_string(),
-                result: result.clone(),
-            });
-        Ok(result)
-    }
-
-    async fn schedule_raw(&self, task_type: &str, input: Value) -> Result<Value> {
-        self.schedule_with_options_raw(task_type, input, ScheduleTaskOptions::default())
-            .await
-    }
-
-    async fn schedule_with_options_raw(
-        &self,
-        task_type: &str,
-        input: Value,
-        options: ScheduleTaskOptions,
-    ) -> Result<Value> {
-        self.inner.scheduled_tasks.write().push(ScheduledTask {
-            task_type: task_type.to_string(),
-            input: input.clone(),
-            options,
-        });
-
-        self.inner
-            .task_results
-            .read()
-            .get(task_type)
-            .cloned()
-            .ok_or_else(|| {
-                FlovynError::Other(format!(
-                    "No mock result configured for task type: {}",
-                    task_type
-                ))
-            })
-    }
-
     async fn get_raw(&self, key: &str) -> Result<Option<Value>> {
         Ok(self.inner.state.read().get(key).cloned())
     }
@@ -451,57 +410,6 @@ impl WorkflowContext for MockWorkflowContext {
         Ok(self.inner.state.read().keys().cloned().collect())
     }
 
-    async fn sleep(&self, duration: Duration) -> Result<()> {
-        let timer_id = format!(
-            "sleep-{}",
-            self.inner.uuid_counter.fetch_add(1, Ordering::SeqCst)
-        );
-        self.inner
-            .time_controller
-            .register_timer_after(&timer_id, duration);
-        Ok(())
-    }
-
-    async fn promise_raw(&self, name: &str) -> Result<Value> {
-        self.inner.created_promises.write().push(name.to_string());
-
-        self.inner
-            .promise_results
-            .read()
-            .get(name)
-            .cloned()
-            .ok_or_else(|| {
-                FlovynError::Other(format!("No mock result configured for promise: {}", name))
-            })
-    }
-
-    async fn promise_with_timeout_raw(&self, name: &str, _timeout: Duration) -> Result<Value> {
-        self.promise_raw(name).await
-    }
-
-    async fn schedule_workflow_raw(&self, name: &str, kind: &str, input: Value) -> Result<Value> {
-        self.inner
-            .scheduled_workflows
-            .write()
-            .push(ScheduledWorkflow {
-                name: name.to_string(),
-                kind: kind.to_string(),
-                input: input.clone(),
-            });
-
-        self.inner
-            .child_workflow_results
-            .read()
-            .get(kind)
-            .cloned()
-            .ok_or_else(|| {
-                FlovynError::Other(format!(
-                    "No mock result configured for child workflow kind: {}",
-                    kind
-                ))
-            })
-    }
-
     fn is_cancellation_requested(&self) -> bool {
         self.inner.cancellation_requested.load(Ordering::SeqCst)
     }
@@ -517,14 +425,14 @@ impl WorkflowContext for MockWorkflowContext {
     }
 
     // =========================================================================
-    // Async Operation Methods for Parallel Execution
+    // Future-Returning Methods for Parallel Execution
     // =========================================================================
 
-    fn schedule_async_raw(&self, task_type: &str, input: Value) -> TaskFutureRaw {
-        self.schedule_async_with_options_raw(task_type, input, ScheduleTaskOptions::default())
+    fn schedule_raw(&self, task_type: &str, input: Value) -> TaskFutureRaw {
+        self.schedule_with_options_raw(task_type, input, ScheduleTaskOptions::default())
     }
 
-    fn schedule_async_with_options_raw(
+    fn schedule_with_options_raw(
         &self,
         task_type: &str,
         input: Value,
@@ -555,7 +463,7 @@ impl WorkflowContext for MockWorkflowContext {
         }
     }
 
-    fn sleep_async(&self, duration: Duration) -> TimerFuture {
+    fn sleep(&self, duration: Duration) -> TimerFuture {
         let timer_seq = self.inner.next_timer_seq.fetch_add(1, Ordering::SeqCst);
         let timer_id = format!(
             "sleep-{}",
@@ -576,7 +484,7 @@ impl WorkflowContext for MockWorkflowContext {
         )
     }
 
-    fn schedule_workflow_async_raw(
+    fn schedule_workflow_raw(
         &self,
         name: &str,
         kind: &str,
@@ -614,7 +522,7 @@ impl WorkflowContext for MockWorkflowContext {
         }
     }
 
-    fn promise_async_raw(&self, name: &str) -> PromiseFutureRaw {
+    fn promise_raw(&self, name: &str) -> PromiseFutureRaw {
         let promise_seq = self.inner.next_promise_seq.fetch_add(1, Ordering::SeqCst);
 
         // Record the promise creation
@@ -635,7 +543,11 @@ impl WorkflowContext for MockWorkflowContext {
         }
     }
 
-    fn run_async_raw(&self, name: &str, result: Value) -> OperationFutureRaw {
+    fn promise_with_timeout_raw(&self, name: &str, _timeout: Duration) -> PromiseFutureRaw {
+        self.promise_raw(name)
+    }
+
+    fn run_raw(&self, name: &str, result: Value) -> OperationFutureRaw {
         let op_seq = self.inner.next_operation_seq.fetch_add(1, Ordering::SeqCst);
 
         // Record the operation

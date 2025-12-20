@@ -529,6 +529,9 @@ mod tests {
             task_execution_id: Uuid::new_v4(),
             input: json!({}),
             priority_seconds: None,
+            max_retries: None,
+            timeout_ms: None,
+            queue: None,
         };
         let event = ReplayEvent::new(
             1,
@@ -691,6 +694,9 @@ mod tests {
                 task_execution_id: Uuid::nil(),
                 input: json!(null),
                 priority_seconds: None,
+                max_retries: None,
+                timeout_ms: None,
+                queue: None,
             }),
             EventType::TaskScheduled
         );
@@ -823,6 +829,9 @@ mod tests {
                 task_execution_id: Uuid::new_v4(),
                 input: json!({}),
                 priority_seconds: None,
+                max_retries: None,
+                timeout_ms: None,
+                queue: None,
             },
             WorkflowCommand::CompleteWorkflow {
                 sequence_number: 3,

@@ -46,6 +46,9 @@ fn arb_command() -> impl Strategy<Value = WorkflowCommand> {
                 task_execution_id: Uuid::new_v4(),
                 input,
                 priority_seconds: None,
+                max_retries: None,
+                timeout_ms: None,
+                queue: None,
             }),
         // CreatePromise
         "[a-z]{3,10}".prop_map(|promise_id| WorkflowCommand::CreatePromise {
@@ -207,6 +210,9 @@ proptest! {
             task_execution_id: Uuid::new_v4(),
             input: serde_json::json!({}),
             priority_seconds: None,
+            max_retries: None,
+            timeout_ms: None,
+            queue: None,
         };
 
         let modified_cmd = WorkflowCommand::ScheduleTask {
@@ -215,6 +221,9 @@ proptest! {
             task_execution_id: Uuid::new_v4(),
             input: serde_json::json!({}),
             priority_seconds: None,
+            max_retries: None,
+            timeout_ms: None,
+            queue: None,
         };
 
         let event = command_to_matching_event(&original_cmd);
