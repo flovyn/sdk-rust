@@ -1,7 +1,6 @@
 //! TaskExecutorWorker - Polling service for task execution
 
-use crate::client::worker_lifecycle::{WorkerLifecycleClient, WorkerType};
-use crate::client::{TaskExecutionClient, WorkflowDispatch};
+use crate::client::{TaskExecutionClient, WorkerLifecycleClient, WorkerType, WorkflowDispatch};
 use crate::error::{FlovynError, Result};
 use crate::task::executor::{TaskExecutionResult, TaskExecutor, TaskExecutorConfig};
 use crate::task::registry::TaskRegistry;
@@ -216,7 +215,7 @@ impl TaskExecutorWorker {
                 self.config.tenant_id,
                 self.config.space_id,
                 vec![], // No workflows for task worker
-                tasks,
+                tasks.into_iter().map(Into::into).collect(),
             )
             .await?;
 

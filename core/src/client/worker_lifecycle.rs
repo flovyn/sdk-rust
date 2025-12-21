@@ -4,13 +4,15 @@
 //! which handles worker registration and heartbeat operations.
 
 use crate::client::auth::WorkerTokenInterceptor;
-use crate::error::{FlovynError, Result};
+use crate::error::CoreResult;
 use crate::generated::flovyn_v1::{
     self, TaskCapability, WorkerHeartbeatRequest, WorkerRegistrationRequest,
     WorkerRegistrationResponse, WorkflowCapability,
 };
-use crate::task::registry::TaskMetadata;
-use crate::worker::registry::WorkflowMetadata;
+use crate::task::TaskMetadata;
+use crate::worker::{TaskConflict, WorkflowConflict};
+use crate::workflow::WorkflowMetadata;
+use sha2::{Digest, Sha256};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use uuid::Uuid;
@@ -63,28 +65,6 @@ pub struct RegistrationResult {
     pub task_conflicts: Vec<TaskConflict>,
 }
 
-/// Conflict information for workflow registration
-#[derive(Debug, Clone)]
-pub struct WorkflowConflict {
-    /// The workflow kind that conflicted
-    pub kind: String,
-    /// Reason for the conflict
-    pub reason: String,
-    /// ID of the existing worker that has this workflow
-    pub existing_worker_id: String,
-}
-
-/// Conflict information for task registration
-#[derive(Debug, Clone)]
-pub struct TaskConflict {
-    /// The task kind that conflicted
-    pub kind: String,
-    /// Reason for the conflict
-    pub reason: String,
-    /// ID of the existing worker that has this task
-    pub existing_worker_id: String,
-}
-
 /// gRPC client for WorkerLifecycle service.
 /// Handles worker registration and heartbeat operations.
 pub struct WorkerLifecycleClient {
@@ -123,7 +103,7 @@ impl WorkerLifecycleClient {
         space_id: Option<Uuid>,
         workflows: Vec<WorkflowMetadata>,
         tasks: Vec<TaskMetadata>,
-    ) -> Result<RegistrationResult> {
+    ) -> CoreResult<RegistrationResult> {
         let host_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
@@ -142,12 +122,7 @@ impl WorkerLifecycleClient {
             metadata: Vec::new(),
         };
 
-        let response = self
-            .stub
-            .register_worker(request)
-            .await
-            .map_err(FlovynError::Grpc)?
-            .into_inner();
+        let response = self.stub.register_worker(request).await?.into_inner();
 
         Ok(registration_response_to_result(response))
     }
@@ -156,7 +131,7 @@ impl WorkerLifecycleClient {
     ///
     /// # Arguments
     /// * `worker_id` - The server-assigned worker ID from registration
-    pub async fn send_heartbeat(&mut self, worker_id: Uuid) -> Result<()> {
+    pub async fn send_heartbeat(&mut self, worker_id: Uuid) -> CoreResult<()> {
         let request = WorkerHeartbeatRequest {
             worker_id: worker_id.to_string(),
             workflow_kinds: Vec::new(),
@@ -164,10 +139,7 @@ impl WorkerLifecycleClient {
             health_info: Vec::new(),
         };
 
-        self.stub
-            .send_heartbeat(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.stub.send_heartbeat(request).await?;
 
         Ok(())
     }
@@ -183,7 +155,7 @@ impl WorkerLifecycleClient {
         worker_id: Uuid,
         workflow_kinds: Vec<String>,
         task_kinds: Vec<String>,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         let request = WorkerHeartbeatRequest {
             worker_id: worker_id.to_string(),
             workflow_kinds,
@@ -191,10 +163,7 @@ impl WorkerLifecycleClient {
             health_info: Vec::new(),
         };
 
-        self.stub
-            .send_heartbeat(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.stub.send_heartbeat(request).await?;
 
         Ok(())
     }
@@ -202,10 +171,7 @@ impl WorkerLifecycleClient {
 
 /// Convert WorkflowMetadata to protobuf WorkflowCapability
 fn workflow_to_proto(metadata: WorkflowMetadata) -> WorkflowCapability {
-    let version = metadata
-        .version
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "1.0.0".to_string());
+    let version = metadata.version.unwrap_or_else(|| "1.0.0".to_string());
 
     // Use the content hash from metadata, or generate one from kind:version
     let content_hash = metadata
@@ -229,7 +195,6 @@ fn workflow_to_proto(metadata: WorkflowMetadata) -> WorkflowCapability {
 /// Compute SHA-256 content hash for workflow versioning.
 /// Uses kind:version as the hash input (simplified approach).
 fn compute_content_hash(kind: &str, version: &str) -> String {
-    use sha2::{Digest, Sha256};
     let hash_source = format!("{}:{}", kind, version);
     let mut hasher = Sha256::new();
     hasher.update(hash_source.as_bytes());
@@ -285,7 +250,6 @@ fn registration_response_to_result(response: WorkerRegistrationResponse) -> Regi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::version::SemanticVersion;
 
     #[test]
     fn test_worker_type_as_str() {
@@ -303,16 +267,13 @@ mod tests {
 
     #[test]
     fn test_workflow_to_proto() {
-        let metadata = WorkflowMetadata {
-            kind: "order-workflow".to_string(),
-            name: "Order Workflow".to_string(),
-            description: Some("Processes orders".to_string()),
-            version: Some(SemanticVersion::new(1, 2, 0)),
-            tags: vec!["order".to_string(), "payment".to_string()],
-            cancellable: true,
-            timeout_seconds: Some(300),
-            content_hash: None,
-        };
+        let metadata = WorkflowMetadata::new("order-workflow")
+            .with_name("Order Workflow")
+            .with_description("Processes orders")
+            .with_version("1.2.0")
+            .with_tags(vec!["order".to_string(), "payment".to_string()])
+            .with_cancellable(true)
+            .with_timeout_seconds(300);
 
         let proto = workflow_to_proto(metadata);
 
@@ -329,24 +290,15 @@ mod tests {
 
     #[test]
     fn test_workflow_to_proto_defaults() {
-        let metadata = WorkflowMetadata {
-            kind: "simple-workflow".to_string(),
-            name: "Simple Workflow".to_string(),
-            description: None,
-            version: None,
-            tags: vec![],
-            cancellable: false,
-            timeout_seconds: None,
-            content_hash: None,
-        };
+        let metadata = WorkflowMetadata::new("simple-workflow");
 
         let proto = workflow_to_proto(metadata);
 
         assert_eq!(proto.kind, "simple-workflow");
-        assert_eq!(proto.name, "Simple Workflow");
+        assert_eq!(proto.name, "simple-workflow");
         assert_eq!(proto.description, "");
-        assert_eq!(proto.version, "1.0.0"); // Default version changed to 1.0.0
-        assert!(!proto.cancellable);
+        assert_eq!(proto.version, "1.0.0"); // Default version
+        assert!(proto.cancellable);
         assert_eq!(proto.timeout_seconds, None);
         assert!(proto.tags.is_empty());
         // Content hash should be generated even without explicit version
@@ -355,16 +307,13 @@ mod tests {
 
     #[test]
     fn test_task_to_proto() {
-        let metadata = TaskMetadata {
-            kind: "process-image".to_string(),
-            name: "Process Image".to_string(),
-            description: Some("Processes images".to_string()),
-            version: Some(SemanticVersion::new(2, 0, 1)),
-            tags: vec!["image".to_string(), "ml".to_string()],
-            timeout_seconds: Some(600),
-            cancellable: true,
-            heartbeat_timeout_seconds: Some(60),
-        };
+        let metadata = TaskMetadata::new("process-image")
+            .with_name("Process Image")
+            .with_description("Processes images")
+            .with_version("2.0.1")
+            .with_tags(vec!["image".to_string(), "ml".to_string()])
+            .with_timeout_seconds(600)
+            .with_cancellable(true);
 
         let proto = task_to_proto(metadata);
 
@@ -378,23 +327,14 @@ mod tests {
 
     #[test]
     fn test_task_to_proto_defaults() {
-        let metadata = TaskMetadata {
-            kind: "simple-task".to_string(),
-            name: "Simple Task".to_string(),
-            description: None,
-            version: None,
-            tags: vec![],
-            timeout_seconds: None,
-            cancellable: false,
-            heartbeat_timeout_seconds: None,
-        };
+        let metadata = TaskMetadata::new("simple-task");
 
         let proto = task_to_proto(metadata);
 
         assert_eq!(proto.kind, "simple-task");
-        assert_eq!(proto.name, "Simple Task");
+        assert_eq!(proto.name, "simple-task");
         assert_eq!(proto.description, "");
-        assert!(!proto.cancellable);
+        assert!(proto.cancellable);
         assert_eq!(proto.timeout_seconds, None);
         assert!(proto.tags.is_empty());
     }
@@ -469,32 +409,6 @@ mod tests {
         assert_eq!(result.task_conflicts[0].kind, "payment-task");
         assert_eq!(result.task_conflicts[0].reason, "Version conflict");
         assert_eq!(result.task_conflicts[0].existing_worker_id, "worker-456");
-    }
-
-    #[test]
-    fn test_workflow_conflict_debug() {
-        let conflict = WorkflowConflict {
-            kind: "test-workflow".to_string(),
-            reason: "Conflict reason".to_string(),
-            existing_worker_id: "worker-id".to_string(),
-        };
-
-        let debug_str = format!("{:?}", conflict);
-        assert!(debug_str.contains("WorkflowConflict"));
-        assert!(debug_str.contains("test-workflow"));
-    }
-
-    #[test]
-    fn test_task_conflict_debug() {
-        let conflict = TaskConflict {
-            kind: "test-task".to_string(),
-            reason: "Conflict reason".to_string(),
-            existing_worker_id: "worker-id".to_string(),
-        };
-
-        let debug_str = format!("{:?}", conflict);
-        assert!(debug_str.contains("TaskConflict"));
-        assert!(debug_str.contains("test-task"));
     }
 
     #[test]

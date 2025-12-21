@@ -5,11 +5,11 @@
 
 use crate::client::builder::FlovynClientBuilder;
 use crate::client::hook::WorkflowHook;
-use crate::client::workflow_query::WorkflowQueryClient;
-use crate::client::{TaskExecutionClient, WorkflowDispatch};
+use crate::client::{
+    TaskExecutionClient, WorkerTokenInterceptor, WorkflowDispatch, WorkflowQueryClient,
+};
 use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
-use crate::generated::flovyn_v1;
 use crate::task::registry::TaskRegistry;
 use crate::worker::lifecycle::{
     ConnectionInfo, HookChain, ReconnectionStrategy, RegistrationInfo, TaskConflict,
@@ -19,6 +19,7 @@ use crate::worker::lifecycle::{
 use crate::worker::registry::WorkflowRegistry;
 use crate::worker::task_worker::{TaskExecutorWorker, TaskWorkerConfig};
 use crate::worker::workflow_worker::{WorkflowExecutorWorker, WorkflowWorkerConfig};
+use flovyn_core::generated::flovyn_v1;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -405,7 +406,7 @@ impl FlovynClient {
             value: value_bytes,
         };
 
-        let interceptor = crate::client::auth::WorkerTokenInterceptor::new(&self.worker_token);
+        let interceptor = WorkerTokenInterceptor::new(&self.worker_token);
         let mut client =
             flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
                 self.channel.clone(),
@@ -434,7 +435,7 @@ impl FlovynClient {
             error: error.to_string(),
         };
 
-        let interceptor = crate::client::auth::WorkerTokenInterceptor::new(&self.worker_token);
+        let interceptor = WorkerTokenInterceptor::new(&self.worker_token);
         let mut client =
             flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
                 self.channel.clone(),
@@ -455,7 +456,7 @@ impl FlovynClient {
         workflow_execution_id: Uuid,
     ) -> Result<Vec<crate::client::WorkflowEvent>> {
         let mut client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
-        client.get_events(workflow_execution_id, None).await
+        Ok(client.get_events(workflow_execution_id, None).await?)
     }
 
     /// Query workflow state
@@ -468,9 +469,9 @@ impl FlovynClient {
         params: Value,
     ) -> Result<Value> {
         let mut client = WorkflowQueryClient::new(self.channel.clone(), &self.worker_token);
-        client
+        Ok(client
             .query(workflow_execution_id, query_name, params)
-            .await
+            .await?)
     }
 
     /// Query workflow state with typed result
@@ -483,9 +484,9 @@ impl FlovynClient {
         params: Value,
     ) -> Result<T> {
         let mut client = WorkflowQueryClient::new(self.channel.clone(), &self.worker_token);
-        client
+        Ok(client
             .query_typed(workflow_execution_id, query_name, params)
-            .await
+            .await?)
     }
 
     /// Start a workflow and wait for completion
@@ -578,7 +579,7 @@ impl FlovynClient {
         key: &str,
     ) -> Result<Option<Value>> {
         let mut client = TaskExecutionClient::new(self.channel.clone(), &self.worker_token);
-        client.get_state(task_execution_id, key).await
+        Ok(client.get_state(task_execution_id, key).await?)
     }
 
     /// Get all task state keys
@@ -586,7 +587,7 @@ impl FlovynClient {
     /// Retrieves all state keys for a task execution.
     pub async fn get_task_state_keys(&self, task_execution_id: Uuid) -> Result<Vec<String>> {
         let mut client = TaskExecutionClient::new(self.channel.clone(), &self.worker_token);
-        client.get_state_keys(task_execution_id).await
+        Ok(client.get_state_keys(task_execution_id).await?)
     }
 
     /// Set task state value
@@ -599,7 +600,7 @@ impl FlovynClient {
         value: Value,
     ) -> Result<()> {
         let mut client = TaskExecutionClient::new(self.channel.clone(), &self.worker_token);
-        client.set_state(task_execution_id, key, value).await
+        Ok(client.set_state(task_execution_id, key, value).await?)
     }
 
     /// Clear task state value
@@ -607,7 +608,7 @@ impl FlovynClient {
     /// Clears a state value for a task execution.
     pub async fn clear_task_state(&self, task_execution_id: Uuid, key: &str) -> Result<()> {
         let mut client = TaskExecutionClient::new(self.channel.clone(), &self.worker_token);
-        client.clear_state(task_execution_id, key).await
+        Ok(client.clear_state(task_execution_id, key).await?)
     }
 
     /// Clear all task state
@@ -615,7 +616,7 @@ impl FlovynClient {
     /// Clears all state values for a task execution.
     pub async fn clear_all_task_state(&self, task_execution_id: Uuid) -> Result<()> {
         let mut client = TaskExecutionClient::new(self.channel.clone(), &self.worker_token);
-        client.clear_all_state(task_execution_id).await
+        Ok(client.clear_all_state(task_execution_id).await?)
     }
 
     /// Get the workflow registry

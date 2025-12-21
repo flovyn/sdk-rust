@@ -1,7 +1,6 @@
 //! WorkflowContextImpl - Concrete implementation of WorkflowContext
 
 use crate::error::{DeterminismViolationError, FlovynError, Result};
-use crate::generated::flovyn_v1::ExecutionSpan;
 use crate::workflow::command::WorkflowCommand;
 use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, WorkflowContext};
 use crate::workflow::event::{EventType, ReplayEvent};
@@ -12,6 +11,7 @@ use crate::workflow::future::{
 };
 use crate::workflow::recorder::CommandRecorder;
 use async_trait::async_trait;
+use flovyn_core::generated::flovyn_v1::ExecutionSpan;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;

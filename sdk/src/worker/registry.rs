@@ -34,6 +34,21 @@ pub struct WorkflowMetadata {
     pub content_hash: Option<String>,
 }
 
+impl From<WorkflowMetadata> for flovyn_core::WorkflowMetadata {
+    fn from(m: WorkflowMetadata) -> Self {
+        flovyn_core::WorkflowMetadata {
+            kind: m.kind,
+            name: m.name,
+            description: m.description,
+            version: m.version.map(|v| v.to_string()),
+            tags: m.tags,
+            cancellable: m.cancellable,
+            timeout_seconds: m.timeout_seconds,
+            content_hash: m.content_hash,
+        }
+    }
+}
+
 /// Type alias for boxed workflow execution functions
 pub type BoxedWorkflowFn = Box<
     dyn Fn(

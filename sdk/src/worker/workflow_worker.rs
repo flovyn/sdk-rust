@@ -1,10 +1,8 @@
 //! WorkflowExecutorWorker - Polling service for workflow execution
 
 use crate::client::hook::WorkflowHook;
-use crate::client::worker_lifecycle::{WorkerLifecycleClient, WorkerType};
-use crate::client::{WorkflowDispatch, WorkflowExecutionInfo};
+use crate::client::{WorkerLifecycleClient, WorkerType, WorkflowDispatch, WorkflowExecutionInfo};
 use crate::error::{FlovynError, Result};
-use crate::generated::flovyn_v1;
 use crate::telemetry::{workflow_execute_span, workflow_replay_span, SpanCollector};
 use crate::worker::executor::WorkflowStatus;
 use crate::worker::lifecycle::{
@@ -17,6 +15,7 @@ use crate::workflow::context_impl::WorkflowContextImpl;
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::recorder::CommandCollector;
 use chrono::Utc;
+use flovyn_core::generated::flovyn_v1;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -238,7 +237,7 @@ impl WorkflowExecutorWorker {
                 WorkerType::Workflow,
                 self.config.tenant_id,
                 self.config.space_id,
-                workflows,
+                workflows.into_iter().map(Into::into).collect(),
                 vec![], // No tasks for workflow worker
             )
             .await?;

@@ -1,6 +1,11 @@
 //! Error types for the Flovyn SDK
 
-use crate::workflow::event::EventType;
+// Re-export core error types
+pub use flovyn_core::{CoreError, DeterminismViolationError};
+
+// Re-export EventType for use in error tests
+#[cfg(test)]
+use flovyn_core::EventType;
 
 /// Main error type for the Flovyn SDK
 #[derive(Debug, thiserror::Error)]
@@ -94,149 +99,23 @@ pub enum FlovynError {
     Other(String),
 }
 
-/// Determinism violation types detected during replay validation
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeterminismViolationError {
-    /// Command type doesn't match historical event type
-    TypeMismatch {
-        sequence: i32,
-        expected: EventType,
-        actual: EventType,
-    },
-
-    /// Operation name doesn't match historical operation
-    OperationNameMismatch {
-        sequence: i32,
-        expected: String,
-        actual: String,
-    },
-
-    /// Task type doesn't match historical task
-    TaskTypeMismatch {
-        sequence: i32,
-        expected: String,
-        actual: String,
-    },
-
-    /// Child workflow mismatch
-    ChildWorkflowMismatch {
-        sequence: i32,
-        field: String,
-        expected: String,
-        actual: String,
-    },
-
-    /// Promise name mismatch
-    PromiseNameMismatch {
-        sequence: i32,
-        expected: String,
-        actual: String,
-    },
-
-    /// Timer ID mismatch
-    TimerIdMismatch {
-        sequence: i32,
-        expected: String,
-        actual: String,
-    },
-
-    /// State key mismatch
-    StateKeyMismatch {
-        sequence: i32,
-        expected: String,
-        actual: String,
-    },
-}
-
-impl std::fmt::Display for DeterminismViolationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::TypeMismatch {
-                sequence,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "Type mismatch at sequence {}: expected {:?}, got {:?}",
-                    sequence, expected, actual
-                )
-            }
-            Self::OperationNameMismatch {
-                sequence,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "Operation name mismatch at sequence {}: expected '{}', got '{}'",
-                    sequence, expected, actual
-                )
-            }
-            Self::TaskTypeMismatch {
-                sequence,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "Task type mismatch at sequence {}: expected '{}', got '{}'",
-                    sequence, expected, actual
-                )
-            }
-            Self::ChildWorkflowMismatch {
-                sequence,
-                field,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "Child workflow {} mismatch at sequence {}: expected '{}', got '{}'",
-                    field, sequence, expected, actual
-                )
-            }
-            Self::PromiseNameMismatch {
-                sequence,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "Promise name mismatch at sequence {}: expected '{}', got '{}'",
-                    sequence, expected, actual
-                )
-            }
-            Self::TimerIdMismatch {
-                sequence,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "Timer ID mismatch at sequence {}: expected '{}', got '{}'",
-                    sequence, expected, actual
-                )
-            }
-            Self::StateKeyMismatch {
-                sequence,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "State key mismatch at sequence {}: expected '{}', got '{}'",
-                    sequence, expected, actual
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for DeterminismViolationError {}
+// DeterminismViolationError is now defined in flovyn-core and re-exported above
 
 /// Result type alias for Flovyn SDK operations
 pub type Result<T> = std::result::Result<T, FlovynError>;
+
+impl From<CoreError> for FlovynError {
+    fn from(err: CoreError) -> Self {
+        match err {
+            CoreError::Grpc(status) => FlovynError::Grpc(status),
+            CoreError::Serialization(e) => FlovynError::Serialization(e),
+            CoreError::Io(e) => FlovynError::Io(e),
+            CoreError::InvalidConfiguration(msg) => FlovynError::InvalidConfiguration(msg),
+            CoreError::Timeout(msg) => FlovynError::Timeout(msg),
+            CoreError::Other(msg) => FlovynError::Other(msg),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

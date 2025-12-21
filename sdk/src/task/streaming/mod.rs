@@ -39,6 +39,7 @@
 //! - No event replay (live only)
 //! - Streaming errors don't fail the task
 
-mod types;
-
-pub use types::{StreamError, StreamEvent, StreamEventType, TaskStreamEvent};
+// Re-export streaming types from core
+pub use flovyn_core::task::streaming::{
+    StreamError, StreamEvent, StreamEventType, TaskStreamEvent,
+};

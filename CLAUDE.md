@@ -83,6 +83,7 @@ Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `
 
 ### Plan Guidelines
 - Before writing a plan, think critically to find things we would have missed from the design
+- After each phase, the system should ideally still work, so an incremental approach is preferred.
 - Plans should NOT repeat content already in design documents - reference them instead
 - Plans MUST include a TODO list with concrete tasks
 - No "deferred" or "optional" items unless explicitly marked as non-goal or out of scope

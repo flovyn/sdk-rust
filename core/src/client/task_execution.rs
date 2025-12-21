@@ -1,10 +1,10 @@
 //! TaskExecution client wrapper
 
 use crate::client::auth::WorkerTokenInterceptor;
-use crate::error::{FlovynError, Result};
+use crate::error::CoreResult;
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::task_execution_client::TaskExecutionClient as GrpcTaskExecutionClient;
-use crate::task::streaming::{StreamError, StreamEvent, StreamEventType as SdkStreamEventType};
+use crate::task::streaming::{StreamError, StreamEvent, StreamEventType};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -51,7 +51,7 @@ impl TaskExecutionClient {
         timeout: Duration,
         max_retries: u32,
         queue: Option<&str>,
-    ) -> Result<SubmitTaskResult> {
+    ) -> CoreResult<SubmitTaskResult> {
         let input_bytes = serde_json::to_vec(&input)?;
 
         let request = flovyn_v1::SubmitTaskRequest {
@@ -70,11 +70,7 @@ impl TaskExecutionClient {
             worker_pool_id: None,
         };
 
-        let response = self
-            .inner
-            .submit_task(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.submit_task(request).await?;
 
         let resp = response.into_inner();
         Ok(SubmitTaskResult {
@@ -91,7 +87,7 @@ impl TaskExecutionClient {
         tenant_id: &str,
         queue: &str,
         timeout: Duration,
-    ) -> Result<Option<TaskExecutionInfo>> {
+    ) -> CoreResult<Option<TaskExecutionInfo>> {
         let request = flovyn_v1::PollTaskRequest {
             worker_id: worker_id.to_string(),
             tenant_id: tenant_id.to_string(),
@@ -101,11 +97,7 @@ impl TaskExecutionClient {
             worker_pool_id: None,
         };
 
-        let response = self
-            .inner
-            .poll_task(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.poll_task(request).await?;
 
         let poll_response = response.into_inner();
         Ok(poll_response.task.map(|te| TaskExecutionInfo {
@@ -123,7 +115,11 @@ impl TaskExecutionClient {
     }
 
     /// Complete a task execution
-    pub async fn complete_task(&mut self, task_execution_id: Uuid, output: Value) -> Result<()> {
+    pub async fn complete_task(
+        &mut self,
+        task_execution_id: Uuid,
+        output: Value,
+    ) -> CoreResult<()> {
         let output_bytes = serde_json::to_vec(&output)?;
 
         let request = flovyn_v1::CompleteTaskRequest {
@@ -131,25 +127,23 @@ impl TaskExecutionClient {
             output: output_bytes,
         };
 
-        self.inner
-            .complete_task(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.complete_task(request).await?;
 
         Ok(())
     }
 
     /// Fail a task execution
-    pub async fn fail_task(&mut self, task_execution_id: Uuid, error_message: &str) -> Result<()> {
+    pub async fn fail_task(
+        &mut self,
+        task_execution_id: Uuid,
+        error_message: &str,
+    ) -> CoreResult<()> {
         let request = flovyn_v1::FailTaskRequest {
             task_execution_id: task_execution_id.to_string(),
             error: error_message.to_string(),
         };
 
-        self.inner
-            .fail_task(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.fail_task(request).await?;
 
         Ok(())
     }
@@ -160,46 +154,37 @@ impl TaskExecutionClient {
         task_execution_id: Uuid,
         progress: f64,
         details: Option<&str>,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         let request = flovyn_v1::ReportProgressRequest {
             task_execution_id: task_execution_id.to_string(),
             progress,
             details: details.map(|s| s.to_string()).unwrap_or_default(),
         };
 
-        self.inner
-            .report_progress(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.report_progress(request).await?;
 
         Ok(())
     }
 
     /// Send a heartbeat for a task
     /// Returns Ok(()) if successful, or error if task was cancelled
-    pub async fn heartbeat(&mut self, task_execution_id: Uuid) -> Result<()> {
+    pub async fn heartbeat(&mut self, task_execution_id: Uuid) -> CoreResult<()> {
         let request = flovyn_v1::HeartbeatRequest {
             task_execution_id: task_execution_id.to_string(),
         };
 
-        self.inner
-            .heartbeat(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.heartbeat(request).await?;
 
         Ok(())
     }
 
     /// Cancel a task
-    pub async fn cancel_task(&mut self, task_execution_id: Uuid) -> Result<()> {
+    pub async fn cancel_task(&mut self, task_execution_id: Uuid) -> CoreResult<()> {
         let request = flovyn_v1::CancelTaskRequest {
             task_execution_id: task_execution_id.to_string(),
         };
 
-        self.inner
-            .cancel_task(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.cancel_task(request).await?;
 
         Ok(())
     }
@@ -210,33 +195,30 @@ impl TaskExecutionClient {
         task_execution_id: Uuid,
         level: &str,
         message: &str,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         let request = flovyn_v1::LogMessageRequest {
             task_execution_id: task_execution_id.to_string(),
             level: level.to_string(),
             message: message.to_string(),
         };
 
-        self.inner
-            .log_message(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.log_message(request).await?;
 
         Ok(())
     }
 
     /// Get a state value for a task
-    pub async fn get_state(&mut self, task_execution_id: Uuid, key: &str) -> Result<Option<Value>> {
+    pub async fn get_state(
+        &mut self,
+        task_execution_id: Uuid,
+        key: &str,
+    ) -> CoreResult<Option<Value>> {
         let request = flovyn_v1::GetStateRequest {
             task_execution_id: task_execution_id.to_string(),
             key: key.to_string(),
         };
 
-        let response = self
-            .inner
-            .get_state(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.get_state(request).await?;
 
         let resp = response.into_inner();
 
@@ -259,7 +241,7 @@ impl TaskExecutionClient {
         task_execution_id: Uuid,
         key: &str,
         value: Value,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         let value_bytes = serde_json::to_vec(&value)?;
 
         let request = flovyn_v1::SetStateRequest {
@@ -268,54 +250,41 @@ impl TaskExecutionClient {
             value: value_bytes,
         };
 
-        self.inner
-            .set_state(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.set_state(request).await?;
 
         Ok(())
     }
 
     /// Clear a state value for a task
-    pub async fn clear_state(&mut self, task_execution_id: Uuid, key: &str) -> Result<()> {
+    pub async fn clear_state(&mut self, task_execution_id: Uuid, key: &str) -> CoreResult<()> {
         let request = flovyn_v1::ClearStateRequest {
             task_execution_id: task_execution_id.to_string(),
             key: key.to_string(),
         };
 
-        self.inner
-            .clear_state(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.clear_state(request).await?;
 
         Ok(())
     }
 
     /// Clear all state for a task
-    pub async fn clear_all_state(&mut self, task_execution_id: Uuid) -> Result<()> {
+    pub async fn clear_all_state(&mut self, task_execution_id: Uuid) -> CoreResult<()> {
         let request = flovyn_v1::ClearAllStateRequest {
             task_execution_id: task_execution_id.to_string(),
         };
 
-        self.inner
-            .clear_all_state(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.clear_all_state(request).await?;
 
         Ok(())
     }
 
     /// Get all state keys for a task
-    pub async fn get_state_keys(&mut self, task_execution_id: Uuid) -> Result<Vec<String>> {
+    pub async fn get_state_keys(&mut self, task_execution_id: Uuid) -> CoreResult<Vec<String>> {
         let request = flovyn_v1::GetStateKeysRequest {
             task_execution_id: task_execution_id.to_string(),
         };
 
-        let response = self
-            .inner
-            .get_state_keys(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.get_state_keys(request).await?;
 
         Ok(response.into_inner().keys)
     }
@@ -324,17 +293,6 @@ impl TaskExecutionClient {
     ///
     /// This sends an ephemeral event that is delivered to clients via SSE.
     /// Events are not persisted and delivery is best-effort.
-    ///
-    /// # Arguments
-    ///
-    /// * `task_execution_id` - The task execution ID
-    /// * `workflow_execution_id` - The workflow execution ID (empty for standalone tasks)
-    /// * `event` - The stream event to send
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(true)` if acknowledged, `Ok(false)` if not acknowledged,
-    /// or an error if the request failed.
     pub async fn stream_task_data(
         &mut self,
         task_execution_id: Uuid,
@@ -343,10 +301,10 @@ impl TaskExecutionClient {
     ) -> std::result::Result<bool, StreamError> {
         // Map SDK event type to protobuf event type
         let event_type = match event.event_type() {
-            SdkStreamEventType::Token => flovyn_v1::StreamEventType::Token,
-            SdkStreamEventType::Progress => flovyn_v1::StreamEventType::Progress,
-            SdkStreamEventType::Data => flovyn_v1::StreamEventType::Data,
-            SdkStreamEventType::Error => flovyn_v1::StreamEventType::Error,
+            StreamEventType::Token => flovyn_v1::StreamEventType::Token,
+            StreamEventType::Progress => flovyn_v1::StreamEventType::Progress,
+            StreamEventType::Data => flovyn_v1::StreamEventType::Data,
+            StreamEventType::Error => flovyn_v1::StreamEventType::Error,
         };
 
         // Serialize event to JSON payload
@@ -411,7 +369,6 @@ pub struct TaskExecutionInfo {
 }
 
 #[cfg(test)]
-#[allow(clippy::useless_vec)]
 mod tests {
     use super::*;
 
@@ -456,45 +413,5 @@ mod tests {
 
         assert!(!result.idempotency_key_used);
         assert!(result.idempotency_key_new);
-    }
-
-    #[test]
-    fn test_state_value_serialization() {
-        let value = serde_json::json!({
-            "counter": 42,
-            "status": "processing"
-        });
-
-        let bytes = serde_json::to_vec(&value).unwrap();
-        let parsed: Value = serde_json::from_slice(&bytes).unwrap();
-
-        assert_eq!(parsed["counter"], 42);
-        assert_eq!(parsed["status"], "processing");
-    }
-
-    #[test]
-    fn test_empty_state_handling() {
-        let empty_bytes: &[u8] = &[];
-
-        // Empty bytes should return None
-        let result = if empty_bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(empty_bytes).unwrap_or(Value::Null)
-        };
-
-        assert_eq!(result, Value::Null);
-    }
-
-    #[test]
-    fn test_state_keys_result() {
-        let keys = vec![
-            "counter".to_string(),
-            "status".to_string(),
-            "lastUpdated".to_string(),
-        ];
-
-        assert_eq!(keys.len(), 3);
-        assert!(keys.contains(&"counter".to_string()));
     }
 }

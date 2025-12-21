@@ -34,6 +34,21 @@ pub struct TaskMetadata {
     pub heartbeat_timeout_seconds: Option<u32>,
 }
 
+impl From<TaskMetadata> for flovyn_core::TaskMetadata {
+    fn from(m: TaskMetadata) -> Self {
+        flovyn_core::TaskMetadata {
+            kind: m.kind,
+            name: m.name,
+            description: m.description,
+            version: m.version.map(|v| v.to_string()),
+            tags: m.tags,
+            timeout_seconds: m.timeout_seconds,
+            cancellable: m.cancellable,
+            heartbeat_timeout_seconds: m.heartbeat_timeout_seconds,
+        }
+    }
+}
+
 /// Type alias for boxed task execution functions
 pub type BoxedTaskFn = Box<
     dyn Fn(

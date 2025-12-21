@@ -497,11 +497,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
+name = "flovyn-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "hex",
+ "hostname",
+ "parking_lot",
+ "prost",
+ "prost-types",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "flovyn-sdk"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "flovyn-core",
  "futures",
  "hex",
  "hostname",
@@ -524,7 +551,6 @@ dependencies = [
  "tokio-stream",
  "tokio-test",
  "tonic",
- "tonic-build",
  "tracing",
  "tracing-subscriber",
  "uuid",

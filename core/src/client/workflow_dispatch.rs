@@ -1,7 +1,7 @@
 //! WorkflowDispatch client wrapper
 
 use crate::client::auth::WorkerTokenInterceptor;
-use crate::error::{FlovynError, Result};
+use crate::error::CoreResult;
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient;
 use serde_json::Value;
@@ -35,21 +35,17 @@ impl WorkflowDispatch {
         tenant_id: &str,
         task_queue: &str,
         timeout: Duration,
-    ) -> Result<Option<WorkflowExecutionInfo>> {
+    ) -> CoreResult<Option<WorkflowExecutionInfo>> {
         let request = flovyn_v1::PollRequest {
             worker_id: worker_id.to_string(),
             tenant_id: tenant_id.to_string(),
             task_queue: task_queue.to_string(),
             timeout_seconds: timeout.as_secs() as i64,
             worker_pool_id: None,
-            workflow_capabilities: vec![], // TODO: Pass registered workflow kinds
+            workflow_capabilities: vec![],
         };
 
-        let response = self
-            .inner
-            .poll_workflow(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.poll_workflow(request).await?;
 
         let poll_response = response.into_inner();
         Ok(poll_response
@@ -73,18 +69,14 @@ impl WorkflowDispatch {
         worker_id: &str,
         tenant_id: &str,
         task_queue: &str,
-    ) -> Result<tonic::codec::Streaming<flovyn_v1::WorkAvailableEvent>> {
+    ) -> CoreResult<tonic::codec::Streaming<flovyn_v1::WorkAvailableEvent>> {
         let request = flovyn_v1::SubscriptionRequest {
             worker_id: worker_id.to_string(),
             tenant_id: tenant_id.to_string(),
             task_queue: task_queue.to_string(),
         };
 
-        let response = self
-            .inner
-            .subscribe_to_notifications(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.subscribe_to_notifications(request).await?;
 
         Ok(response.into_inner())
     }
@@ -98,7 +90,7 @@ impl WorkflowDispatch {
         task_queue: Option<&str>,
         workflow_version: Option<&str>,
         idempotency_key: Option<&str>,
-    ) -> Result<StartWorkflowResult> {
+    ) -> CoreResult<StartWorkflowResult> {
         let input_bytes = serde_json::to_vec(&input)?;
 
         let request = flovyn_v1::StartWorkflowRequest {
@@ -115,11 +107,7 @@ impl WorkflowDispatch {
             idempotency_key_ttl_seconds: None,
         };
 
-        let response = self
-            .inner
-            .start_workflow(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.start_workflow(request).await?;
 
         let resp = response.into_inner();
         Ok(StartWorkflowResult {
@@ -134,16 +122,12 @@ impl WorkflowDispatch {
         &mut self,
         workflow_execution_id: Uuid,
         _from_sequence: Option<i32>,
-    ) -> Result<Vec<WorkflowEvent>> {
+    ) -> CoreResult<Vec<WorkflowEvent>> {
         let request = flovyn_v1::GetEventsRequest {
             workflow_execution_id: workflow_execution_id.to_string(),
         };
 
-        let response = self
-            .inner
-            .get_events(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.get_events(request).await?;
 
         let events = response
             .into_inner()
@@ -165,17 +149,14 @@ impl WorkflowDispatch {
         workflow_execution_id: Uuid,
         commands: Vec<flovyn_v1::WorkflowCommand>,
         status: flovyn_v1::WorkflowStatus,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         let request = flovyn_v1::SubmitWorkflowCommandsRequest {
             workflow_execution_id: workflow_execution_id.to_string(),
             commands,
             status: status as i32,
         };
 
-        self.inner
-            .submit_workflow_commands(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        self.inner.submit_workflow_commands(request).await?;
 
         Ok(())
     }
@@ -186,10 +167,9 @@ impl WorkflowDispatch {
         workflow_execution_id: Uuid,
         output: Value,
         commands: Vec<flovyn_v1::WorkflowCommand>,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         let output_bytes = serde_json::to_vec(&output)?;
 
-        // Add the complete workflow command
         let mut all_commands = commands;
         let next_seq = all_commands
             .iter()
@@ -223,7 +203,7 @@ impl WorkflowDispatch {
         error_message: &str,
         failure_type: &str,
         commands: Vec<flovyn_v1::WorkflowCommand>,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         let mut all_commands = commands;
         let next_seq = all_commands
             .iter()
@@ -257,7 +237,7 @@ impl WorkflowDispatch {
         &mut self,
         workflow_execution_id: Uuid,
         commands: Vec<flovyn_v1::WorkflowCommand>,
-    ) -> Result<()> {
+    ) -> CoreResult<()> {
         self.submit_workflow_commands(
             workflow_execution_id,
             commands,
@@ -271,17 +251,13 @@ impl WorkflowDispatch {
         &mut self,
         sdk_info: flovyn_v1::SdkInfo,
         spans: Vec<flovyn_v1::ExecutionSpan>,
-    ) -> Result<ReportExecutionSpansResult> {
+    ) -> CoreResult<ReportExecutionSpansResult> {
         let request = flovyn_v1::ReportExecutionSpansRequest {
             sdk_info: Some(sdk_info),
             spans,
         };
 
-        let response = self
-            .inner
-            .report_execution_spans(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.report_execution_spans(request).await?;
 
         let resp = response.into_inner();
         Ok(ReportExecutionSpansResult {

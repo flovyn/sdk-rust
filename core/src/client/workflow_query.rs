@@ -1,7 +1,7 @@
 //! WorkflowQuery client wrapper for querying workflow state
 
 use crate::client::auth::WorkerTokenInterceptor;
-use crate::error::{FlovynError, Result};
+use crate::error::{CoreError, CoreResult};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::workflow_query_client::WorkflowQueryClient as GrpcWorkflowQueryClient;
 use serde::de::DeserializeOwned;
@@ -33,7 +33,7 @@ impl WorkflowQueryClient {
         workflow_execution_id: Uuid,
         query_name: &str,
         params: Value,
-    ) -> Result<Value> {
+    ) -> CoreResult<Value> {
         let params_bytes = serde_json::to_vec(&params)?;
 
         let request = flovyn_v1::QueryWorkflowRequest {
@@ -42,17 +42,13 @@ impl WorkflowQueryClient {
             params: params_bytes,
         };
 
-        let response = self
-            .inner
-            .query_workflow(request)
-            .await
-            .map_err(FlovynError::Grpc)?;
+        let response = self.inner.query_workflow(request).await?;
 
         let resp = response.into_inner();
 
         // Check for error
         if let Some(error) = resp.error {
-            return Err(FlovynError::Other(format!("Query failed: {}", error)));
+            return Err(CoreError::Other(format!("Query failed: {}", error)));
         }
 
         // Parse result
@@ -71,11 +67,11 @@ impl WorkflowQueryClient {
         workflow_execution_id: Uuid,
         query_name: &str,
         params: Value,
-    ) -> Result<T> {
+    ) -> CoreResult<T> {
         let value = self
             .query(workflow_execution_id, query_name, params)
             .await?;
-        serde_json::from_value(value).map_err(FlovynError::Serialization)
+        serde_json::from_value(value).map_err(CoreError::Serialization)
     }
 }
 
