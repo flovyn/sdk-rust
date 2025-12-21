@@ -29,6 +29,7 @@ mod promise_tests;
 mod replay_tests;
 mod replay_utils;
 mod state_tests;
+mod streaming_tests;
 mod task_tests;
 mod test_env;
 mod timer_tests;

@@ -2,6 +2,7 @@
 
 use crate::error::{FlovynError, Result};
 use crate::task::context::{LogLevel, TaskContext};
+use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
@@ -22,6 +23,10 @@ pub type LogReporter =
 pub type HeartbeatReporter =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
 
+/// Type alias for stream reporter callback
+pub type StreamReporter =
+    Arc<dyn Fn(StreamEvent) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
+
 /// Concrete implementation of TaskContext
 pub struct TaskContextImpl {
     /// Unique ID for this task execution
@@ -34,6 +39,8 @@ pub struct TaskContextImpl {
     log_reporter: Option<LogReporter>,
     /// Callback for heartbeat reporting
     heartbeat_reporter: Option<HeartbeatReporter>,
+    /// Callback for stream event reporting
+    stream_reporter: Option<StreamReporter>,
     /// Cancellation flag
     cancelled: Arc<AtomicBool>,
 }
@@ -47,6 +54,7 @@ impl TaskContextImpl {
             progress_reporter: None,
             log_reporter: None,
             heartbeat_reporter: None,
+            stream_reporter: None,
             cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -66,6 +74,29 @@ impl TaskContextImpl {
             progress_reporter: Some(progress_reporter),
             log_reporter: Some(log_reporter),
             heartbeat_reporter: Some(heartbeat_reporter),
+            stream_reporter: None,
+            cancelled,
+        }
+    }
+
+    /// Create a new TaskContextImpl with all callbacks including streaming
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_all_callbacks(
+        task_execution_id: Uuid,
+        attempt: u32,
+        progress_reporter: ProgressReporter,
+        log_reporter: LogReporter,
+        heartbeat_reporter: HeartbeatReporter,
+        stream_reporter: Option<StreamReporter>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            task_execution_id,
+            attempt,
+            progress_reporter: Some(progress_reporter),
+            log_reporter: Some(log_reporter),
+            heartbeat_reporter: Some(heartbeat_reporter),
+            stream_reporter,
             cancelled,
         }
     }
@@ -83,6 +114,11 @@ impl TaskContextImpl {
     /// Set the heartbeat reporter callback
     pub fn set_heartbeat_reporter(&mut self, reporter: HeartbeatReporter) {
         self.heartbeat_reporter = Some(reporter);
+    }
+
+    /// Set the stream reporter callback
+    pub fn set_stream_reporter(&mut self, reporter: StreamReporter) {
+        self.stream_reporter = Some(reporter);
     }
 
     /// Set the cancellation flag
@@ -175,6 +211,22 @@ impl TaskContext for TaskContextImpl {
         if self.is_cancelled() {
             Err(FlovynError::TaskCancelled)
         } else {
+            Ok(())
+        }
+    }
+
+    async fn stream(&self, event: StreamEvent) -> Result<()> {
+        if let Some(ref reporter) = self.stream_reporter {
+            match reporter(event).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    // Log warning but don't fail the task (fire-and-forget semantics)
+                    tracing::warn!("Failed to stream event: {}", e);
+                    Ok(())
+                }
+            }
+        } else {
+            // No reporter configured - silently succeed
             Ok(())
         }
     }

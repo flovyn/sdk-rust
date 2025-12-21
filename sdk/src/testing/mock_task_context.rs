@@ -2,6 +2,7 @@
 
 use crate::error::{FlovynError, Result};
 use crate::task::context::{LogLevel, TaskContext};
+use crate::task::streaming::{StreamEvent, StreamEventType};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -41,6 +42,7 @@ struct MockTaskContextInner {
     cancelled: AtomicBool,
     progress_reports: RwLock<Vec<ProgressReport>>,
     log_messages: RwLock<Vec<LogMessage>>,
+    stream_events: RwLock<Vec<StreamEvent>>,
 }
 
 impl Clone for MockTaskContext {
@@ -125,10 +127,65 @@ impl MockTaskContext {
         self.inner.attempt.store(attempt, Ordering::SeqCst);
     }
 
-    /// Clear all recorded progress and logs.
+    /// Clear all recorded progress, logs, and stream events.
     pub fn clear_recordings(&self) {
         self.inner.progress_reports.write().clear();
         self.inner.log_messages.write().clear();
+        self.inner.stream_events.write().clear();
+    }
+
+    // === Stream Event Methods ===
+
+    /// Get all stream events.
+    pub fn stream_events(&self) -> Vec<StreamEvent> {
+        self.inner.stream_events.read().clone()
+    }
+
+    /// Get the last stream event.
+    pub fn last_stream_event(&self) -> Option<StreamEvent> {
+        self.inner.stream_events.read().last().cloned()
+    }
+
+    /// Get stream events of a specific type.
+    pub fn stream_events_of_type(&self, event_type: StreamEventType) -> Vec<StreamEvent> {
+        self.inner
+            .stream_events
+            .read()
+            .iter()
+            .filter(|e| e.event_type() == event_type)
+            .cloned()
+            .collect()
+    }
+
+    /// Get all token events as strings.
+    pub fn token_events(&self) -> Vec<String> {
+        self.inner
+            .stream_events
+            .read()
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::Token { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Join all token events into a single string.
+    pub fn joined_tokens(&self) -> String {
+        self.token_events().join("")
+    }
+
+    /// Get all progress stream events.
+    pub fn progress_stream_events(&self) -> Vec<(f64, Option<String>)> {
+        self.inner
+            .stream_events
+            .read()
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::Progress { progress, details } => Some((*progress, details.clone())),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -174,6 +231,7 @@ impl MockTaskContextBuilder {
                 cancelled: AtomicBool::new(self.cancelled),
                 progress_reports: RwLock::new(Vec::new()),
                 log_messages: RwLock::new(Vec::new()),
+                stream_events: RwLock::new(Vec::new()),
             }),
         }
     }
@@ -222,6 +280,11 @@ impl TaskContext for MockTaskContext {
         } else {
             Ok(())
         }
+    }
+
+    async fn stream(&self, event: StreamEvent) -> Result<()> {
+        self.inner.stream_events.write().push(event);
+        Ok(())
     }
 }
 
@@ -357,5 +420,94 @@ mod tests {
     fn test_mock_task_context_default() {
         let ctx = MockTaskContext::default();
         assert_eq!(ctx.attempt(), 1);
+    }
+
+    // === Streaming Tests ===
+
+    #[tokio::test]
+    async fn test_mock_task_context_stream() {
+        let ctx = MockTaskContext::new();
+
+        ctx.stream(StreamEvent::token("Hello")).await.unwrap();
+        ctx.stream(StreamEvent::token(", ")).await.unwrap();
+        ctx.stream(StreamEvent::token("world!")).await.unwrap();
+
+        let events = ctx.stream_events();
+        assert_eq!(events.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_context_stream_token() {
+        let ctx = MockTaskContext::new();
+
+        ctx.stream_token("Hello").await.unwrap();
+        ctx.stream_token(", ").await.unwrap();
+        ctx.stream_token("world!").await.unwrap();
+
+        assert_eq!(ctx.token_events(), vec!["Hello", ", ", "world!"]);
+        assert_eq!(ctx.joined_tokens(), "Hello, world!");
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_context_stream_progress() {
+        let ctx = MockTaskContext::new();
+
+        ctx.stream_progress(0.0, None).await.unwrap();
+        ctx.stream_progress(0.5, Some("Halfway")).await.unwrap();
+        ctx.stream_progress(1.0, Some("Done")).await.unwrap();
+
+        let progress = ctx.progress_stream_events();
+        assert_eq!(progress.len(), 3);
+        assert_eq!(progress[0], (0.0, None));
+        assert_eq!(progress[1], (0.5, Some("Halfway".to_string())));
+        assert_eq!(progress[2], (1.0, Some("Done".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_context_stream_data() {
+        let ctx = MockTaskContext::new();
+
+        ctx.stream_data_value(serde_json::json!({"count": 42}))
+            .await
+            .unwrap();
+
+        let events = ctx.stream_events_of_type(StreamEventType::Data);
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_context_stream_error() {
+        let ctx = MockTaskContext::new();
+
+        ctx.stream_error("Connection failed", Some("CONN_ERR"))
+            .await
+            .unwrap();
+
+        let events = ctx.stream_events_of_type(StreamEventType::Error);
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_context_last_stream_event() {
+        let ctx = MockTaskContext::new();
+
+        assert!(ctx.last_stream_event().is_none());
+
+        ctx.stream_token("First").await.unwrap();
+        ctx.stream_token("Second").await.unwrap();
+
+        let last = ctx.last_stream_event().unwrap();
+        assert!(matches!(last, StreamEvent::Token { text } if text == "Second"));
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_context_clear_stream_events() {
+        let ctx = MockTaskContext::new();
+
+        ctx.stream_token("Token").await.unwrap();
+        assert!(!ctx.stream_events().is_empty());
+
+        ctx.clear_recordings();
+        assert!(ctx.stream_events().is_empty());
     }
 }

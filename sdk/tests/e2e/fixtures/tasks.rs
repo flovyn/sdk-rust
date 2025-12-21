@@ -257,3 +257,225 @@ impl DynamicTask for SlowOperationTask {
         Ok(output)
     }
 }
+
+// ============================================================================
+// Streaming Task Fixtures
+// ============================================================================
+
+/// Task that streams tokens (simulates LLM token streaming).
+/// Streams configurable number of tokens, then returns the complete text.
+pub struct StreamingTokenTask;
+
+#[async_trait]
+impl DynamicTask for StreamingTokenTask {
+    fn kind(&self) -> &str {
+        "streaming-token-task"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let tokens: Vec<&str> = input
+            .get("tokens")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_else(|| vec!["Hello", ", ", "world", "!"]);
+
+        // Stream each token
+        for token in &tokens {
+            ctx.stream_token(token).await?;
+            // Small delay between tokens to simulate streaming
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "tokenCount".to_string(),
+            serde_json::Value::Number(tokens.len().into()),
+        );
+        output.insert(
+            "fullText".to_string(),
+            serde_json::Value::String(tokens.join("")),
+        );
+        Ok(output)
+    }
+
+    fn uses_streaming(&self) -> bool {
+        true
+    }
+}
+
+/// Task that streams progress updates.
+/// Streams progress 0%, 25%, 50%, 75%, 100% with details.
+pub struct StreamingProgressTask;
+
+#[async_trait]
+impl DynamicTask for StreamingProgressTask {
+    fn kind(&self) -> &str {
+        "streaming-progress-task"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let steps = input.get("steps").and_then(|v| v.as_u64()).unwrap_or(4) as u32;
+
+        for i in 0..=steps {
+            let progress = i as f64 / steps as f64;
+            let details = format!("Step {}/{}", i, steps);
+            ctx.stream_progress(progress, Some(&details)).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "completedSteps".to_string(),
+            serde_json::Value::Number(steps.into()),
+        );
+        Ok(output)
+    }
+
+    fn uses_streaming(&self) -> bool {
+        true
+    }
+}
+
+/// Task that streams structured data events.
+/// Streams a series of data events with structured payloads.
+pub struct StreamingDataTask;
+
+#[async_trait]
+impl DynamicTask for StreamingDataTask {
+    fn kind(&self) -> &str {
+        "streaming-data-task"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let count = input.get("count").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
+
+        for i in 0..count {
+            ctx.stream_data_value(serde_json::json!({
+                "index": i,
+                "timestamp": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+                "data": format!("record-{}", i)
+            }))
+            .await?;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "recordCount".to_string(),
+            serde_json::Value::Number(count.into()),
+        );
+        Ok(output)
+    }
+
+    fn uses_streaming(&self) -> bool {
+        true
+    }
+}
+
+/// Task that streams error notifications.
+/// Streams recoverable error events, then completes successfully.
+pub struct StreamingErrorTask;
+
+#[async_trait]
+impl DynamicTask for StreamingErrorTask {
+    fn kind(&self) -> &str {
+        "streaming-error-task"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let error_count = input
+            .get("errorCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2) as u32;
+
+        for i in 0..error_count {
+            ctx.stream_error(
+                &format!("Recoverable error {} (retrying...)", i + 1),
+                Some(&format!("ERR_{:03}", i + 1)),
+            )
+            .await?;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        // Task completes successfully despite streaming errors
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "errorCount".to_string(),
+            serde_json::Value::Number(error_count.into()),
+        );
+        output.insert("success".to_string(), serde_json::Value::Bool(true));
+        Ok(output)
+    }
+
+    fn uses_streaming(&self) -> bool {
+        true
+    }
+}
+
+/// Task that streams all event types (tokens, progress, data, errors).
+/// Used for comprehensive streaming tests.
+pub struct StreamingAllTypesTask;
+
+#[async_trait]
+impl DynamicTask for StreamingAllTypesTask {
+    fn kind(&self) -> &str {
+        "streaming-all-types-task"
+    }
+
+    async fn execute(
+        &self,
+        _input: DynamicTaskInput,
+        ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        // Stream progress
+        ctx.stream_progress(0.0, Some("Starting")).await?;
+
+        // Stream tokens
+        ctx.stream_token("Processing").await?;
+        ctx.stream_token("...").await?;
+
+        // Stream data
+        ctx.stream_data_value(serde_json::json!({"phase": "processing"}))
+            .await?;
+
+        // Stream progress
+        ctx.stream_progress(0.5, Some("Halfway")).await?;
+
+        // Stream an error notification (recoverable)
+        ctx.stream_error("Minor issue encountered", Some("WARN_001"))
+            .await?;
+
+        // More tokens
+        ctx.stream_token(" Done!").await?;
+
+        // Final progress
+        ctx.stream_progress(1.0, Some("Complete")).await?;
+
+        let mut output = DynamicTaskOutput::new();
+        output.insert("success".to_string(), serde_json::Value::Bool(true));
+        Ok(output)
+    }
+
+    fn uses_streaming(&self) -> bool {
+        true
+    }
+}

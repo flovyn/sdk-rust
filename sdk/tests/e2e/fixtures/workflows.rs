@@ -1150,3 +1150,141 @@ impl DynamicWorkflow for MixedParallelWorkflow {
         Ok(output)
     }
 }
+
+// ============================================================================
+// Streaming Workflow Fixtures
+// ============================================================================
+
+/// Workflow that schedules a streaming token task.
+pub struct StreamingTokenWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for StreamingTokenWorkflow {
+    fn kind(&self) -> &str {
+        "streaming-token-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let task_input = input
+            .get("taskInput")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        let task_result = ctx.schedule_raw("streaming-token-task", task_input).await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("taskResult".to_string(), task_result);
+        Ok(output)
+    }
+}
+
+/// Workflow that schedules a streaming progress task.
+pub struct StreamingProgressWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for StreamingProgressWorkflow {
+    fn kind(&self) -> &str {
+        "streaming-progress-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let task_input = input
+            .get("taskInput")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        let task_result = ctx
+            .schedule_raw("streaming-progress-task", task_input)
+            .await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("taskResult".to_string(), task_result);
+        Ok(output)
+    }
+}
+
+/// Workflow that schedules a streaming data task.
+pub struct StreamingDataWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for StreamingDataWorkflow {
+    fn kind(&self) -> &str {
+        "streaming-data-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let task_input = input
+            .get("taskInput")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        let task_result = ctx.schedule_raw("streaming-data-task", task_input).await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("taskResult".to_string(), task_result);
+        Ok(output)
+    }
+}
+
+/// Workflow that schedules a streaming error task.
+pub struct StreamingErrorWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for StreamingErrorWorkflow {
+    fn kind(&self) -> &str {
+        "streaming-error-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let task_input = input
+            .get("taskInput")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        let task_result = ctx.schedule_raw("streaming-error-task", task_input).await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("taskResult".to_string(), task_result);
+        Ok(output)
+    }
+}
+
+/// Workflow that schedules a task that streams all event types.
+pub struct StreamingAllTypesWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for StreamingAllTypesWorkflow {
+    fn kind(&self) -> &str {
+        "streaming-all-types-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let task_result = ctx
+            .schedule_raw("streaming-all-types-task", serde_json::json!({}))
+            .await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("taskResult".to_string(), task_result);
+        Ok(output)
+    }
+}

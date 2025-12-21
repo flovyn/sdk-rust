@@ -4,8 +4,11 @@ use crate::client::auth::WorkerTokenInterceptor;
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::task_execution_client::TaskExecutionClient as GrpcTaskExecutionClient;
+use crate::task::streaming::{StreamError, StreamEvent, StreamEventType as SdkStreamEventType};
 use serde_json::Value;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use uuid::Uuid;
@@ -16,6 +19,8 @@ type AuthClient = GrpcTaskExecutionClient<InterceptedService<Channel, WorkerToke
 /// Client for task execution operations
 pub struct TaskExecutionClient {
     inner: AuthClient,
+    /// Sequence counter for stream events
+    stream_sequence: AtomicU32,
 }
 
 impl TaskExecutionClient {
@@ -24,7 +29,15 @@ impl TaskExecutionClient {
         let interceptor = WorkerTokenInterceptor::new(token);
         Self {
             inner: GrpcTaskExecutionClient::with_interceptor(channel, interceptor),
+            stream_sequence: AtomicU32::new(0),
         }
+    }
+
+    /// Reset the stream sequence counter
+    ///
+    /// Call this at the start of each task execution to reset sequence numbering.
+    pub fn reset_stream_sequence(&self) {
+        self.stream_sequence.store(0, Ordering::SeqCst);
     }
 
     /// Submit a task for execution
@@ -305,6 +318,67 @@ impl TaskExecutionClient {
             .map_err(FlovynError::Grpc)?;
 
         Ok(response.into_inner().keys)
+    }
+
+    /// Stream a task event to connected clients.
+    ///
+    /// This sends an ephemeral event that is delivered to clients via SSE.
+    /// Events are not persisted and delivery is best-effort.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_execution_id` - The task execution ID
+    /// * `workflow_execution_id` - The workflow execution ID (empty for standalone tasks)
+    /// * `event` - The stream event to send
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(true)` if acknowledged, `Ok(false)` if not acknowledged,
+    /// or an error if the request failed.
+    pub async fn stream_task_data(
+        &mut self,
+        task_execution_id: Uuid,
+        workflow_execution_id: Option<Uuid>,
+        event: &StreamEvent,
+    ) -> std::result::Result<bool, StreamError> {
+        // Map SDK event type to protobuf event type
+        let event_type = match event.event_type() {
+            SdkStreamEventType::Token => flovyn_v1::StreamEventType::Token,
+            SdkStreamEventType::Progress => flovyn_v1::StreamEventType::Progress,
+            SdkStreamEventType::Data => flovyn_v1::StreamEventType::Data,
+            SdkStreamEventType::Error => flovyn_v1::StreamEventType::Error,
+        };
+
+        // Serialize event to JSON payload
+        let payload = serde_json::to_string(event)?;
+
+        // Get current timestamp
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        // Get and increment sequence number
+        let sequence = self.stream_sequence.fetch_add(1, Ordering::SeqCst) as i32;
+
+        let request = flovyn_v1::StreamTaskDataRequest {
+            task_execution_id: task_execution_id.to_string(),
+            workflow_execution_id: workflow_execution_id
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+            sequence,
+            r#type: event_type as i32,
+            payload,
+            timestamp_ms,
+        };
+
+        let response = self
+            .inner
+            .stream_task_data(request)
+            .await
+            .map_err(StreamError::GrpcError)?;
+
+        Ok(response.into_inner().acknowledged)
     }
 }
 

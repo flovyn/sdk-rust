@@ -4,6 +4,7 @@ use crate::error::FlovynError;
 use crate::task::context_impl::TaskContextImpl;
 use crate::task::definition::RetryConfig;
 use crate::task::registry::TaskRegistry;
+use crate::task::streaming::StreamEvent;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -57,6 +58,8 @@ pub struct TaskExecutorCallbacks {
     pub on_log: Option<Box<dyn Fn(String, String) + Send + Sync>>,
     /// Called for heartbeat
     pub on_heartbeat: Option<Box<dyn Fn() + Send + Sync>>,
+    /// Called when a stream event is emitted
+    pub on_stream: Option<Box<dyn Fn(StreamEvent) + Send + Sync>>,
 }
 
 impl std::fmt::Debug for TaskExecutorCallbacks {
@@ -65,6 +68,7 @@ impl std::fmt::Debug for TaskExecutorCallbacks {
             .field("on_progress", &self.on_progress.is_some())
             .field("on_log", &self.on_log.is_some())
             .field("on_heartbeat", &self.on_heartbeat.is_some())
+            .field("on_stream", &self.on_stream.is_some())
             .finish()
     }
 }
@@ -197,7 +201,9 @@ impl TaskExecutor {
         cancelled: Arc<AtomicBool>,
     ) -> TaskContextImpl {
         use crate::task::context::LogLevel;
-        use crate::task::context_impl::{HeartbeatReporter, LogReporter, ProgressReporter};
+        use crate::task::context_impl::{
+            HeartbeatReporter, LogReporter, ProgressReporter, StreamReporter,
+        };
 
         // Create progress reporter
         let progress_reporter: ProgressReporter = if let Some(on_progress) = callbacks.on_progress {
@@ -248,12 +254,26 @@ impl TaskExecutor {
                 Arc::new(|| Box::pin(async { Ok(()) }))
             };
 
-        TaskContextImpl::with_callbacks(
+        // Create stream reporter (optional)
+        let stream_reporter: Option<StreamReporter> =
+            callbacks.on_stream.map(|on_stream| -> StreamReporter {
+                let on_stream = Arc::new(on_stream);
+                Arc::new(move |event| {
+                    let on_stream = Arc::clone(&on_stream);
+                    Box::pin(async move {
+                        on_stream(event);
+                        Ok(())
+                    })
+                })
+            });
+
+        TaskContextImpl::with_all_callbacks(
             task_execution_id,
             attempt,
             progress_reporter,
             log_reporter,
             heartbeat_reporter,
+            stream_reporter,
             cancelled,
         )
     }
@@ -551,6 +571,7 @@ mod tests {
             })),
             on_log: None,
             on_heartbeat: None,
+            on_stream: None,
         };
 
         let executor = TaskExecutor::new(registry, TaskExecutorConfig::default());

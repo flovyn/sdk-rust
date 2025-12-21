@@ -85,6 +85,16 @@ pub trait TaskDefinition: Send + Sync {
     fn heartbeat_timeout_seconds(&self) -> Option<u32> {
         None
     }
+
+    /// Whether this task uses streaming for real-time event delivery.
+    ///
+    /// When true, the task can call streaming methods like `ctx.stream_token()`,
+    /// `ctx.stream_progress()`, etc. to send ephemeral events to connected clients.
+    ///
+    /// Default: false
+    fn uses_streaming(&self) -> bool {
+        false
+    }
 }
 
 /// Type alias for dynamic task input/output
@@ -143,6 +153,13 @@ pub trait DynamicTask: Send + Sync {
     fn heartbeat_timeout_seconds(&self) -> Option<u32> {
         None
     }
+
+    /// Whether this task uses streaming for real-time event delivery.
+    ///
+    /// Default: false
+    fn uses_streaming(&self) -> bool {
+        false
+    }
 }
 
 // Implement TaskDefinition for any DynamicTask
@@ -189,6 +206,10 @@ impl<T: DynamicTask> TaskDefinition for T {
 
     fn heartbeat_timeout_seconds(&self) -> Option<u32> {
         DynamicTask::heartbeat_timeout_seconds(self)
+    }
+
+    fn uses_streaming(&self) -> bool {
+        DynamicTask::uses_streaming(self)
     }
 }
 

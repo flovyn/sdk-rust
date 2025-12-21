@@ -53,6 +53,7 @@ pub use task::executor::{
     TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
 };
 pub use task::registry::{RegisteredTask, TaskMetadata, TaskRegistry};
+pub use task::streaming::{StreamError, StreamEvent, StreamEventType, TaskStreamEvent};
 
 // Re-export worker types
 pub use worker::determinism::{DeterminismValidationResult, DeterminismValidator};
@@ -90,6 +91,7 @@ pub mod prelude {
         TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
     };
     pub use crate::task::registry::{RegisteredTask, TaskMetadata, TaskRegistry};
+    pub use crate::task::streaming::{StreamError, StreamEvent, StreamEventType, TaskStreamEvent};
     pub use crate::telemetry::{RecordingSpan, SpanCollector};
     pub use crate::worker::determinism::{DeterminismValidationResult, DeterminismValidator};
     pub use crate::worker::executor::{
