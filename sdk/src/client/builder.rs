@@ -5,6 +5,7 @@ use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
 use crate::task::definition::TaskDefinition;
 use crate::task::registry::TaskRegistry;
+use crate::worker::lifecycle::{HookChain, ReconnectionStrategy, WorkerLifecycleHook};
 use crate::worker::registry::WorkflowRegistry;
 use crate::workflow::definition::WorkflowDefinition;
 use serde::de::DeserializeOwned;
@@ -51,6 +52,10 @@ pub struct FlovynClientBuilder {
     worker_token: Option<String>,
     /// Enable telemetry (span reporting to server)
     enable_telemetry: bool,
+    /// Worker lifecycle hooks
+    lifecycle_hooks: Vec<Arc<dyn WorkerLifecycleHook>>,
+    /// Reconnection strategy for connection recovery
+    reconnection_strategy: ReconnectionStrategy,
 }
 
 impl Default for FlovynClientBuilder {
@@ -81,6 +86,8 @@ impl FlovynClientBuilder {
             hooks: Vec::new(),
             worker_token: None,
             enable_telemetry: false,
+            lifecycle_hooks: Vec::new(),
+            reconnection_strategy: ReconnectionStrategy::default(),
         }
     }
 
@@ -223,6 +230,72 @@ impl FlovynClientBuilder {
         self
     }
 
+    /// Add a worker lifecycle hook
+    ///
+    /// Lifecycle hooks receive notifications about worker lifecycle events
+    /// such as starting, stopping, reconnecting, and work completion.
+    ///
+    /// Multiple hooks can be registered and they are called in registration order.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use flovyn_sdk::prelude::*;
+    ///
+    /// struct LoggingHook;
+    ///
+    /// #[async_trait]
+    /// impl WorkerLifecycleHook for LoggingHook {
+    ///     async fn on_event(&self, event: WorkerLifecycleEvent) {
+    ///         println!("Event: {:?}", event);
+    ///     }
+    /// }
+    ///
+    /// let client = FlovynClient::builder()
+    ///     .add_lifecycle_hook(LoggingHook)
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn add_lifecycle_hook<H: WorkerLifecycleHook + 'static>(mut self, hook: H) -> Self {
+        self.lifecycle_hooks.push(Arc::new(hook));
+        self
+    }
+
+    /// Set the reconnection strategy
+    ///
+    /// Controls how the worker reconnects after connection loss.
+    ///
+    /// Default: ExponentialBackoff with 1s initial delay, 60s max, 2.0 multiplier
+    pub fn reconnection_strategy(mut self, strategy: ReconnectionStrategy) -> Self {
+        self.reconnection_strategy = strategy;
+        self
+    }
+
+    /// Set maximum reconnection attempts (convenience method)
+    ///
+    /// This updates the reconnection strategy to use the specified max attempts.
+    pub fn max_reconnect_attempts(mut self, max: u32) -> Self {
+        self.reconnection_strategy = match self.reconnection_strategy {
+            ReconnectionStrategy::Fixed { delay, .. } => ReconnectionStrategy::Fixed {
+                delay,
+                max_attempts: Some(max),
+            },
+            ReconnectionStrategy::ExponentialBackoff {
+                initial_delay,
+                max_delay,
+                multiplier,
+                ..
+            } => ReconnectionStrategy::ExponentialBackoff {
+                initial_delay,
+                max_delay,
+                multiplier,
+                max_attempts: Some(max),
+            },
+            other => other,
+        };
+        self
+    }
+
     /// Register a workflow definition
     ///
     /// # Example
@@ -305,6 +378,12 @@ impl FlovynClientBuilder {
             Some(Arc::new(CompositeWorkflowHook::new(self.hooks)))
         };
 
+        // Create lifecycle hook chain
+        let mut lifecycle_hooks = HookChain::new();
+        for hook in self.lifecycle_hooks {
+            lifecycle_hooks.add_arc(hook);
+        }
+
         Ok(super::FlovynClient {
             tenant_id: self.tenant_id,
             worker_id: self.worker_id,
@@ -323,6 +402,9 @@ impl FlovynClientBuilder {
             running: std::sync::atomic::AtomicBool::new(false),
             worker_token,
             enable_telemetry: self.enable_telemetry,
+            lifecycle_hooks,
+            reconnection_strategy: self.reconnection_strategy,
+            worker_internals: parking_lot::RwLock::new(None),
         })
     }
 }
@@ -410,5 +492,65 @@ mod tests {
     fn test_builder_heartbeat_interval() {
         let builder = FlovynClientBuilder::new().heartbeat_interval(Duration::from_secs(60));
         assert_eq!(builder.heartbeat_interval, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_builder_lifecycle_hooks() {
+        use crate::worker::lifecycle::{WorkerLifecycleEvent, WorkerLifecycleHook};
+        use async_trait::async_trait;
+
+        struct TestHook;
+
+        #[async_trait]
+        impl WorkerLifecycleHook for TestHook {
+            async fn on_event(&self, _event: WorkerLifecycleEvent) {}
+        }
+
+        let builder = FlovynClientBuilder::new()
+            .add_lifecycle_hook(TestHook)
+            .add_lifecycle_hook(TestHook);
+        assert_eq!(builder.lifecycle_hooks.len(), 2);
+    }
+
+    #[test]
+    fn test_builder_reconnection_strategy() {
+        let builder = FlovynClientBuilder::new()
+            .reconnection_strategy(ReconnectionStrategy::fixed(Duration::from_secs(5)));
+
+        match builder.reconnection_strategy {
+            ReconnectionStrategy::Fixed {
+                delay,
+                max_attempts,
+            } => {
+                assert_eq!(delay, Duration::from_secs(5));
+                assert!(max_attempts.is_none());
+            }
+            _ => panic!("Expected Fixed strategy"),
+        }
+    }
+
+    #[test]
+    fn test_builder_max_reconnect_attempts() {
+        // Test with default exponential backoff
+        let builder = FlovynClientBuilder::new().max_reconnect_attempts(5);
+
+        match builder.reconnection_strategy {
+            ReconnectionStrategy::ExponentialBackoff { max_attempts, .. } => {
+                assert_eq!(max_attempts, Some(5));
+            }
+            _ => panic!("Expected ExponentialBackoff strategy"),
+        }
+
+        // Test with fixed strategy
+        let builder = FlovynClientBuilder::new()
+            .reconnection_strategy(ReconnectionStrategy::fixed(Duration::from_secs(10)))
+            .max_reconnect_attempts(3);
+
+        match builder.reconnection_strategy {
+            ReconnectionStrategy::Fixed { max_attempts, .. } => {
+                assert_eq!(max_attempts, Some(3));
+            }
+            _ => panic!("Expected Fixed strategy"),
+        }
     }
 }

@@ -59,6 +59,11 @@ pub use worker::determinism::{DeterminismValidationResult, DeterminismValidator}
 pub use worker::executor::{
     WorkflowExecutor, WorkflowExecutorConfig, WorkflowStatus, WorkflowTaskResult,
 };
+pub use worker::lifecycle::{
+    ConnectionInfo, HookChain, ReconnectionPolicy, ReconnectionStrategy, RegistrationInfo,
+    StopReason, TaskConflict, WorkType, WorkerControlError, WorkerInternals, WorkerLifecycleEvent,
+    WorkerLifecycleHook, WorkerMetrics, WorkerStatus, WorkflowConflict,
+};
 pub use worker::registry::{RegisteredWorkflow, WorkflowMetadata, WorkflowRegistry};
 pub use worker::task_worker::{TaskExecutorWorker, TaskWorkerConfig};
 pub use worker::workflow_worker::{WorkflowExecutorWorker, WorkflowWorkerConfig};
@@ -89,6 +94,11 @@ pub mod prelude {
     pub use crate::worker::determinism::{DeterminismValidationResult, DeterminismValidator};
     pub use crate::worker::executor::{
         WorkflowExecutor, WorkflowExecutorConfig, WorkflowStatus, WorkflowTaskResult,
+    };
+    pub use crate::worker::lifecycle::{
+        ConnectionInfo, HookChain, ReconnectionPolicy, ReconnectionStrategy, RegistrationInfo,
+        StopReason, TaskConflict, WorkType, WorkerControlError, WorkerInternals,
+        WorkerLifecycleEvent, WorkerLifecycleHook, WorkerMetrics, WorkerStatus, WorkflowConflict,
     };
     pub use crate::worker::registry::{RegisteredWorkflow, WorkflowMetadata, WorkflowRegistry};
     pub use crate::worker::task_worker::{TaskExecutorWorker, TaskWorkerConfig};

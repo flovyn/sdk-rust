@@ -23,6 +23,7 @@ mod concurrency_tests;
 mod error_tests;
 mod fixtures;
 mod harness;
+mod lifecycle_tests;
 mod parallel_tests;
 mod promise_tests;
 mod replay_tests;

@@ -11,6 +11,11 @@ use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
 use crate::task::registry::TaskRegistry;
+use crate::worker::lifecycle::{
+    ConnectionInfo, HookChain, ReconnectionStrategy, RegistrationInfo, TaskConflict,
+    WorkerControlError, WorkerInternals, WorkerLifecycleEvent, WorkerMetrics, WorkerStatus,
+    WorkflowConflict,
+};
 use crate::worker::registry::WorkflowRegistry;
 use crate::worker::task_worker::{TaskExecutorWorker, TaskWorkerConfig};
 use crate::worker::workflow_worker::{WorkflowExecutorWorker, WorkflowWorkerConfig};
@@ -19,6 +24,7 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast;
 use tokio::sync::{watch, Notify};
 use tonic::transport::Channel;
 use tracing::{debug, error, info};
@@ -119,6 +125,12 @@ pub struct FlovynClient {
     pub(crate) worker_token: String,
     /// Enable telemetry (span reporting to server)
     pub(crate) enable_telemetry: bool,
+    /// Worker lifecycle hooks
+    pub(crate) lifecycle_hooks: HookChain,
+    /// Reconnection strategy
+    pub(crate) reconnection_strategy: ReconnectionStrategy,
+    /// Stored worker internals from the last start() call
+    pub(crate) worker_internals: parking_lot::RwLock<Option<Arc<WorkerInternals>>>,
 }
 
 impl FlovynClient {
@@ -157,6 +169,65 @@ impl FlovynClient {
         self.running.load(Ordering::SeqCst)
     }
 
+    /// Get the lifecycle hooks
+    pub fn lifecycle_hooks(&self) -> &HookChain {
+        &self.lifecycle_hooks
+    }
+
+    /// Get the reconnection strategy
+    pub fn reconnection_strategy(&self) -> &ReconnectionStrategy {
+        &self.reconnection_strategy
+    }
+
+    /// Check if there is an active running worker.
+    ///
+    /// Returns true if `start()` has been called and the worker is still running
+    /// (not stopped or shutting down).
+    pub fn has_running_worker(&self) -> bool {
+        self.worker_internals
+            .read()
+            .as_ref()
+            .map(|internals| matches!(internals.status(), WorkerStatus::Running { .. }))
+            .unwrap_or(false)
+    }
+
+    /// Get the worker internals for advanced monitoring.
+    ///
+    /// Returns `None` if `start()` has not been called yet.
+    /// The internals provide access to status, metrics, registration info, and events.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if let Some(internals) = client.worker_internals() {
+    ///     println!("Worker status: {:?}", internals.status());
+    ///     println!("Uptime: {:?}", internals.uptime());
+    /// }
+    /// ```
+    pub fn worker_internals(&self) -> Option<Arc<WorkerInternals>> {
+        self.worker_internals.read().clone()
+    }
+
+    /// Get the configured heartbeat interval.
+    pub fn heartbeat_interval(&self) -> Duration {
+        self.heartbeat_interval
+    }
+
+    /// Get the configured poll timeout.
+    pub fn poll_timeout(&self) -> Duration {
+        self.poll_timeout
+    }
+
+    /// Get the maximum number of concurrent workflows.
+    pub fn max_concurrent_workflows(&self) -> usize {
+        self.config.workflow_config.max_concurrent
+    }
+
+    /// Get the maximum number of concurrent tasks.
+    pub fn max_concurrent_tasks(&self) -> usize {
+        self.config.task_config.max_concurrent
+    }
+
     /// Start the workflow and task workers
     ///
     /// This spawns background tasks to poll for and execute workflows and tasks.
@@ -171,6 +242,13 @@ impl FlovynClient {
             task_queue = %self.task_queue,
             "Starting FlovynClient"
         );
+
+        // Create shared worker internals for lifecycle tracking
+        let internals = Arc::new(WorkerInternals::new(
+            self.worker_id.clone(),
+            self.worker_name.clone(),
+            self.lifecycle_hooks.clone(),
+        ));
 
         // Create shutdown channel for immediate shutdown signaling
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -192,6 +270,8 @@ impl FlovynClient {
                     enable_notifications: true,
                     worker_token: self.worker_token.clone(),
                     enable_telemetry: self.enable_telemetry,
+                    lifecycle_hooks: self.lifecycle_hooks.clone(),
+                    reconnection_strategy: self.reconnection_strategy.clone(),
                 };
 
                 let mut worker = WorkflowExecutorWorker::new(
@@ -199,6 +279,7 @@ impl FlovynClient {
                     self.workflow_registry.clone(),
                     self.channel.clone(),
                 )
+                .with_internals(internals.clone())
                 .with_shutdown_signal(shutdown_rx.clone());
 
                 // Apply hook if present
@@ -236,15 +317,17 @@ impl FlovynClient {
                 enable_auto_registration: self.enable_auto_registration,
                 worker_token: self.worker_token.clone(),
                 enable_telemetry: self.enable_telemetry,
+                lifecycle_hooks: self.lifecycle_hooks.clone(),
+                reconnection_strategy: self.reconnection_strategy.clone(),
             };
 
-            let worker =
+            let mut worker =
                 TaskExecutorWorker::new(config, self.task_registry.clone(), self.channel.clone())
+                    .with_internals(internals.clone())
                     .with_shutdown_signal(shutdown_rx.clone());
 
             let ready_notify = worker.ready_notify();
             let running_flag = worker.running_flag();
-            let mut worker = worker;
 
             let handle = tokio::spawn(async move {
                 if let Err(e) = worker.start().await {
@@ -258,6 +341,9 @@ impl FlovynClient {
             (None, None, None)
         };
 
+        // Store the internals for later access
+        *self.worker_internals.write() = Some(internals.clone());
+
         Ok(WorkerHandle {
             shutdown_tx,
             workflow_running,
@@ -266,6 +352,7 @@ impl FlovynClient {
             task_handle,
             workflow_ready,
             task_ready,
+            internals,
         })
     }
 
@@ -551,6 +638,8 @@ pub struct WorkerHandle {
     task_handle: Option<tokio::task::JoinHandle<()>>,
     workflow_ready: Option<Arc<Notify>>,
     task_ready: Option<Arc<Notify>>,
+    /// Shared internal state for lifecycle tracking
+    internals: Arc<WorkerInternals>,
 }
 
 impl WorkerHandle {
@@ -647,6 +736,210 @@ impl WorkerHandle {
         if let Some(handle) = self.task_handle {
             handle.abort();
         }
+    }
+
+    // ============ Status Methods ============
+
+    /// Get the current worker status.
+    pub fn status(&self) -> WorkerStatus {
+        self.internals.status()
+    }
+
+    /// Check if the worker is currently running.
+    pub fn is_running(&self) -> bool {
+        matches!(self.internals.status(), WorkerStatus::Running { .. })
+    }
+
+    /// Check if the worker is connected to the server.
+    pub fn is_connected(&self) -> bool {
+        self.internals.connection_info().connected
+    }
+
+    /// Check if the worker is shutting down.
+    pub fn is_shutting_down(&self) -> bool {
+        matches!(self.internals.status(), WorkerStatus::ShuttingDown { .. })
+    }
+
+    /// Check if the worker is paused.
+    pub fn is_paused(&self) -> bool {
+        matches!(self.internals.status(), WorkerStatus::Paused { .. })
+    }
+
+    /// Check if the worker is reconnecting.
+    pub fn is_reconnecting(&self) -> bool {
+        matches!(self.internals.status(), WorkerStatus::Reconnecting { .. })
+    }
+
+    // ============ Registration Methods ============
+
+    /// Get the registration information.
+    pub fn registration(&self) -> Option<RegistrationInfo> {
+        self.internals.registration_info()
+    }
+
+    /// Get the server-assigned worker ID.
+    pub fn server_worker_id(&self) -> Option<Uuid> {
+        self.internals.registration_info().map(|r| r.worker_id)
+    }
+
+    /// Check if there are any registration conflicts.
+    pub fn has_conflicts(&self) -> bool {
+        self.internals
+            .registration_info()
+            .map(|r| r.has_conflicts())
+            .unwrap_or(false)
+    }
+
+    /// Get workflow registration conflicts.
+    pub fn workflow_conflicts(&self) -> Vec<WorkflowConflict> {
+        self.internals
+            .registration_info()
+            .map(|r| r.workflow_conflicts)
+            .unwrap_or_default()
+    }
+
+    /// Get task registration conflicts.
+    pub fn task_conflicts(&self) -> Vec<TaskConflict> {
+        self.internals
+            .registration_info()
+            .map(|r| r.task_conflicts)
+            .unwrap_or_default()
+    }
+
+    // ============ Connection Methods ============
+
+    /// Get the connection information.
+    pub fn connection(&self) -> ConnectionInfo {
+        self.internals.connection_info()
+    }
+
+    /// Get the time since the last successful heartbeat.
+    pub fn time_since_heartbeat(&self) -> Option<Duration> {
+        self.internals.connection_info().last_heartbeat.map(|t| {
+            std::time::SystemTime::now()
+                .duration_since(t)
+                .unwrap_or(Duration::ZERO)
+        })
+    }
+
+    /// Get the time since the last successful poll.
+    pub fn time_since_poll(&self) -> Option<Duration> {
+        self.internals.connection_info().last_poll.map(|t| {
+            std::time::SystemTime::now()
+                .duration_since(t)
+                .unwrap_or(Duration::ZERO)
+        })
+    }
+
+    // ============ Metrics Methods ============
+
+    /// Get the worker metrics.
+    pub fn metrics(&self) -> WorkerMetrics {
+        self.internals.metrics()
+    }
+
+    /// Get the worker uptime.
+    pub fn uptime(&self) -> Duration {
+        self.internals.uptime()
+    }
+
+    /// Get the number of workflows currently in progress.
+    pub fn workflows_in_progress(&self) -> usize {
+        self.internals.metrics().workflows_in_progress
+    }
+
+    /// Get the number of tasks currently in progress.
+    pub fn tasks_in_progress(&self) -> usize {
+        self.internals.metrics().tasks_in_progress
+    }
+
+    /// Get the total number of workflows executed.
+    pub fn workflows_executed(&self) -> u64 {
+        self.internals.metrics().workflows_executed
+    }
+
+    /// Get the total number of tasks executed.
+    pub fn tasks_executed(&self) -> u64 {
+        self.internals.metrics().tasks_executed
+    }
+
+    // ============ Event Subscription ============
+
+    /// Subscribe to worker lifecycle events.
+    ///
+    /// Returns a broadcast receiver that will receive events as they occur.
+    /// Events include status changes, heartbeats, work received/completed, etc.
+    pub fn subscribe(&self) -> broadcast::Receiver<WorkerLifecycleEvent> {
+        self.internals.subscribe()
+    }
+
+    /// Subscribe to filtered worker lifecycle events.
+    ///
+    /// Returns a stream that only yields events matching the provided filter.
+    /// This is useful for listening to specific event types without processing
+    /// all events.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut events = handle.subscribe_filtered(|e| {
+    ///     matches!(e, WorkerLifecycleEvent::WorkCompleted { .. })
+    /// });
+    ///
+    /// while let Some(event) = events.next().await {
+    ///     println!("Work completed: {:?}", event);
+    /// }
+    /// ```
+    pub fn subscribe_filtered<F>(
+        &self,
+        filter: F,
+    ) -> impl futures::Stream<Item = WorkerLifecycleEvent>
+    where
+        F: Fn(&WorkerLifecycleEvent) -> bool + Send + 'static,
+    {
+        use tokio_stream::wrappers::BroadcastStream;
+        use tokio_stream::StreamExt;
+
+        let rx = self.internals.subscribe();
+        BroadcastStream::new(rx)
+            .filter_map(|result| result.ok())
+            .filter(move |event| filter(event))
+    }
+
+    // ============ Control Methods ============
+
+    /// Pause the worker.
+    ///
+    /// When paused, workers will stop polling for new work but will complete
+    /// any work currently in progress. This is useful for graceful maintenance
+    /// or load shedding.
+    ///
+    /// Returns `Ok(())` if the worker was successfully paused, or an error if:
+    /// - The worker is not in a Running state
+    /// - A lifecycle hook rejected the pause request
+    pub async fn pause(&self, reason: &str) -> std::result::Result<(), WorkerControlError> {
+        self.internals.pause(reason).await
+    }
+
+    /// Resume the worker from a paused state.
+    ///
+    /// The worker will resume polling for new work.
+    ///
+    /// Returns `Ok(())` if the worker was successfully resumed, or an error if:
+    /// - The worker is not in a Paused state
+    /// - A lifecycle hook rejected the resume request
+    pub async fn resume(&self) -> std::result::Result<(), WorkerControlError> {
+        self.internals.resume().await
+    }
+
+    // ============ Internal Access ============
+
+    /// Get the worker internals for advanced usage.
+    ///
+    /// This provides direct access to the shared state for custom monitoring
+    /// or integration with external systems.
+    pub fn internals(&self) -> Arc<WorkerInternals> {
+        self.internals.clone()
     }
 }
 

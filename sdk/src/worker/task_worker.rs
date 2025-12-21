@@ -6,6 +6,9 @@ use crate::error::{FlovynError, Result};
 use crate::task::executor::{TaskExecutionResult, TaskExecutor, TaskExecutorConfig};
 use crate::task::registry::TaskRegistry;
 use crate::telemetry::{task_execute_span, SpanCollector};
+use crate::worker::lifecycle::{
+    HookChain, ReconnectionStrategy, RegistrationInfo, StopReason, TaskConflict, WorkerInternals,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +18,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Configuration for TaskExecutorWorker
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TaskWorkerConfig {
     /// Unique worker identifier
     pub worker_id: String,
@@ -41,6 +44,10 @@ pub struct TaskWorkerConfig {
     pub worker_token: String,
     /// Enable telemetry (task.execute spans)
     pub enable_telemetry: bool,
+    /// Worker lifecycle hooks
+    pub lifecycle_hooks: HookChain,
+    /// Reconnection strategy for connection recovery
+    pub reconnection_strategy: ReconnectionStrategy,
 }
 
 impl Default for TaskWorkerConfig {
@@ -58,7 +65,30 @@ impl Default for TaskWorkerConfig {
             enable_auto_registration: true,
             worker_token: String::new(),
             enable_telemetry: false,
+            lifecycle_hooks: HookChain::new(),
+            reconnection_strategy: ReconnectionStrategy::default(),
         }
+    }
+}
+
+impl std::fmt::Debug for TaskWorkerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskWorkerConfig")
+            .field("worker_id", &self.worker_id)
+            .field("tenant_id", &self.tenant_id)
+            .field("queue", &self.queue)
+            .field("poll_timeout", &self.poll_timeout)
+            .field("worker_labels", &self.worker_labels)
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .field("worker_name", &self.worker_name)
+            .field("worker_version", &self.worker_version)
+            .field("space_id", &self.space_id)
+            .field("enable_auto_registration", &self.enable_auto_registration)
+            .field("worker_token", &"<redacted>")
+            .field("enable_telemetry", &self.enable_telemetry)
+            .field("lifecycle_hooks_count", &self.lifecycle_hooks.len())
+            .field("reconnection_strategy", &self.reconnection_strategy)
+            .finish()
     }
 }
 
@@ -81,6 +111,8 @@ pub struct TaskExecutorWorker {
     span_collector: SpanCollector,
     /// WorkflowDispatch client for reporting spans
     workflow_dispatch: WorkflowDispatch,
+    /// Shared internal state for lifecycle tracking
+    internals: Arc<WorkerInternals>,
 }
 
 impl TaskExecutorWorker {
@@ -91,6 +123,13 @@ impl TaskExecutorWorker {
         let client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
         let span_collector = SpanCollector::new(config.enable_telemetry);
         let workflow_dispatch = WorkflowDispatch::new(channel.clone(), &config.worker_token);
+
+        // Create worker internals with lifecycle hooks from config
+        let internals = Arc::new(WorkerInternals::new(
+            config.worker_id.clone(),
+            config.worker_name.clone(),
+            config.lifecycle_hooks.clone(),
+        ));
 
         Self {
             config,
@@ -105,7 +144,22 @@ impl TaskExecutorWorker {
             external_shutdown_rx: None,
             span_collector,
             workflow_dispatch,
+            internals,
         }
+    }
+
+    /// Get the worker internals for status/metrics access.
+    pub fn internals(&self) -> Arc<WorkerInternals> {
+        self.internals.clone()
+    }
+
+    /// Set shared worker internals for lifecycle tracking.
+    ///
+    /// This replaces the internally created WorkerInternals with a shared one,
+    /// allowing multiple workers to share the same status, metrics, and events.
+    pub fn with_internals(mut self, internals: Arc<WorkerInternals>) -> Self {
+        self.internals = internals;
+        self
     }
 
     /// Set the external shutdown signal receiver
@@ -143,6 +197,7 @@ impl TaskExecutorWorker {
             .unwrap_or_else(|| self.config.worker_id.clone());
 
         let tasks = self.registry.get_all_metadata();
+        let task_kinds: Vec<String> = tasks.iter().map(|m| m.kind.clone()).collect();
 
         info!(
             worker_name = %worker_name,
@@ -165,6 +220,25 @@ impl TaskExecutorWorker {
             )
             .await?;
 
+        // Convert to RegistrationInfo and update internals
+        let registration_info = RegistrationInfo {
+            worker_id: result.worker_id,
+            success: result.success,
+            registered_at: std::time::SystemTime::now(),
+            workflow_kinds: vec![],
+            task_kinds,
+            workflow_conflicts: vec![],
+            task_conflicts: result
+                .task_conflicts
+                .iter()
+                .map(|c| TaskConflict {
+                    kind: c.kind.clone(),
+                    reason: c.reason.clone(),
+                    existing_worker_id: c.existing_worker_id.clone(),
+                })
+                .collect(),
+        };
+
         if result.success {
             self.server_worker_id = Some(result.worker_id);
             info!(
@@ -179,6 +253,11 @@ impl TaskExecutorWorker {
             );
         }
 
+        // Update internals and emit events
+        self.internals
+            .set_registration_info(registration_info)
+            .await;
+
         Ok(())
     }
 
@@ -189,6 +268,7 @@ impl TaskExecutorWorker {
         server_worker_id: Option<Uuid>,
         heartbeat_interval: Duration,
         running: Arc<AtomicBool>,
+        internals: Arc<WorkerInternals>,
     ) {
         if server_worker_id.is_none() {
             debug!("No server worker ID, skipping heartbeat loop");
@@ -205,10 +285,15 @@ impl TaskExecutorWorker {
                 break;
             }
 
-            if let Err(e) = client.send_heartbeat(worker_id).await {
-                warn!("Failed to send heartbeat: {}", e);
-            } else {
-                debug!("Heartbeat sent successfully");
+            match client.send_heartbeat(worker_id).await {
+                Ok(()) => {
+                    debug!("Heartbeat sent successfully");
+                    internals.record_heartbeat_success().await;
+                }
+                Err(e) => {
+                    warn!("Failed to send heartbeat: {}", e);
+                    internals.record_heartbeat_failure(e.to_string()).await;
+                }
             }
         }
     }
@@ -232,6 +317,9 @@ impl TaskExecutorWorker {
             "Starting task worker"
         );
 
+        // Emit Starting event
+        self.internals.record_starting().await;
+
         // Register with server
         if let Err(e) = self.register_with_server().await {
             warn!("Failed to register task worker: {}", e);
@@ -244,6 +332,7 @@ impl TaskExecutorWorker {
         let heartbeat_worker_token = self.config.worker_token.clone();
         let heartbeat_worker_id = self.server_worker_id;
         let heartbeat_interval = self.config.heartbeat_interval;
+        let heartbeat_internals = self.internals.clone();
 
         tokio::spawn(async move {
             Self::heartbeat_loop(
@@ -252,6 +341,7 @@ impl TaskExecutorWorker {
                 heartbeat_worker_id,
                 heartbeat_interval,
                 heartbeat_running,
+                heartbeat_internals,
             )
             .await;
         });
@@ -261,9 +351,40 @@ impl TaskExecutorWorker {
         // that can be consumed even if await_ready() hasn't been called yet
         self.ready_notify.notify_one();
 
-        // Polling loop
-        let mut was_disconnected = false;
+        // Emit Ready event
+        self.internals.record_ready(self.server_worker_id).await;
+
+        // Polling loop with reconnection and pause support
+        let mut reconnect_attempt: u32 = 0;
+        let reconnection_strategy = self.config.reconnection_strategy.clone();
+        let mut pause_rx = self.internals.pause_receiver();
+
         while self.running.load(Ordering::SeqCst) {
+            // Check if paused - if so, wait for resume
+            if *pause_rx.borrow() {
+                debug!("Task worker is paused, waiting for resume signal");
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        debug!("Received shutdown signal while paused");
+                        break;
+                    }
+                    _ = async {
+                        if let Some(ref mut rx) = external_shutdown_rx {
+                            let _ = rx.changed().await;
+                        } else {
+                            std::future::pending::<()>().await
+                        }
+                    } => {
+                        debug!("Received external shutdown signal while paused");
+                        break;
+                    }
+                    _ = pause_rx.changed() => {
+                        // Pause state changed - loop back to check
+                        continue;
+                    }
+                }
+            }
+
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     debug!("Received shutdown signal");
@@ -279,6 +400,10 @@ impl TaskExecutorWorker {
                     debug!("Received external shutdown signal");
                     break;
                 }
+                _ = pause_rx.changed() => {
+                    // Pause state changed - loop back to check
+                    continue;
+                }
                 result = self.poll_and_execute() => {
                     if let Err(e) = result {
                         // Check if it's a connection error
@@ -286,23 +411,47 @@ impl TaskExecutorWorker {
                             || e.to_string().contains("Connection refused");
 
                         if is_connection_error {
-                            warn!("Server unavailable, will retry: {}", e);
-                            was_disconnected = true;
+                            warn!("Server unavailable (attempt {}), will retry: {}", reconnect_attempt + 1, e);
+
+                            // Record disconnected state on first failure
+                            if reconnect_attempt == 0 {
+                                self.internals.record_disconnected(e.to_string()).await;
+                            }
+
+                            // Calculate delay using reconnection strategy
+                            match reconnection_strategy.calculate_delay(reconnect_attempt) {
+                                Some(delay) => {
+                                    reconnect_attempt += 1;
+                                    self.internals.record_reconnecting(reconnect_attempt, Some(e.to_string())).await;
+                                    debug!("Waiting {:?} before reconnection attempt {}", delay, reconnect_attempt);
+                                    tokio::time::sleep(delay).await;
+                                }
+                                None => {
+                                    // Max attempts reached
+                                    error!("Max reconnection attempts ({}) reached, stopping worker", reconnect_attempt);
+                                    break;
+                                }
+                            }
                         } else {
                             error!("Polling loop error: {}", e);
+                            // Non-connection error, use short delay
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
-
-                        // Wait before retrying
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    } else if was_disconnected {
-                        info!("Successfully reconnected to server");
-                        was_disconnected = false;
+                    } else if reconnect_attempt > 0 {
+                        // Successfully reconnected
+                        info!("Successfully reconnected to server after {} attempts", reconnect_attempt);
+                        self.internals.record_reconnected(self.server_worker_id).await;
+                        reconnect_attempt = 0;
                     }
                 }
             }
         }
 
         self.running.store(false, Ordering::SeqCst);
+
+        // Emit Stopped event
+        self.internals.record_stopped(StopReason::Graceful).await;
+
         info!("Task worker stopped");
         Ok(())
     }
@@ -339,6 +488,13 @@ impl TaskExecutorWorker {
         let task_execution_id = task_info.id;
         let task_type = &task_info.task_type;
         let workflow_id = task_info.workflow_execution_id;
+
+        // Record work received
+        self.internals
+            .record_work_received(crate::worker::lifecycle::WorkType::Task, task_execution_id)
+            .await;
+
+        let start_time = std::time::Instant::now();
 
         debug!(
             task_execution_id = %task_execution_id,
@@ -391,8 +547,32 @@ impl TaskExecutorWorker {
             self.span_collector.flush(&mut self.workflow_dispatch).await;
         }
 
+        // Record work completed/failed
+        let duration = start_time.elapsed();
+        let is_success = matches!(result, TaskExecutionResult::Completed { .. });
+
         // Report result to server
         self.report_result(task_execution_id, result).await?;
+
+        // Record work completion metrics
+        if is_success {
+            self.internals
+                .record_work_completed(
+                    crate::worker::lifecycle::WorkType::Task,
+                    task_execution_id,
+                    duration,
+                )
+                .await;
+        } else {
+            self.internals
+                .record_work_failed(
+                    crate::worker::lifecycle::WorkType::Task,
+                    task_execution_id,
+                    "Task execution failed".to_string(),
+                    duration,
+                )
+                .await;
+        }
 
         Ok(())
     }
@@ -492,6 +672,8 @@ mod tests {
             enable_auto_registration: false,
             worker_token: "test-token".to_string(),
             enable_telemetry: true,
+            lifecycle_hooks: HookChain::new(),
+            reconnection_strategy: ReconnectionStrategy::fixed(Duration::from_secs(5)),
         };
 
         assert_eq!(config.worker_id, "task-worker-1");

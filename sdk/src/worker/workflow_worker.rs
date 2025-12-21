@@ -7,6 +7,10 @@ use crate::error::{FlovynError, Result};
 use crate::generated::flovyn_v1;
 use crate::telemetry::{workflow_execute_span, workflow_replay_span, SpanCollector};
 use crate::worker::executor::WorkflowStatus;
+use crate::worker::lifecycle::{
+    HookChain, ReconnectionStrategy, RegistrationInfo, StopReason, WorkerInternals,
+    WorkflowConflict,
+};
 use crate::worker::registry::WorkflowRegistry;
 use crate::workflow::command::WorkflowCommand;
 use crate::workflow::context_impl::WorkflowContextImpl;
@@ -22,7 +26,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Configuration for WorkflowExecutorWorker
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WorkflowWorkerConfig {
     /// Unique worker identifier
     pub worker_id: String,
@@ -50,6 +54,10 @@ pub struct WorkflowWorkerConfig {
     pub worker_token: String,
     /// Enable telemetry (span reporting to server)
     pub enable_telemetry: bool,
+    /// Worker lifecycle hooks
+    pub lifecycle_hooks: HookChain,
+    /// Reconnection strategy for connection recovery
+    pub reconnection_strategy: ReconnectionStrategy,
 }
 
 impl Default for WorkflowWorkerConfig {
@@ -68,7 +76,31 @@ impl Default for WorkflowWorkerConfig {
             enable_notifications: true,
             worker_token: String::new(),
             enable_telemetry: false,
+            lifecycle_hooks: HookChain::new(),
+            reconnection_strategy: ReconnectionStrategy::default(),
         }
+    }
+}
+
+impl std::fmt::Debug for WorkflowWorkerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkflowWorkerConfig")
+            .field("worker_id", &self.worker_id)
+            .field("tenant_id", &self.tenant_id)
+            .field("task_queue", &self.task_queue)
+            .field("poll_timeout", &self.poll_timeout)
+            .field("max_concurrent", &self.max_concurrent)
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .field("worker_name", &self.worker_name)
+            .field("worker_version", &self.worker_version)
+            .field("space_id", &self.space_id)
+            .field("enable_auto_registration", &self.enable_auto_registration)
+            .field("enable_notifications", &self.enable_notifications)
+            .field("worker_token", &"<redacted>")
+            .field("enable_telemetry", &self.enable_telemetry)
+            .field("lifecycle_hooks_count", &self.lifecycle_hooks.len())
+            .field("reconnection_strategy", &self.reconnection_strategy)
+            .finish()
     }
 }
 
@@ -93,6 +125,8 @@ pub struct WorkflowExecutorWorker {
     span_collector: SpanCollector,
     /// External shutdown signal receiver
     external_shutdown_rx: Option<watch::Receiver<bool>>,
+    /// Shared internal state for lifecycle tracking
+    internals: Arc<WorkerInternals>,
 }
 
 impl WorkflowExecutorWorker {
@@ -105,6 +139,14 @@ impl WorkflowExecutorWorker {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
         let client = WorkflowDispatch::new(channel.clone(), &config.worker_token);
         let span_collector = SpanCollector::new(config.enable_telemetry);
+
+        // Create worker internals with lifecycle hooks from config
+        let internals = Arc::new(WorkerInternals::new(
+            config.worker_id.clone(),
+            config.worker_name.clone(),
+            config.lifecycle_hooks.clone(),
+        ));
+
         Self {
             config,
             registry,
@@ -119,7 +161,22 @@ impl WorkflowExecutorWorker {
             work_available_notify: Arc::new(Notify::new()),
             span_collector,
             external_shutdown_rx: None,
+            internals,
         }
+    }
+
+    /// Get the worker internals for status/metrics access.
+    pub fn internals(&self) -> Arc<WorkerInternals> {
+        self.internals.clone()
+    }
+
+    /// Set shared worker internals for lifecycle tracking.
+    ///
+    /// This replaces the internally created WorkerInternals with a shared one,
+    /// allowing multiple workers to share the same status, metrics, and events.
+    pub fn with_internals(mut self, internals: Arc<WorkerInternals>) -> Self {
+        self.internals = internals;
+        self
     }
 
     /// Set the workflow hook for lifecycle events
@@ -163,6 +220,7 @@ impl WorkflowExecutorWorker {
             .unwrap_or_else(|| self.config.worker_id.clone());
 
         let workflows = self.registry.get_all_metadata();
+        let workflow_kinds: Vec<String> = workflows.iter().map(|m| m.kind.clone()).collect();
 
         info!(
             worker_name = %worker_name,
@@ -185,6 +243,25 @@ impl WorkflowExecutorWorker {
             )
             .await?;
 
+        // Convert to RegistrationInfo and update internals
+        let registration_info = RegistrationInfo {
+            worker_id: result.worker_id,
+            success: result.success,
+            registered_at: std::time::SystemTime::now(),
+            workflow_kinds,
+            task_kinds: vec![],
+            workflow_conflicts: result
+                .workflow_conflicts
+                .iter()
+                .map(|c| WorkflowConflict {
+                    kind: c.kind.clone(),
+                    reason: c.reason.clone(),
+                    existing_worker_id: c.existing_worker_id.clone(),
+                })
+                .collect(),
+            task_conflicts: vec![],
+        };
+
         if result.success {
             self.server_worker_id = Some(result.worker_id);
             info!(
@@ -199,6 +276,11 @@ impl WorkflowExecutorWorker {
             );
         }
 
+        // Update internals and emit events
+        self.internals
+            .set_registration_info(registration_info)
+            .await;
+
         Ok(())
     }
 
@@ -209,6 +291,7 @@ impl WorkflowExecutorWorker {
         server_worker_id: Option<Uuid>,
         heartbeat_interval: Duration,
         running: Arc<AtomicBool>,
+        internals: Arc<WorkerInternals>,
     ) {
         if server_worker_id.is_none() {
             debug!("No server worker ID, skipping heartbeat loop");
@@ -225,10 +308,15 @@ impl WorkflowExecutorWorker {
                 break;
             }
 
-            if let Err(e) = client.send_heartbeat(worker_id).await {
-                warn!("Failed to send heartbeat: {}", e);
-            } else {
-                debug!("Heartbeat sent successfully");
+            match client.send_heartbeat(worker_id).await {
+                Ok(()) => {
+                    debug!("Heartbeat sent successfully");
+                    internals.record_heartbeat_success().await;
+                }
+                Err(e) => {
+                    warn!("Failed to send heartbeat: {}", e);
+                    internals.record_heartbeat_failure(e.to_string()).await;
+                }
             }
         }
     }
@@ -322,6 +410,9 @@ impl WorkflowExecutorWorker {
             "Starting workflow worker"
         );
 
+        // Emit Starting event
+        self.internals.record_starting().await;
+
         // Register with server
         if let Err(e) = self.register_with_server().await {
             warn!("Failed to register worker: {}", e);
@@ -343,6 +434,7 @@ impl WorkflowExecutorWorker {
         let heartbeat_worker_token = self.config.worker_token.clone();
         let heartbeat_worker_id = self.server_worker_id;
         let heartbeat_interval = self.config.heartbeat_interval;
+        let heartbeat_internals = self.internals.clone();
 
         tokio::spawn(async move {
             Self::heartbeat_loop(
@@ -351,6 +443,7 @@ impl WorkflowExecutorWorker {
                 heartbeat_worker_id,
                 heartbeat_interval,
                 heartbeat_running,
+                heartbeat_internals,
             )
             .await;
         });
@@ -378,12 +471,44 @@ impl WorkflowExecutorWorker {
         // that can be consumed even if await_ready() hasn't been called yet
         self.ready_notify.notify_one();
 
+        // Emit Ready event
+        self.internals.record_ready(self.server_worker_id).await;
+
         // Clone work_available_notify for the polling loop
         let work_available_notify = self.work_available_notify.clone();
 
-        // Polling loop
-        let mut was_disconnected = false;
+        // Polling loop with reconnection and pause support
+        let mut reconnect_attempt: u32 = 0;
+        let internals = self.internals.clone();
+        let reconnection_strategy = config.reconnection_strategy.clone();
+        let mut pause_rx = self.internals.pause_receiver();
+
         while running.load(Ordering::SeqCst) {
+            // Check if paused - if so, wait for resume
+            if *pause_rx.borrow() {
+                debug!("Worker is paused, waiting for resume signal");
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        debug!("Received shutdown signal while paused");
+                        break;
+                    }
+                    _ = async {
+                        if let Some(ref mut rx) = external_shutdown_rx {
+                            let _ = rx.changed().await;
+                        } else {
+                            std::future::pending::<()>().await
+                        }
+                    } => {
+                        debug!("Received external shutdown signal while paused");
+                        break;
+                    }
+                    _ = pause_rx.changed() => {
+                        // Pause state changed - loop back to check
+                        continue;
+                    }
+                }
+            }
+
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     debug!("Received shutdown signal");
@@ -399,6 +524,10 @@ impl WorkflowExecutorWorker {
                     debug!("Received external shutdown signal");
                     break;
                 }
+                _ = pause_rx.changed() => {
+                    // Pause state changed - loop back to check
+                    continue;
+                }
                 result = Self::poll_and_execute(
                     &mut client,
                     registry.clone(),
@@ -408,6 +537,7 @@ impl WorkflowExecutorWorker {
                     workflow_hook.clone(),
                     work_available_notify.clone(),
                     span_collector.clone(),
+                    internals.clone(),
                 ) => {
                     if let Err(e) = result {
                         // Check if it's a connection error
@@ -415,23 +545,47 @@ impl WorkflowExecutorWorker {
                             || e.to_string().contains("Connection refused");
 
                         if is_connection_error {
-                            warn!("Server unavailable, will retry: {}", e);
-                            was_disconnected = true;
+                            warn!("Server unavailable (attempt {}), will retry: {}", reconnect_attempt + 1, e);
+
+                            // Record disconnected state on first failure
+                            if reconnect_attempt == 0 {
+                                internals.record_disconnected(e.to_string()).await;
+                            }
+
+                            // Calculate delay using reconnection strategy
+                            match reconnection_strategy.calculate_delay(reconnect_attempt) {
+                                Some(delay) => {
+                                    reconnect_attempt += 1;
+                                    internals.record_reconnecting(reconnect_attempt, Some(e.to_string())).await;
+                                    debug!("Waiting {:?} before reconnection attempt {}", delay, reconnect_attempt);
+                                    tokio::time::sleep(delay).await;
+                                }
+                                None => {
+                                    // Max attempts reached
+                                    error!("Max reconnection attempts ({}) reached, stopping worker", reconnect_attempt);
+                                    break;
+                                }
+                            }
                         } else {
                             error!("Polling loop error: {}", e);
+                            // Non-connection error, use short delay
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
-
-                        // Wait before retrying
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                    } else if was_disconnected {
-                        info!("Successfully reconnected to server");
-                        was_disconnected = false;
+                    } else if reconnect_attempt > 0 {
+                        // Successfully reconnected
+                        info!("Successfully reconnected to server after {} attempts", reconnect_attempt);
+                        internals.record_reconnected(self.server_worker_id).await;
+                        reconnect_attempt = 0;
                     }
                 }
             }
         }
 
         self.running.store(false, Ordering::SeqCst);
+
+        // Emit Stopped event
+        self.internals.record_stopped(StopReason::Graceful).await;
+
         info!("Workflow worker stopped");
         Ok(())
     }
@@ -458,6 +612,7 @@ impl WorkflowExecutorWorker {
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
         work_available_notify: Arc<Notify>,
         span_collector: SpanCollector,
+        internals: Arc<WorkerInternals>,
     ) -> Result<()> {
         // Acquire semaphore permit
         let permit = semaphore
@@ -477,20 +632,52 @@ impl WorkflowExecutorWorker {
 
         match workflow_info {
             Some(info) => {
+                // Record work received
+                let execution_id = info.id;
+                internals
+                    .record_work_received(
+                        crate::worker::lifecycle::WorkType::Workflow,
+                        execution_id,
+                    )
+                    .await;
+
                 // Spawn execution in background
                 let mut client = client.clone();
                 let hook = workflow_hook.clone();
                 let span_collector = span_collector.clone();
+                let internals = internals.clone();
 
                 tokio::spawn(async move {
                     let _permit = permit; // Keep permit alive during execution
                     let _running = running; // Keep reference
 
-                    if let Err(e) =
+                    let start_time = std::time::Instant::now();
+                    let result =
                         Self::execute_workflow(&mut client, &registry, info, hook, span_collector)
-                            .await
-                    {
-                        error!("Workflow execution error: {}", e);
+                            .await;
+                    let duration = start_time.elapsed();
+
+                    match result {
+                        Ok(()) => {
+                            internals
+                                .record_work_completed(
+                                    crate::worker::lifecycle::WorkType::Workflow,
+                                    execution_id,
+                                    duration,
+                                )
+                                .await;
+                        }
+                        Err(e) => {
+                            error!("Workflow execution error: {}", e);
+                            internals
+                                .record_work_failed(
+                                    crate::worker::lifecycle::WorkType::Workflow,
+                                    execution_id,
+                                    e.to_string(),
+                                    duration,
+                                )
+                                .await;
+                        }
                     }
                 });
 
@@ -927,6 +1114,8 @@ mod tests {
             enable_notifications: false,
             worker_token: "test-token".to_string(),
             enable_telemetry: true,
+            lifecycle_hooks: HookChain::new(),
+            reconnection_strategy: ReconnectionStrategy::fixed(Duration::from_secs(5)),
         };
 
         assert_eq!(config.worker_id, "test-worker");
