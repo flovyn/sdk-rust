@@ -112,7 +112,7 @@ impl TestHarness {
         println!("[HARNESS] Starting test harness (session: {})", session_id);
 
         // Start PostgreSQL container with labels
-        let postgres: ContainerAsync<GenericImage> = GenericImage::new("postgres", "16-alpine")
+        let postgres: ContainerAsync<GenericImage> = GenericImage::new("postgres", "18-alpine")
             .with_wait_for(WaitFor::message_on_stderr(
                 "database system is ready to accept connections",
             ))

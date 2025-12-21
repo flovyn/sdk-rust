@@ -38,7 +38,7 @@ echo
 LABELED_CONTAINERS=$(docker ps -q --filter "label=flovyn-test=true" 2>/dev/null || true)
 
 # Find containers by image name (fallback for old containers without labels)
-POSTGRES_CONTAINERS=$(docker ps -q --filter "ancestor=postgres:16-alpine" 2>/dev/null || true)
+POSTGRES_CONTAINERS=$(docker ps -q --filter "ancestor=postgres:18-alpine" 2>/dev/null || true)
 NATS_CONTAINERS=$(docker ps -q --filter "ancestor=nats:latest" 2>/dev/null || true)
 SERVER_CONTAINERS=$(docker ps -q --filter "ancestor=flovyn-server-test:latest" 2>/dev/null || true)
 
