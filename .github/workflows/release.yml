@@ -39,7 +39,13 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-gnu, aarch64-pc-windows-gnullvm
+
+      - name: Add cross-compilation targets
+        run: |
+          rustup target add x86_64-unknown-linux-gnu
+          rustup target add aarch64-unknown-linux-gnu
+          rustup target add x86_64-pc-windows-gnu
+          rustup target add aarch64-pc-windows-gnullvm
 
       # NOTE: macOS cross-compilation disabled - osxcross setup takes 10+ minutes
       # To re-enable, uncomment the following and add targets: x86_64-apple-darwin, aarch64-apple-darwin
