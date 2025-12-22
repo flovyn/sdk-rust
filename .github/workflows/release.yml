@@ -63,23 +63,34 @@ jobs:
             release-cargo-
 
       # Build for all targets
+      # Linkers are set via environment variables to avoid polluting local development
       - name: Build Linux x86_64
         run: cargo build -p flovyn-ffi --release --target x86_64-unknown-linux-gnu
 
       - name: Build Linux aarch64
         run: cargo build -p flovyn-ffi --release --target aarch64-unknown-linux-gnu
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Build macOS x86_64
         run: cargo build -p flovyn-ffi --release --target x86_64-apple-darwin
+        env:
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: x86_64-apple-darwin-clang
 
       - name: Build macOS aarch64
         run: cargo build -p flovyn-ffi --release --target aarch64-apple-darwin
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: aarch64-apple-darwin-clang
 
       - name: Build Windows x86_64
         run: cargo build -p flovyn-ffi --release --target x86_64-pc-windows-gnu
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
 
       - name: Build Windows ARM64
         run: cargo build -p flovyn-ffi --release --target aarch64-pc-windows-gnullvm
+        env:
+          CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER: aarch64-w64-mingw32-clang
 
       # Generate language bindings
       - name: Generate Kotlin bindings
