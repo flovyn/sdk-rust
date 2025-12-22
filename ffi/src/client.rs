@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use flovyn_core::client::WorkflowDispatch;
+use flovyn_core::client::{WorkflowDispatch, WorkflowQueryClient};
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use uuid::Uuid;
@@ -49,24 +49,27 @@ impl CoreClient {
     #[uniffi::constructor]
     pub fn new(config: ClientConfig) -> Result<Arc<Self>, FfiError> {
         let runtime = Runtime::new().map_err(|e| FfiError::Other {
-            message: format!("Failed to create runtime: {}", e),
+            msg: format!("Failed to create runtime: {}", e),
         })?;
 
         let channel: Channel = runtime.block_on(async {
             Channel::from_shared(config.server_url.clone())
                 .map_err(|e| FfiError::InvalidConfiguration {
-                    message: format!("Invalid server URL: {}", e),
+                    msg: format!("Invalid server URL: {}", e),
                 })?
                 .connect()
                 .await
                 .map_err(|e| FfiError::Grpc {
-                    message: format!("Failed to connect: {}", e),
+                    msg: format!("Failed to connect: {}", e),
                     code: 14, // UNAVAILABLE
                 })
         })?;
 
-        // Generate a client token (in production this would come from auth)
-        let client_token = format!("client-token-{}", Uuid::new_v4());
+        // Use the client token if provided, otherwise generate a placeholder
+        let client_token = config
+            .client_token
+            .clone()
+            .unwrap_or_else(|| format!("fct_placeholder-{}", Uuid::new_v4()));
 
         Ok(Arc::new(Self {
             channel,
@@ -103,7 +106,7 @@ impl CoreClient {
         let result = self.runtime.block_on(async {
             dispatch_client
                 .start_workflow(
-                    &self.config.namespace,
+                    &self.config.tenant_id,
                     &workflow_kind,
                     input_value,
                     task_queue.as_deref(),
@@ -133,7 +136,7 @@ impl CoreClient {
     ) -> Result<Vec<WorkflowEventRecord>, FfiError> {
         let execution_id = Uuid::parse_str(&workflow_execution_id).map_err(|_| {
             FfiError::InvalidConfiguration {
-                message: "Invalid workflow execution ID".to_string(),
+                msg: "Invalid workflow execution ID".to_string(),
             }
         })?;
 
@@ -151,6 +154,77 @@ impl CoreClient {
                 payload: serde_json::to_vec(&e.payload).unwrap_or_default(),
             })
             .collect())
+    }
+
+    /// Query workflow state.
+    ///
+    /// # Arguments
+    /// * `workflow_execution_id` - The workflow execution ID
+    /// * `query_name` - The name of the query to execute
+    /// * `params` - Query parameters as JSON bytes
+    ///
+    /// # Returns
+    /// The query result as JSON bytes.
+    pub fn query_workflow(
+        &self,
+        workflow_execution_id: String,
+        query_name: String,
+        params: Vec<u8>,
+    ) -> Result<Vec<u8>, FfiError> {
+        let execution_id = Uuid::parse_str(&workflow_execution_id).map_err(|_| {
+            FfiError::InvalidConfiguration {
+                msg: "Invalid workflow execution ID".to_string(),
+            }
+        })?;
+
+        let params_value: serde_json::Value =
+            serde_json::from_slice(&params).unwrap_or(serde_json::Value::Null);
+
+        let mut query_client = WorkflowQueryClient::new(self.channel.clone(), &self.client_token);
+
+        let result = self.runtime.block_on(async {
+            query_client
+                .query(execution_id, &query_name, params_value)
+                .await
+        })?;
+
+        serde_json::to_vec(&result).map_err(|e| FfiError::Other {
+            msg: format!("Failed to serialize query result: {}", e),
+        })
+    }
+
+    /// Resolve a durable promise with a value.
+    ///
+    /// This allows external systems to resolve promises that were created
+    /// by workflows using `ctx.promise()`.
+    ///
+    /// # Arguments
+    /// * `promise_id` - The promise ID (format: workflow_execution_id/promise-name)
+    /// * `value` - The value to resolve the promise with (JSON bytes)
+    pub fn resolve_promise(&self, promise_id: String, value: Vec<u8>) -> Result<(), FfiError> {
+        let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.client_token);
+
+        self.runtime
+            .block_on(async { dispatch_client.resolve_promise(&promise_id, value).await })?;
+
+        Ok(())
+    }
+
+    /// Reject a durable promise with an error.
+    ///
+    /// This allows external systems to reject promises that were created
+    /// by workflows using `ctx.promise()`.
+    ///
+    /// # Arguments
+    /// * `promise_id` - The promise ID (format: workflow_execution_id/promise-name)
+    /// * `error` - The error message
+    pub fn reject_promise(&self, promise_id: String, error: String) -> Result<(), FfiError> {
+        let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.client_token);
+
+        self.runtime
+            .block_on(async { dispatch_client.reject_promise(&promise_id, &error).await })?;
+
+        Ok(())
     }
 }
 

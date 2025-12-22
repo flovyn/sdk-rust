@@ -9,43 +9,46 @@ use flovyn_core::{CoreError, DeterminismViolationError};
 ///
 /// This enum wraps internal errors into a format suitable for FFI,
 /// with simple field types that can cross the language boundary.
+///
+/// Note: We use `msg` instead of `message` to avoid conflicts with
+/// Kotlin's Exception.message property in generated bindings.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum FfiError {
     /// gRPC communication error.
-    #[error("gRPC error: {message} (code: {code})")]
+    #[error("gRPC error: {msg} (code: {code})")]
     Grpc {
         /// Error message from the gRPC layer.
-        message: String,
+        msg: String,
         /// gRPC status code as integer.
         code: i32,
     },
 
     /// Operation timed out.
-    #[error("Timeout: {message}")]
+    #[error("Timeout: {msg}")]
     Timeout {
         /// Description of what timed out.
-        message: String,
+        msg: String,
     },
 
     /// Serialization or deserialization error.
-    #[error("Serialization error: {message}")]
+    #[error("Serialization error: {msg}")]
     Serialization {
         /// Description of the serialization error.
-        message: String,
+        msg: String,
     },
 
     /// Determinism violation detected during replay.
-    #[error("Determinism violation: {message}")]
+    #[error("Determinism violation: {msg}")]
     DeterminismViolation {
         /// Description of what violated determinism.
-        message: String,
+        msg: String,
     },
 
     /// Invalid configuration provided.
-    #[error("Invalid configuration: {message}")]
+    #[error("Invalid configuration: {msg}")]
     InvalidConfiguration {
         /// Description of the configuration error.
-        message: String,
+        msg: String,
     },
 
     /// Operation was cancelled.
@@ -61,10 +64,10 @@ pub enum FfiError {
     NoWorkAvailable,
 
     /// Generic error for other cases.
-    #[error("{message}")]
+    #[error("{msg}")]
     Other {
         /// Error message.
-        message: String,
+        msg: String,
     },
 }
 
@@ -72,18 +75,18 @@ impl From<CoreError> for FfiError {
     fn from(err: CoreError) -> Self {
         match err {
             CoreError::Grpc(status) => FfiError::Grpc {
-                message: status.message().to_string(),
+                msg: status.message().to_string(),
                 code: status.code() as i32,
             },
             CoreError::Serialization(err) => FfiError::Serialization {
-                message: err.to_string(),
+                msg: err.to_string(),
             },
             CoreError::Io(err) => FfiError::Other {
-                message: format!("IO error: {}", err),
+                msg: format!("IO error: {}", err),
             },
-            CoreError::InvalidConfiguration(msg) => FfiError::InvalidConfiguration { message: msg },
-            CoreError::Timeout(msg) => FfiError::Timeout { message: msg },
-            CoreError::Other(msg) => FfiError::Other { message: msg },
+            CoreError::InvalidConfiguration(m) => FfiError::InvalidConfiguration { msg: m },
+            CoreError::Timeout(m) => FfiError::Timeout { msg: m },
+            CoreError::Other(m) => FfiError::Other { msg: m },
         }
     }
 }
@@ -91,7 +94,7 @@ impl From<CoreError> for FfiError {
 impl From<DeterminismViolationError> for FfiError {
     fn from(err: DeterminismViolationError) -> Self {
         FfiError::DeterminismViolation {
-            message: err.to_string(),
+            msg: err.to_string(),
         }
     }
 }
@@ -99,7 +102,7 @@ impl From<DeterminismViolationError> for FfiError {
 impl From<serde_json::Error> for FfiError {
     fn from(err: serde_json::Error) -> Self {
         FfiError::Serialization {
-            message: err.to_string(),
+            msg: err.to_string(),
         }
     }
 }
@@ -114,13 +117,13 @@ mod tests {
     #[test]
     fn test_ffi_error_display() {
         let err = FfiError::Grpc {
-            message: "connection refused".to_string(),
+            msg: "connection refused".to_string(),
             code: 14,
         };
         assert_eq!(err.to_string(), "gRPC error: connection refused (code: 14)");
 
         let err = FfiError::Timeout {
-            message: "poll timeout".to_string(),
+            msg: "poll timeout".to_string(),
         };
         assert_eq!(err.to_string(), "Timeout: poll timeout");
 
@@ -132,7 +135,7 @@ mod tests {
     fn test_from_core_error() {
         let core_err = CoreError::Timeout("test timeout".to_string());
         let ffi_err: FfiError = core_err.into();
-        assert!(matches!(ffi_err, FfiError::Timeout { message } if message == "test timeout"));
+        assert!(matches!(ffi_err, FfiError::Timeout { msg } if msg == "test timeout"));
     }
 
     #[test]

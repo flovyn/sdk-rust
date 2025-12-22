@@ -265,6 +265,44 @@ impl WorkflowDispatch {
             rejected_count: resp.rejected_count,
         })
     }
+
+    /// Resolve a durable promise with a value.
+    ///
+    /// This allows external systems to resolve promises that were created
+    /// by workflows using `ctx.promise()`.
+    ///
+    /// # Arguments
+    /// * `promise_id` - The promise ID (format: workflow_execution_id/promise-name)
+    /// * `value` - The value to resolve the promise with (serialized as JSON bytes)
+    pub async fn resolve_promise(&mut self, promise_id: &str, value: Vec<u8>) -> CoreResult<()> {
+        let request = flovyn_v1::ResolvePromiseRequest {
+            promise_id: promise_id.to_string(),
+            value,
+        };
+
+        self.inner.resolve_promise(request).await?;
+
+        Ok(())
+    }
+
+    /// Reject a durable promise with an error.
+    ///
+    /// This allows external systems to reject promises that were created
+    /// by workflows using `ctx.promise()`.
+    ///
+    /// # Arguments
+    /// * `promise_id` - The promise ID (format: workflow_execution_id/promise-name)
+    /// * `error` - The error message
+    pub async fn reject_promise(&mut self, promise_id: &str, error: &str) -> CoreResult<()> {
+        let request = flovyn_v1::RejectPromiseRequest {
+            promise_id: promise_id.to_string(),
+            error: error.to_string(),
+        };
+
+        self.inner.reject_promise(request).await?;
+
+        Ok(())
+    }
 }
 
 /// Information about a workflow execution received from polling

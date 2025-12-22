@@ -153,7 +153,7 @@ pub enum FfiStopReason {
     /// Aborted.
     Aborted,
     /// Unrecoverable error.
-    Error { message: String },
+    Error { msg: String },
 }
 
 impl From<flovyn_core::StopReason> for FfiStopReason {
@@ -162,7 +162,7 @@ impl From<flovyn_core::StopReason> for FfiStopReason {
             flovyn_core::StopReason::Graceful => FfiStopReason::Graceful,
             flovyn_core::StopReason::Immediate => FfiStopReason::Immediate,
             flovyn_core::StopReason::Aborted => FfiStopReason::Aborted,
-            flovyn_core::StopReason::Error(msg) => FfiStopReason::Error { message: msg },
+            flovyn_core::StopReason::Error(m) => FfiStopReason::Error { msg: m },
         }
     }
 }
@@ -244,6 +244,6 @@ mod tests {
 
         let reason = flovyn_core::StopReason::Error("test error".to_string());
         let ffi_reason: FfiStopReason = reason.into();
-        assert!(matches!(ffi_reason, FfiStopReason::Error { message } if message == "test error"));
+        assert!(matches!(ffi_reason, FfiStopReason::Error { msg } if msg == "test error"));
     }
 }

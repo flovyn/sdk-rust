@@ -28,16 +28,16 @@ impl WorkerTokenInterceptor {
     ///
     /// # Arguments
     ///
-    /// * `token` - The worker token (must start with "fwt_" prefix)
+    /// * `token` - The token (must start with "fwt_" or "fct_" prefix)
     ///
     /// # Panics
     ///
-    /// Panics if the token does not start with "fwt_" prefix.
+    /// Panics if the token does not start with "fwt_" or "fct_" prefix.
     pub fn new(token: impl Into<String>) -> Self {
         let token = token.into();
         assert!(
-            token.starts_with("fwt_"),
-            "Worker token must start with 'fwt_' prefix"
+            token.starts_with("fwt_") || token.starts_with("fct_"),
+            "Worker token must start with 'fwt_' or 'fct_' prefix"
         );
         Self { token }
     }
@@ -71,9 +71,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Worker token must start with 'fwt_' prefix")]
+    #[should_panic(expected = "Worker token must start with 'fwt_' or 'fct_' prefix")]
     fn test_interceptor_invalid_prefix() {
         WorkerTokenInterceptor::new("invalid_token");
+    }
+
+    #[test]
+    fn test_interceptor_creation_client_token() {
+        let interceptor = WorkerTokenInterceptor::new("fct_client123");
+        assert_eq!(interceptor.token, "fct_client123");
     }
 
     #[test]

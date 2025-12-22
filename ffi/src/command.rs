@@ -139,6 +139,171 @@ pub enum FfiWorkflowCommand {
 }
 
 impl FfiWorkflowCommand {
+    /// Convert to proto WorkflowCommand for gRPC submission.
+    pub fn to_proto_command(
+        &self,
+        sequence_number: i32,
+    ) -> flovyn_core::generated::flovyn_v1::WorkflowCommand {
+        use flovyn_core::generated::flovyn_v1::{self, workflow_command::CommandData};
+
+        let (command_type, command_data) = match self {
+            FfiWorkflowCommand::RecordOperation {
+                operation_name,
+                result,
+            } => (
+                flovyn_v1::CommandType::RecordOperation as i32,
+                Some(CommandData::RecordOperation(
+                    flovyn_v1::RecordOperationCommand {
+                        operation_name: operation_name.clone(),
+                        result: result.clone(),
+                    },
+                )),
+            ),
+            FfiWorkflowCommand::SetState { key, value } => (
+                flovyn_v1::CommandType::SetState as i32,
+                Some(CommandData::SetState(flovyn_v1::SetStateCommand {
+                    key: key.clone(),
+                    value: value.clone(),
+                })),
+            ),
+            FfiWorkflowCommand::ClearState { key } => (
+                flovyn_v1::CommandType::ClearState as i32,
+                Some(CommandData::ClearState(flovyn_v1::ClearStateCommand {
+                    key: key.clone(),
+                })),
+            ),
+            FfiWorkflowCommand::ScheduleTask {
+                task_execution_id,
+                task_type,
+                input,
+                ..
+            } => (
+                flovyn_v1::CommandType::ScheduleTask as i32,
+                Some(CommandData::ScheduleTask(flovyn_v1::ScheduleTaskCommand {
+                    task_type: task_type.clone(),
+                    input: input.clone(),
+                    task_execution_id: task_execution_id.clone(),
+                })),
+            ),
+            FfiWorkflowCommand::ScheduleChildWorkflow {
+                name,
+                kind,
+                child_execution_id,
+                input,
+                task_queue,
+                priority_seconds,
+            } => (
+                flovyn_v1::CommandType::ScheduleChildWorkflow as i32,
+                Some(CommandData::ScheduleChildWorkflow(
+                    flovyn_v1::ScheduleChildWorkflowCommand {
+                        child_execution_name: name.clone(),
+                        workflow_kind: kind.clone(),
+                        workflow_definition_id: None,
+                        child_workflow_execution_id: child_execution_id.clone(),
+                        input: input.clone(),
+                        task_queue: task_queue.clone(),
+                        priority_seconds: *priority_seconds,
+                    },
+                )),
+            ),
+            FfiWorkflowCommand::CompleteWorkflow { output } => (
+                flovyn_v1::CommandType::CompleteWorkflow as i32,
+                Some(CommandData::CompleteWorkflow(
+                    flovyn_v1::CompleteWorkflowCommand {
+                        output: output.clone(),
+                    },
+                )),
+            ),
+            FfiWorkflowCommand::FailWorkflow {
+                error,
+                stack_trace,
+                failure_type,
+            } => (
+                flovyn_v1::CommandType::FailWorkflow as i32,
+                Some(CommandData::FailWorkflow(flovyn_v1::FailWorkflowCommand {
+                    error: error.clone(),
+                    stack_trace: stack_trace.clone(),
+                    failure_type: failure_type.clone().unwrap_or_default(),
+                })),
+            ),
+            FfiWorkflowCommand::SuspendWorkflow { reason } => (
+                flovyn_v1::CommandType::SuspendWorkflow as i32,
+                Some(CommandData::SuspendWorkflow(
+                    flovyn_v1::SuspendWorkflowCommand {
+                        reason: reason.clone(),
+                    },
+                )),
+            ),
+            FfiWorkflowCommand::CancelWorkflow { reason } => (
+                flovyn_v1::CommandType::CancelWorkflow as i32,
+                Some(CommandData::CancelWorkflow(
+                    flovyn_v1::CancelWorkflowCommand {
+                        reason: reason.clone(),
+                    },
+                )),
+            ),
+            FfiWorkflowCommand::CreatePromise {
+                promise_id,
+                timeout_ms,
+            } => (
+                flovyn_v1::CommandType::CreatePromise as i32,
+                Some(CommandData::CreatePromise(
+                    flovyn_v1::CreatePromiseCommand {
+                        promise_id: promise_id.clone(),
+                        timeout_ms: *timeout_ms,
+                    },
+                )),
+            ),
+            FfiWorkflowCommand::ResolvePromise { promise_id, value } => (
+                flovyn_v1::CommandType::ResolvePromise as i32,
+                Some(CommandData::ResolvePromise(
+                    flovyn_v1::ResolvePromiseCommand {
+                        promise_id: promise_id.clone(),
+                        value: value.clone(),
+                    },
+                )),
+            ),
+            FfiWorkflowCommand::StartTimer {
+                timer_id,
+                duration_ms,
+            } => (
+                flovyn_v1::CommandType::StartTimer as i32,
+                Some(CommandData::StartTimer(flovyn_v1::StartTimerCommand {
+                    timer_id: timer_id.clone(),
+                    duration_ms: *duration_ms,
+                })),
+            ),
+            FfiWorkflowCommand::CancelTimer { timer_id } => (
+                flovyn_v1::CommandType::CancelTimer as i32,
+                Some(CommandData::CancelTimer(flovyn_v1::CancelTimerCommand {
+                    timer_id: timer_id.clone(),
+                })),
+            ),
+            FfiWorkflowCommand::RequestCancelTask {
+                task_execution_id: _,
+            } => {
+                // RequestCancelTask is not yet supported in proto, use Unspecified
+                (flovyn_v1::CommandType::Unspecified as i32, None)
+            }
+            FfiWorkflowCommand::RequestCancelChildWorkflow { child_execution_id } => (
+                flovyn_v1::CommandType::RequestCancelChildWorkflow as i32,
+                Some(CommandData::RequestCancelChildWorkflow(
+                    flovyn_v1::RequestCancelChildWorkflowCommand {
+                        child_execution_name: String::new(), // Not available in FFI command
+                        child_workflow_execution_id: child_execution_id.clone(),
+                        reason: String::new(),
+                    },
+                )),
+            ),
+        };
+
+        flovyn_v1::WorkflowCommand {
+            sequence_number,
+            command_type,
+            command_data,
+        }
+    }
+
     /// Convert to core WorkflowCommand with a sequence number.
     pub fn to_core_command(&self, sequence_number: i32) -> flovyn_core::WorkflowCommand {
         use flovyn_core::WorkflowCommand;

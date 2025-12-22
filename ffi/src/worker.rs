@@ -16,12 +16,13 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 use crate::activation::{
-    StateEntry, TaskActivation, TaskCompletion, WorkflowActivation, WorkflowActivationCompletion,
-    WorkflowActivationJob,
+    StateEntry, TaskActivation, TaskCompletion, WorkflowActivation, WorkflowActivationJob,
+    WorkflowCompletionStatus,
 };
 use crate::config::WorkerConfig;
+use crate::context::FfiWorkflowContext;
 use crate::error::FfiError;
-use crate::types::FfiReplayEvent;
+use crate::types::{FfiEventType, FfiReplayEvent};
 
 /// The main worker object exposed to foreign languages via FFI.
 ///
@@ -56,25 +57,31 @@ impl CoreWorker {
     pub fn new(config: WorkerConfig) -> Result<Arc<Self>, FfiError> {
         // Create a Tokio runtime
         let runtime = Runtime::new().map_err(|e| FfiError::Other {
-            message: format!("Failed to create runtime: {}", e),
+            msg: format!("Failed to create runtime: {}", e),
         })?;
 
         // Connect to the server
         let channel: Channel = runtime.block_on(async {
             Channel::from_shared(config.server_url.clone())
                 .map_err(|e| FfiError::InvalidConfiguration {
-                    message: format!("Invalid server URL: {}", e),
+                    msg: format!("Invalid server URL: {}", e),
                 })?
                 .connect()
                 .await
                 .map_err(|e| FfiError::Grpc {
-                    message: format!("Failed to connect: {}", e),
+                    msg: format!("Failed to connect: {}", e),
                     code: 14, // UNAVAILABLE
                 })
         })?;
 
-        // Generate a worker token (in production this would come from auth)
-        let worker_token = format!("worker-token-{}", Uuid::new_v4());
+        // Use the worker token if provided and it starts with 'fwt_'
+        // Otherwise generate a placeholder (useful for testing without auth)
+        let worker_token = config
+            .worker_token
+            .as_ref()
+            .filter(|t| t.starts_with("fwt_"))
+            .cloned()
+            .unwrap_or_else(|| format!("fwt_placeholder-{}", Uuid::new_v4()));
 
         Ok(Arc::new(Self {
             channel,
@@ -122,14 +129,16 @@ impl CoreWorker {
             .clone()
             .unwrap_or_else(|| format!("ffi-worker-{}", &self.config.task_queue));
 
+        // Get tenant ID from config
+        let tenant_id = Uuid::parse_str(&self.config.tenant_id).unwrap_or_else(|_| Uuid::nil());
+
         let result = self.runtime.block_on(async {
             lifecycle_client
                 .register_worker(
                     &worker_name,
                     "0.1.0",
                     worker_type,
-                    // Use a placeholder tenant ID - would come from config in real impl
-                    Uuid::parse_str(&self.config.namespace).unwrap_or_else(|_| Uuid::nil()),
+                    tenant_id,
                     None, // No space_id
                     workflows,
                     tasks,
@@ -139,7 +148,7 @@ impl CoreWorker {
 
         if !result.success {
             return Err(FfiError::Other {
-                message: result
+                msg: result
                     .error
                     .unwrap_or_else(|| "Registration failed".to_string()),
             });
@@ -153,6 +162,11 @@ impl CoreWorker {
     ///
     /// This blocks until work is available or the worker is shut down.
     /// Returns `None` if no work is available within the timeout.
+    ///
+    /// The returned activation includes a replay-aware context that handles:
+    /// - Determinism validation during replay
+    /// - Cached result return for replayed operations
+    /// - Command generation for new operations
     pub fn poll_workflow_activation(&self) -> Result<Option<WorkflowActivation>, FfiError> {
         if self
             .shutdown_requested
@@ -164,9 +178,11 @@ impl CoreWorker {
         let worker_id = {
             let guard = self.worker_id.lock();
             guard.ok_or(FfiError::Other {
-                message: "Worker not registered".to_string(),
+                msg: "Worker not registered".to_string(),
             })?
         };
+
+        let tenant_id = Uuid::parse_str(&self.config.tenant_id).unwrap_or_else(|_| Uuid::nil());
 
         let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
 
@@ -174,7 +190,7 @@ impl CoreWorker {
             dispatch_client
                 .poll_workflow(
                     &worker_id.to_string(),
-                    &self.config.namespace,
+                    &self.config.tenant_id,
                     &self.config.task_queue,
                     std::time::Duration::from_secs(30),
                 )
@@ -191,27 +207,44 @@ impl CoreWorker {
                         .unwrap_or_default()
                 });
 
-                // Convert to FFI activation
+                // Convert events to FFI format
+                let ffi_events: Vec<FfiReplayEvent> = events
+                    .into_iter()
+                    .map(|e| FfiReplayEvent {
+                        sequence_number: e.sequence,
+                        event_type: parse_event_type(&e.event_type),
+                        data: serde_json::to_vec(&e.payload).unwrap_or_default(),
+                        timestamp_ms: 0, // Timestamp not available in WorkflowEvent
+                    })
+                    .collect();
+
+                // Get workflow state
+                let state_entries: Vec<(String, Vec<u8>)> = vec![]; // TODO: Fetch from workflow state
+
+                // Determine if cancellation was requested
+                let cancellation_requested = false; // TODO: Check from workflow info or events
+
+                // Create the replay-aware context
+                let context = FfiWorkflowContext::new(
+                    workflow_info.id,
+                    tenant_id,
+                    workflow_info.workflow_task_time_millis,
+                    workflow_info.id.as_u128() as u64, // Use workflow ID as random seed
+                    ffi_events,
+                    state_entries,
+                    cancellation_requested,
+                );
+
+                // Build jobs (signals, queries, cancellation)
+                let jobs = vec![WorkflowActivationJob::Initialize {
+                    input: serde_json::to_vec(&workflow_info.input).unwrap_or_default(),
+                }];
+
                 let activation = WorkflowActivation {
-                    run_id: Uuid::new_v4().to_string(), // Run ID for this execution
-                    workflow_execution_id: workflow_info.id.to_string(),
+                    context,
                     workflow_kind: workflow_info.kind.clone(),
-                    timestamp_ms: workflow_info.workflow_task_time_millis,
-                    is_replaying: workflow_info.current_sequence > 0,
-                    random_seed: vec![], // Would be populated from workflow info
-                    jobs: vec![WorkflowActivationJob::Initialize {
-                        input: serde_json::to_vec(&workflow_info.input).unwrap_or_default(),
-                    }],
-                    history: events
-                        .into_iter()
-                        .map(|e| FfiReplayEvent {
-                            sequence_number: e.sequence,
-                            event_type: crate::types::FfiEventType::OperationCompleted, // Simplified
-                            data: serde_json::to_vec(&e.payload).unwrap_or_default(),
-                            timestamp_ms: 0, // Would come from event
-                        })
-                        .collect(),
-                    state: vec![], // Would be populated from workflow state
+                    input: serde_json::to_vec(&workflow_info.input).unwrap_or_default(),
+                    jobs,
                 };
 
                 Ok(Some(activation))
@@ -222,40 +255,79 @@ impl CoreWorker {
 
     /// Complete a workflow activation.
     ///
-    /// This sends the commands generated by the language SDK back to the server.
+    /// This extracts commands from the context and sends them along with
+    /// the completion status to the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `context` - The workflow context (commands are extracted from this)
+    /// * `status` - The completion status (Completed, Suspended, Cancelled, or Failed)
     pub fn complete_workflow_activation(
         &self,
-        completion: WorkflowActivationCompletion,
+        context: &FfiWorkflowContext,
+        status: WorkflowCompletionStatus,
     ) -> Result<(), FfiError> {
         let _worker_id = {
             let guard = self.worker_id.lock();
             guard.ok_or(FfiError::Other {
-                message: "Worker not registered".to_string(),
+                msg: "Worker not registered".to_string(),
             })?
         };
 
         let workflow_execution_id =
-            Uuid::parse_str(&completion.run_id).map_err(|_| FfiError::InvalidConfiguration {
-                message: "Invalid workflow execution ID".to_string(),
+            Uuid::parse_str(&context.workflow_execution_id()).map_err(|_| {
+                FfiError::InvalidConfiguration {
+                    msg: "Invalid workflow execution ID".to_string(),
+                }
             })?;
 
-        // Convert FFI commands to core commands
-        let _commands: Vec<flovyn_core::WorkflowCommand> = completion
-            .commands
+        // Extract commands from the context
+        let commands = context.take_commands();
+
+        // Convert FFI commands to proto commands for gRPC submission
+        let proto_commands: Vec<flovyn_core::generated::flovyn_v1::WorkflowCommand> = commands
             .iter()
             .enumerate()
-            .map(|(i, cmd)| cmd.to_core_command(i as i32 + 1))
+            .map(|(i, cmd)| cmd.to_proto_command(i as i32 + 1))
             .collect();
 
         let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
 
-        // Determine workflow status and submit
-        // This is simplified - real impl would need to look at command types
-        self.runtime.block_on(async {
-            dispatch_client
-                .suspend_workflow(workflow_execution_id, vec![])
-                .await
-        })?;
+        // Submit based on status
+        match status {
+            WorkflowCompletionStatus::Completed { output } => {
+                // Add CompleteWorkflow command
+                let output_value: serde_json::Value =
+                    serde_json::from_slice(&output).unwrap_or(serde_json::Value::Null);
+                self.runtime.block_on(async {
+                    dispatch_client
+                        .complete_workflow(workflow_execution_id, output_value, proto_commands)
+                        .await
+                })?;
+            }
+            WorkflowCompletionStatus::Suspended => {
+                self.runtime.block_on(async {
+                    dispatch_client
+                        .suspend_workflow(workflow_execution_id, proto_commands)
+                        .await
+                })?;
+            }
+            WorkflowCompletionStatus::Cancelled { reason } => {
+                // Use fail_workflow with "CANCELLED" failure type
+                self.runtime.block_on(async {
+                    dispatch_client
+                        .fail_workflow(workflow_execution_id, &reason, "CANCELLED", proto_commands)
+                        .await
+                })?;
+            }
+            WorkflowCompletionStatus::Failed { error } => {
+                self.runtime.block_on(async {
+                    dispatch_client
+                        .fail_workflow(workflow_execution_id, &error, "ERROR", proto_commands)
+                        .await
+                })?;
+            }
+        }
 
         Ok(())
     }
@@ -274,7 +346,7 @@ impl CoreWorker {
         let worker_id = {
             let guard = self.worker_id.lock();
             guard.ok_or(FfiError::Other {
-                message: "Worker not registered".to_string(),
+                msg: "Worker not registered".to_string(),
             })?
         };
 
@@ -284,7 +356,7 @@ impl CoreWorker {
             task_client
                 .poll_task(
                     &worker_id.to_string(),
-                    &self.config.namespace,
+                    &self.config.tenant_id,
                     &self.config.task_queue,
                     std::time::Duration::from_secs(30),
                 )
@@ -315,13 +387,13 @@ impl CoreWorker {
         let _worker_id = {
             let guard = self.worker_id.lock();
             guard.ok_or(FfiError::Other {
-                message: "Worker not registered".to_string(),
+                msg: "Worker not registered".to_string(),
             })?
         };
 
         let task_execution_id = Uuid::parse_str(completion.task_execution_id()).map_err(|_| {
             FfiError::InvalidConfiguration {
-                message: "Invalid task execution ID".to_string(),
+                msg: "Invalid task execution ID".to_string(),
             }
         })?;
 
@@ -388,6 +460,38 @@ impl StateEntry {
     /// Create a new state entry
     pub fn new(key: String, value: Vec<u8>) -> Self {
         Self { key, value }
+    }
+}
+
+/// Parse event type string to FfiEventType.
+fn parse_event_type(event_type: &str) -> FfiEventType {
+    match event_type {
+        "WORKFLOW_STARTED" => FfiEventType::WorkflowStarted,
+        "WORKFLOW_COMPLETED" => FfiEventType::WorkflowCompleted,
+        "WORKFLOW_EXECUTION_FAILED" => FfiEventType::WorkflowExecutionFailed,
+        "WORKFLOW_SUSPENDED" => FfiEventType::WorkflowSuspended,
+        "CANCELLATION_REQUESTED" => FfiEventType::CancellationRequested,
+        "OPERATION_COMPLETED" => FfiEventType::OperationCompleted,
+        "STATE_SET" => FfiEventType::StateSet,
+        "STATE_CLEARED" => FfiEventType::StateCleared,
+        "TASK_SCHEDULED" => FfiEventType::TaskScheduled,
+        "TASK_COMPLETED" => FfiEventType::TaskCompleted,
+        "TASK_FAILED" => FfiEventType::TaskFailed,
+        "TASK_CANCELLED" => FfiEventType::TaskCancelled,
+        "PROMISE_CREATED" => FfiEventType::PromiseCreated,
+        "PROMISE_RESOLVED" => FfiEventType::PromiseResolved,
+        "PROMISE_REJECTED" => FfiEventType::PromiseRejected,
+        "PROMISE_TIMEOUT" => FfiEventType::PromiseTimeout,
+        "CHILD_WORKFLOW_INITIATED" => FfiEventType::ChildWorkflowInitiated,
+        "CHILD_WORKFLOW_STARTED" => FfiEventType::ChildWorkflowStarted,
+        "CHILD_WORKFLOW_COMPLETED" => FfiEventType::ChildWorkflowCompleted,
+        "CHILD_WORKFLOW_FAILED" => FfiEventType::ChildWorkflowFailed,
+        "CHILD_WORKFLOW_CANCELLED" => FfiEventType::ChildWorkflowCancelled,
+        "TIMER_STARTED" => FfiEventType::TimerStarted,
+        "TIMER_FIRED" => FfiEventType::TimerFired,
+        "TIMER_CANCELLED" => FfiEventType::TimerCancelled,
+        // Default to OperationCompleted for unknown types
+        _ => FfiEventType::OperationCompleted,
     }
 }
 
