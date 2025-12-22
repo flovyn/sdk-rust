@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,18 +39,14 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: |
-            x86_64-unknown-linux-gnu
-            aarch64-unknown-linux-gnu
-            x86_64-apple-darwin
-            aarch64-apple-darwin
-            x86_64-pc-windows-gnu
-            aarch64-pc-windows-gnullvm
+          targets: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-gnu, aarch64-pc-windows-gnullvm
 
-      - name: Setup osxcross for macOS cross-compilation
-        uses: Timmmm/setup-osxcross@v3
-        with:
-          osx-version: "14.5"
+      # NOTE: macOS cross-compilation disabled - osxcross setup takes 10+ minutes
+      # To re-enable, uncomment the following and add targets: x86_64-apple-darwin, aarch64-apple-darwin
+      # - name: Setup osxcross for macOS cross-compilation
+      #   uses: Timmmm/setup-osxcross@v3
+      #   with:
+      #     osx-version: "14.5"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -72,15 +68,16 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Build macOS x86_64
-        run: cargo build -p flovyn-ffi --release --target x86_64-apple-darwin
-        env:
-          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: x86_64-apple-darwin-clang
-
-      - name: Build macOS aarch64
-        run: cargo build -p flovyn-ffi --release --target aarch64-apple-darwin
-        env:
-          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: aarch64-apple-darwin-clang
+      # NOTE: macOS builds disabled - osxcross setup takes 10+ minutes
+      # - name: Build macOS x86_64
+      #   run: cargo build -p flovyn-ffi --release --target x86_64-apple-darwin
+      #   env:
+      #     CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: x86_64-apple-darwin-clang
+      #
+      # - name: Build macOS aarch64
+      #   run: cargo build -p flovyn-ffi --release --target aarch64-apple-darwin
+      #   env:
+      #     CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: aarch64-apple-darwin-clang
 
       - name: Build Windows x86_64
         run: cargo build -p flovyn-ffi --release --target x86_64-pc-windows-gnu
@@ -101,14 +98,6 @@ jobs:
             --language kotlin \
             --out-dir bindings/kotlin
 
-      - name: Generate Swift bindings
-        run: |
-          mkdir -p bindings/swift
-          cargo run -p flovyn-ffi --bin uniffi-bindgen -- \
-            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
-            --language swift \
-            --out-dir bindings/swift
-
       - name: Generate Python bindings
         run: |
           mkdir -p bindings/python
@@ -120,7 +109,7 @@ jobs:
       # Package artifacts
       - name: Package native libraries
         run: |
-          mkdir -p artifacts/natives/{linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,windows-x86_64,windows-aarch64}
+          mkdir -p artifacts/natives/{linux-x86_64,linux-aarch64,windows-x86_64,windows-aarch64}
 
           cp target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
              artifacts/natives/linux-x86_64/
@@ -128,11 +117,11 @@ jobs:
           cp target/aarch64-unknown-linux-gnu/release/libflovyn_ffi.so \
              artifacts/natives/linux-aarch64/
 
-          cp target/x86_64-apple-darwin/release/libflovyn_ffi.dylib \
-             artifacts/natives/macos-x86_64/
-
-          cp target/aarch64-apple-darwin/release/libflovyn_ffi.dylib \
-             artifacts/natives/macos-aarch64/
+          # NOTE: macOS disabled
+          # cp target/x86_64-apple-darwin/release/libflovyn_ffi.dylib \
+          #    artifacts/natives/macos-x86_64/
+          # cp target/aarch64-apple-darwin/release/libflovyn_ffi.dylib \
+          #    artifacts/natives/macos-aarch64/
 
           cp target/x86_64-pc-windows-gnu/release/flovyn_ffi.dll \
              artifacts/natives/windows-x86_64/
@@ -252,10 +241,11 @@ jobs:
           path: ./
 
       # Create individual platform archives for direct download
+      # NOTE: macOS disabled
       - name: Package individual platform archives
         run: |
           cd natives
-          for platform in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64 windows-aarch64; do
+          for platform in linux-x86_64 linux-aarch64 windows-x86_64 windows-aarch64; do
             tar -czvf ../libflovyn_ffi-${platform}.tar.gz ${platform}/
           done
           cd ../bindings
@@ -271,8 +261,6 @@ jobs:
             flovyn-ffi-${{ github.ref_name }}.tar.gz
             libflovyn_ffi-linux-x86_64.tar.gz
             libflovyn_ffi-linux-aarch64.tar.gz
-            libflovyn_ffi-macos-x86_64.tar.gz
-            libflovyn_ffi-macos-aarch64.tar.gz
             libflovyn_ffi-windows-x86_64.tar.gz
             libflovyn_ffi-windows-aarch64.tar.gz
             flovyn-ffi-bindings.tar.gz
