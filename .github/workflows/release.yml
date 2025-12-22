@@ -22,18 +22,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            protobuf-compiler \
-            gcc-aarch64-linux-gnu \
-            libc6-dev-arm64-cross \
-            gcc-mingw-w64-x86-64
-
-      - name: Install llvm-mingw for Windows ARM64
-        run: |
-          # Download llvm-mingw for Windows ARM64 cross-compilation
-          curl -LO https://github.com/mstorsjo/llvm-mingw/releases/download/20241217/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz
-          tar -xf llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz
-          echo "$PWD/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64/bin" >> $GITHUB_PATH
+          sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -46,6 +35,9 @@ jobs:
           rustup target add aarch64-unknown-linux-gnu
           rustup target add x86_64-pc-windows-gnu
           rustup target add aarch64-pc-windows-gnullvm
+
+      - name: Install cargo-cross
+        run: cargo install cargo-cross
 
       # NOTE: macOS cross-compilation disabled - osxcross setup takes 10+ minutes
       # To re-enable, uncomment the following and add targets: x86_64-apple-darwin, aarch64-apple-darwin
@@ -64,36 +56,25 @@ jobs:
           restore-keys: |
             release-cargo-
 
-      # Build for all targets
-      # Linkers are set via environment variables to avoid polluting local development
+      # Build for all targets using cargo-cross for cross-compilation
       - name: Build Linux x86_64
         run: cargo build -p flovyn-ffi --release --target x86_64-unknown-linux-gnu
 
       - name: Build Linux aarch64
-        run: cargo build -p flovyn-ffi --release --target aarch64-unknown-linux-gnu
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo cross build -p flovyn-ffi --release --target aarch64-unknown-linux-gnu
 
       # NOTE: macOS builds disabled - osxcross setup takes 10+ minutes
       # - name: Build macOS x86_64
-      #   run: cargo build -p flovyn-ffi --release --target x86_64-apple-darwin
-      #   env:
-      #     CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: x86_64-apple-darwin-clang
+      #   run: cargo cross build -p flovyn-ffi --release --target x86_64-apple-darwin
       #
       # - name: Build macOS aarch64
-      #   run: cargo build -p flovyn-ffi --release --target aarch64-apple-darwin
-      #   env:
-      #     CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: aarch64-apple-darwin-clang
+      #   run: cargo cross build -p flovyn-ffi --release --target aarch64-apple-darwin
 
       - name: Build Windows x86_64
-        run: cargo build -p flovyn-ffi --release --target x86_64-pc-windows-gnu
-        env:
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+        run: cargo cross build -p flovyn-ffi --release --target x86_64-pc-windows-gnu
 
       - name: Build Windows ARM64
-        run: cargo build -p flovyn-ffi --release --target aarch64-pc-windows-gnullvm
-        env:
-          CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER: aarch64-w64-mingw32-clang
+        run: cargo cross build -p flovyn-ffi --release --target aarch64-pc-windows-gnullvm
 
       # Generate language bindings
       - name: Generate Kotlin bindings
