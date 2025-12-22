@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "core",
+    "ffi",
     "sdk",
     "examples/hello-world",
     "examples/ecommerce",

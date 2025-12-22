@@ -30,17 +30,22 @@ flovyn/
 ├── sdk-rust/                 # Rust SDK repository (this repo)
 │   ├── proto/                # Keep as-is: protobuf definitions
 │   ├── examples/             # Keep as-is: Rust examples
-│   ├── core/                 # NEW: Language-agnostic core (flovyn-core crate)
+│   ├── core/                 # Language-agnostic core (flovyn-core crate)
 │   │   ├── src/
 │   │   │   ├── lib.rs
-│   │   │   ├── worker/       # Worker lifecycle, polling, slot management
-│   │   │   ├── replay/       # Replay engine, determinism validation
-│   │   │   ├── state_machine/# Timer, task, promise, child workflow state machines
-│   │   │   ├── command/      # Command processing & recording
-│   │   │   ├── event/        # Event history management
+│   │   │   ├── worker/       # Worker lifecycle, determinism validation
+│   │   │   ├── workflow/     # Commands, events, replay utilities
+│   │   │   ├── task/         # Task metadata, execution types
 │   │   │   ├── client/       # gRPC client implementation
-│   │   │   ├── activation/   # WorkflowActivation/Completion types
 │   │   │   └── error.rs
+│   │   └── Cargo.toml
+│   ├── ffi/                  # uniffi bindings layer (flovyn-ffi crate)
+│   │   ├── src/
+│   │   │   ├── lib.rs        # uniffi scaffolding
+│   │   │   ├── worker.rs     # CoreWorker object
+│   │   │   ├── client.rs     # CoreClient object
+│   │   │   ├── activation.rs # Activation/Completion types
+│   │   │   └── error.rs      # FFI error types
 │   │   └── Cargo.toml
 │   └── sdk/                  # Rust-specific layer (flovyn-sdk crate)
 │       ├── src/
@@ -68,6 +73,9 @@ flovyn/
 | Command Processing | `core/` | Command validation and recording |
 | Event Sourcing | `core/` | History processing |
 | Determinism Validation | `core/` | Critical for correctness |
+| uniffi CoreWorker object | `ffi/` | FFI binding for foreign language SDKs |
+| uniffi CoreClient object | `ffi/` | FFI binding for foreign language SDKs |
+| Activation/Completion types | `ffi/` | Data types crossing FFI boundary |
 | WorkflowDefinition trait | `sdk/` | Rust-specific trait with generics |
 | TaskDefinition trait | `sdk/` | Rust-specific trait with generics |
 | WorkflowContext | `sdk/` | Rust-idiomatic context API |
@@ -188,13 +196,14 @@ Each phase is **incremental** - after completing each phase, the system should b
 
 ### Phase 2: Add uniffi Bindings - sdk-rust repository
 
-**Goal**: Add uniffi annotations to `flovyn-core` so it can be consumed by other languages. The Rust SDK remains unaffected.
+**Goal**: Create a separate `ffi/` crate that wraps `flovyn-core` with uniffi bindings. The `core/` crate remains unchanged.
 
 **Steps**:
-1. Add uniffi as optional dependency to `core/`
-2. Add `#[uniffi::export]` annotations to public APIs
-3. Create uniffi bindings generation in build script
-4. Verify Rust SDK still works (uniffi is optional, not required for Rust usage)
+1. Create `ffi/` crate with uniffi dependency
+2. Define activation-based FFI types (WorkflowActivation, TaskActivation, etc.)
+3. Implement `CoreWorker` and `CoreClient` objects with async methods
+4. Create uniffi-bindgen binary for generating language bindings
+5. Verify Kotlin/Swift/Python bindings generate correctly
 
 **Verification**: `cargo test --workspace` passes, uniffi bindings generate without errors.
 
@@ -223,9 +232,11 @@ Each phase is **incremental** - after completing each phase, the system should b
 - Examples compile and run without modification
 
 **Phase 2 (uniffi Bindings)**:
-- uniffi bindings generate successfully
-- Rust SDK tests still pass (uniffi is optional)
-- Generated bindings compile for target platforms (macOS, Linux)
+- `ffi/` crate builds successfully
+- uniffi bindings generate for Kotlin/Swift/Python
+- `core/` crate unchanged (no modifications needed)
+- All workspace tests pass
+- Generated bindings include CoreWorker with async methods
 
 **Phase 3 (Kotlin SDK)**:
 - Kotlin SDK can execute workflows end-to-end
