@@ -7,16 +7,169 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.82.0"
 
 jobs:
-  validate:
-    name: Validate Release
+  # Build native libraries for all platforms from a single Linux runner
+  build-native:
+    name: Build Native Libraries
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            gcc-mingw-w64-x86-64
+
+      - name: Install llvm-mingw for Windows ARM64
+        run: |
+          # Download llvm-mingw for Windows ARM64 cross-compilation
+          curl -LO https://github.com/mstorsjo/llvm-mingw/releases/download/20241217/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz
+          tar -xf llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz
+          echo "$PWD/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64/bin" >> $GITHUB_PATH
+
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: |
+            x86_64-unknown-linux-gnu
+            aarch64-unknown-linux-gnu
+            x86_64-apple-darwin
+            aarch64-apple-darwin
+            x86_64-pc-windows-gnu
+            aarch64-pc-windows-gnullvm
+
+      - name: Setup osxcross for macOS cross-compilation
+        uses: Timmmm/setup-osxcross@v3
+        with:
+          osx-version: "14.5"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            release-cargo-
+
+      # Build for all targets
+      - name: Build Linux x86_64
+        run: cargo build -p flovyn-ffi --release --target x86_64-unknown-linux-gnu
+
+      - name: Build Linux aarch64
+        run: cargo build -p flovyn-ffi --release --target aarch64-unknown-linux-gnu
+
+      - name: Build macOS x86_64
+        run: cargo build -p flovyn-ffi --release --target x86_64-apple-darwin
+
+      - name: Build macOS aarch64
+        run: cargo build -p flovyn-ffi --release --target aarch64-apple-darwin
+
+      - name: Build Windows x86_64
+        run: cargo build -p flovyn-ffi --release --target x86_64-pc-windows-gnu
+
+      - name: Build Windows ARM64
+        run: cargo build -p flovyn-ffi --release --target aarch64-pc-windows-gnullvm
+
+      # Generate language bindings
+      - name: Generate Kotlin bindings
+        run: |
+          mkdir -p bindings/kotlin
+          cargo run -p flovyn-ffi --bin uniffi-bindgen -- \
+            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
+            --language kotlin \
+            --out-dir bindings/kotlin
+
+      - name: Generate Swift bindings
+        run: |
+          mkdir -p bindings/swift
+          cargo run -p flovyn-ffi --bin uniffi-bindgen -- \
+            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
+            --language swift \
+            --out-dir bindings/swift
+
+      - name: Generate Python bindings
+        run: |
+          mkdir -p bindings/python
+          cargo run -p flovyn-ffi --bin uniffi-bindgen -- \
+            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
+            --language python \
+            --out-dir bindings/python
+
+      # Package artifacts
+      - name: Package native libraries
+        run: |
+          mkdir -p artifacts/natives/{linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,windows-x86_64,windows-aarch64}
+
+          cp target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
+             artifacts/natives/linux-x86_64/
+
+          cp target/aarch64-unknown-linux-gnu/release/libflovyn_ffi.so \
+             artifacts/natives/linux-aarch64/
+
+          cp target/x86_64-apple-darwin/release/libflovyn_ffi.dylib \
+             artifacts/natives/macos-x86_64/
+
+          cp target/aarch64-apple-darwin/release/libflovyn_ffi.dylib \
+             artifacts/natives/macos-aarch64/
+
+          cp target/x86_64-pc-windows-gnu/release/flovyn_ffi.dll \
+             artifacts/natives/windows-x86_64/
+
+          cp target/aarch64-pc-windows-gnullvm/release/flovyn_ffi.dll \
+             artifacts/natives/windows-aarch64/
+
+          # Copy bindings
+          cp -r bindings artifacts/
+
+          # Create combined archive for easy download
+          cd artifacts
+          tar -czvf flovyn-ffi-${{ github.ref_name }}.tar.gz natives bindings
+
+      - name: Upload native libraries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flovyn-ffi-natives
+          path: artifacts/natives/
+
+      - name: Upload bindings artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flovyn-ffi-bindings
+          path: artifacts/bindings/
+
+      - name: Upload combined archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: flovyn-ffi-release
+          path: artifacts/flovyn-ffi-${{ github.ref_name }}.tar.gz
+
+  # Validate the release
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Build
         run: cargo build --workspace --release
@@ -24,39 +177,91 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --release
 
+  # Publish to crates.io (optional)
   publish:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, build-native]
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Publish flovyn-sdk
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Publish flovyn-core (dry-run)
+        run: cargo publish -p flovyn-core --dry-run
+
+      - name: Publish flovyn-sdk (dry-run)
         run: cargo publish -p flovyn-sdk --dry-run
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       # Uncomment when ready to publish
+      # - name: Publish flovyn-core
+      #   run: cargo publish -p flovyn-core
+      #   env:
+      #     CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      #
       # - name: Publish flovyn-sdk
       #   run: cargo publish -p flovyn-sdk
       #   env:
       #     CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+  # Create GitHub Release with native library artifacts
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, build-native]
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download native libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: flovyn-ffi-natives
+          path: natives/
+
+      - name: Download bindings
+        uses: actions/download-artifact@v4
+        with:
+          name: flovyn-ffi-bindings
+          path: bindings/
+
+      - name: Download combined archive
+        uses: actions/download-artifact@v4
+        with:
+          name: flovyn-ffi-release
+          path: ./
+
+      # Create individual platform archives for direct download
+      - name: Package individual platform archives
+        run: |
+          cd natives
+          for platform in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64 windows-aarch64; do
+            tar -czvf ../libflovyn_ffi-${platform}.tar.gz ${platform}/
+          done
+          cd ../bindings
+          tar -czvf ../flovyn-ffi-bindings.tar.gz .
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          files: |
+            flovyn-ffi-${{ github.ref_name }}.tar.gz
+            libflovyn_ffi-linux-x86_64.tar.gz
+            libflovyn_ffi-linux-aarch64.tar.gz
+            libflovyn_ffi-macos-x86_64.tar.gz
+            libflovyn_ffi-macos-aarch64.tar.gz
+            libflovyn_ffi-windows-x86_64.tar.gz
+            libflovyn_ffi-windows-aarch64.tar.gz
+            flovyn-ffi-bindings.tar.gz
