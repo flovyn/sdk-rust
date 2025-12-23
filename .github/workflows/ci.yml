@@ -128,6 +128,6 @@ jobs:
         run: docker pull rg.fr-par.scw.cloud/flovyn/flovyn-server:latest
 
       - name: Run E2E tests
-        run: cargo test --test e2e -p flovyn-sdk -- --test-threads=1
+        run: cargo test --test e2e -- --ignored --nocapture
         env:
           FLOVYN_SERVER_IMAGE: rg.fr-par.scw.cloud/flovyn/flovyn-server
