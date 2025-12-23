@@ -89,3 +89,45 @@ jobs:
         run: cargo doc --no-deps --workspace
         env:
           RUSTDOCFLAGS: -Dwarnings
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-e2e-
+            ${{ runner.os }}-cargo-
+
+      - name: Login to Scaleway Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: rg.fr-par.scw.cloud/flovyn
+          username: nologin
+          password: ${{ secrets.SCW_SECRET_KEY }}
+
+      - name: Pull Flovyn Server image
+        run: docker pull rg.fr-par.scw.cloud/flovyn/flovyn-server:latest
+
+      - name: Run E2E tests
+        run: cargo test --test e2e -p flovyn-sdk -- --test-threads=1
+        env:
+          FLOVYN_SERVER_IMAGE: rg.fr-par.scw.cloud/flovyn/flovyn-server
