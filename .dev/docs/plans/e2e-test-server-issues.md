@@ -295,7 +295,7 @@ This should only be enabled in non-production environments (enforce via profile 
 **Verification:**
 ```bash
 # Build server Docker image
-docker build -t flovyn-server-test:latest server/app/
+docker build -t rg.fr-par.scw.cloud/flovyn/flovyn-server:latest server/app/
 
 # Run Rust SDK E2E tests
 cd sdk-rust
@@ -308,7 +308,7 @@ cargo test --test e2e test_harness_setup -- --ignored --nocapture
 
 The E2E test harness (`sdk/tests/e2e/harness.rs`) currently:
 1. Uses existing dev PostgreSQL (port 5435) and NATS (port 4222)
-2. Starts Flovyn server container with `flovyn-server-test:latest` image
+2. Starts Flovyn server container with `rg.fr-par.scw.cloud/flovyn/flovyn-server:latest` image
 3. Waits for health check at `/actuator/health`
 4. Attempts to create tenant and worker token via REST API
 5. Uses generated JWT for authentication

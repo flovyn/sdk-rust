@@ -40,7 +40,7 @@ LABELED_CONTAINERS=$(docker ps -q --filter "label=flovyn-test=true" 2>/dev/null 
 # Find containers by image name (fallback for old containers without labels)
 POSTGRES_CONTAINERS=$(docker ps -q --filter "ancestor=postgres:18-alpine" 2>/dev/null || true)
 NATS_CONTAINERS=$(docker ps -q --filter "ancestor=nats:latest" 2>/dev/null || true)
-SERVER_CONTAINERS=$(docker ps -q --filter "ancestor=flovyn-server-test:latest" 2>/dev/null || true)
+SERVER_CONTAINERS=$(docker ps -q --filter "ancestor=rg.fr-par.scw.cloud/flovyn/flovyn-server:latest" 2>/dev/null || true)
 
 # Combine and dedupe
 ALL_CONTAINERS=$(echo -e "$LABELED_CONTAINERS\n$POSTGRES_CONTAINERS\n$NATS_CONTAINERS\n$SERVER_CONTAINERS" | sort -u | grep -v '^$' || true)

@@ -121,11 +121,6 @@ async fn test_comprehensive_with_task_scheduling() {
             result["testsPassedCount"], 5,
             "All 5 feature tests should pass"
         );
-
-        println!(
-            "Comprehensive task test passed all {} checks",
-            result["testsPassedCount"]
-        );
     })
     .await;
 }
@@ -170,10 +165,8 @@ async fn test_all_basic_workflows() {
             echo_result, echo_input,
             "Echo should return input unchanged"
         );
-        println!("  ✓ EchoWorkflow passed");
 
         // Test 3: Stateful workflow
-        println!("Testing StatefulWorkflow...");
         let state_result = env
             .start_and_await(
                 "stateful-workflow",
@@ -192,10 +185,8 @@ async fn test_all_basic_workflows() {
             state_result["stored"]["data"], "test",
             "State data should match"
         );
-        println!("  ✓ StatefulWorkflow passed");
 
         // Test 4: Failing workflow (test error handling)
-        println!("Testing FailingWorkflow...");
         let workflow_id = env.start_workflow("failing-workflow", json!({})).await;
 
         // Wait for failure event
@@ -217,9 +208,6 @@ async fn test_all_basic_workflows() {
             error_msg.contains("Test error"),
             "Error should contain message"
         );
-        println!("  ✓ FailingWorkflow passed");
-
-        println!("\n=== All 4 basic workflow tests passed! ===");
     })
     .await;
 }

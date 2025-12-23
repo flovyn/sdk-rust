@@ -13,9 +13,11 @@
 //!    - If new: generate command and return Pending
 //! 5. Commands are extracted at completion time
 
+use flovyn_core::workflow::execution::{DeterministicRandom, SeededRandom};
+use flovyn_core::workflow::ReplayEngine;
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -184,35 +186,7 @@ impl ParsedEvent {
     }
 }
 
-// ============================================================================
-// Seeded Random - Deterministic random number generation
-// ============================================================================
-
-struct SeededRandom {
-    state: RwLock<u64>,
-}
-
-impl SeededRandom {
-    fn new(seed: u64) -> Self {
-        Self {
-            state: RwLock::new(if seed == 0 { 1 } else { seed }),
-        }
-    }
-
-    fn next_u64(&self) -> u64 {
-        let mut state = self.state.write();
-        let mut x = *state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        *state = x;
-        x
-    }
-
-    fn next_double(&self) -> f64 {
-        (self.next_u64() as f64) / (u64::MAX as f64)
-    }
-}
+// SeededRandom is imported from flovyn_core::workflow::execution
 
 // ============================================================================
 // FfiWorkflowContext - Main context object
@@ -232,31 +206,13 @@ pub struct FfiWorkflowContext {
     #[allow(dead_code)]
     tenant_id: Uuid,
 
-    // Replay state - pre-filtered event lists
-    task_events: Vec<ParsedEvent>,
-    promise_events: Vec<ParsedEvent>,
-    timer_events: Vec<ParsedEvent>,
-    child_workflow_events: Vec<ParsedEvent>,
-    operation_events: Vec<ParsedEvent>,
-    #[allow(dead_code)]
-    state_events: Vec<ParsedEvent>,
-
-    // All events for terminal event lookup
-    #[allow(dead_code)]
-    all_events: Vec<ParsedEvent>,
-
-    // Per-type sequence counters
-    next_task_seq: AtomicU32,
-    next_promise_seq: AtomicU32,
-    next_timer_seq: AtomicU32,
-    next_child_workflow_seq: AtomicU32,
-    next_operation_seq: AtomicU32,
-    next_state_seq: AtomicU32,
+    // Replay engine for event filtering, sequence management, and terminal event lookup
+    replay_engine: ReplayEngine,
 
     // Generated commands (only NEW ones)
     commands: Mutex<Vec<FfiWorkflowCommand>>,
 
-    // Resolved values from replay events
+    // Resolved values from replay events (FFI-specific: stores bytes for efficiency)
     completed_tasks: HashMap<String, TaskResultInternal>,
     resolved_promises: HashMap<String, PromiseResultInternal>,
     fired_timers: HashSet<String>,
@@ -268,8 +224,8 @@ pub struct FfiWorkflowContext {
     uuid_counter: AtomicI64,
     random: SeededRandom,
 
-    // Workflow state
-    state: RwLock<HashMap<String, Vec<u8>>>,
+    // Workflow state (FFI-specific: stores bytes)
+    ffi_state: RwLock<HashMap<String, Vec<u8>>>,
 
     // Cancellation
     cancellation_requested: AtomicBool,
@@ -288,58 +244,26 @@ impl FfiWorkflowContext {
         state_entries: Vec<(String, Vec<u8>)>,
         cancellation_requested: bool,
     ) -> Arc<Self> {
-        // Parse all events
+        // Convert FFI events to core ReplayEvents for ReplayEngine
+        let replay_events: Vec<flovyn_core::workflow::ReplayEvent> =
+            events.iter().filter_map(|e| e.to_replay_event()).collect();
+
+        // Create the replay engine
+        let replay_engine = ReplayEngine::new(replay_events);
+
+        // Parse events for FFI-specific result maps (stores bytes for efficiency)
         let all_events: Vec<ParsedEvent> =
             events.iter().filter_map(ParsedEvent::from_ffi).collect();
 
-        // Pre-filter by event type
-        let task_events: Vec<ParsedEvent> = all_events
-            .iter()
-            .filter(|e| e.event_type == FfiEventType::TaskScheduled)
-            .cloned()
-            .collect();
-
-        let promise_events: Vec<ParsedEvent> = all_events
-            .iter()
-            .filter(|e| e.event_type == FfiEventType::PromiseCreated)
-            .cloned()
-            .collect();
-
-        let timer_events: Vec<ParsedEvent> = all_events
-            .iter()
-            .filter(|e| e.event_type == FfiEventType::TimerStarted)
-            .cloned()
-            .collect();
-
-        let child_workflow_events: Vec<ParsedEvent> = all_events
-            .iter()
-            .filter(|e| e.event_type == FfiEventType::ChildWorkflowInitiated)
-            .cloned()
-            .collect();
-
-        let operation_events: Vec<ParsedEvent> = all_events
-            .iter()
-            .filter(|e| e.event_type == FfiEventType::OperationCompleted)
-            .cloned()
-            .collect();
-
-        let state_events: Vec<ParsedEvent> = all_events
-            .iter()
-            .filter(|e| {
-                e.event_type == FfiEventType::StateSet || e.event_type == FfiEventType::StateCleared
-            })
-            .cloned()
-            .collect();
-
-        // Build terminal event lookup maps
+        // Build terminal event lookup maps (FFI-specific: stores bytes)
         let completed_tasks = Self::build_task_results(&all_events);
         let resolved_promises = Self::build_promise_results(&all_events);
         let fired_timers = Self::build_fired_timers(&all_events);
         let completed_child_workflows = Self::build_child_workflow_results(&all_events);
         let operation_cache = Self::build_operation_cache(&all_events);
 
-        // Initialize state from state entries
-        let state: HashMap<String, Vec<u8>> = state_entries.into_iter().collect();
+        // Initialize FFI state from state entries
+        let ffi_state: HashMap<String, Vec<u8>> = state_entries.into_iter().collect();
 
         // Create seed from workflow execution ID if not provided
         let seed = if random_seed == 0 {
@@ -351,19 +275,7 @@ impl FfiWorkflowContext {
         Arc::new(Self {
             workflow_execution_id,
             tenant_id,
-            task_events,
-            promise_events,
-            timer_events,
-            child_workflow_events,
-            operation_events,
-            state_events,
-            all_events,
-            next_task_seq: AtomicU32::new(0),
-            next_promise_seq: AtomicU32::new(0),
-            next_timer_seq: AtomicU32::new(0),
-            next_child_workflow_seq: AtomicU32::new(0),
-            next_operation_seq: AtomicU32::new(0),
-            next_state_seq: AtomicU32::new(0),
+            replay_engine,
             commands: Mutex::new(Vec::new()),
             completed_tasks,
             resolved_promises,
@@ -373,7 +285,7 @@ impl FfiWorkflowContext {
             current_time_ms: timestamp_ms,
             uuid_counter: AtomicI64::new(0),
             random: SeededRandom::new(seed),
-            state: RwLock::new(state),
+            ffi_state: RwLock::new(ffi_state),
             cancellation_requested: AtomicBool::new(cancellation_requested),
         })
     }
@@ -511,11 +423,10 @@ impl FfiWorkflowContext {
         queue: Option<String>,
         timeout_ms: Option<i64>,
     ) -> Result<FfiTaskResult, FfiError> {
-        let task_seq = self.next_task_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let task_seq = self.replay_engine.next_task_seq();
 
-        if task_seq < self.task_events.len() {
+        if let Some(event) = self.replay_engine.get_task_event(task_seq) {
             // Replay: validate task type matches
-            let event = &self.task_events[task_seq];
             let event_task_type = event.get_string("taskType").unwrap_or_default();
 
             if event_task_type != task_type {
@@ -527,9 +438,12 @@ impl FfiWorkflowContext {
                 });
             }
 
-            let task_execution_id = event.get_string("taskExecutionId").unwrap_or_default();
+            let task_execution_id = event
+                .get_string("taskExecutionId")
+                .unwrap_or_default()
+                .to_string();
 
-            // Look up terminal result
+            // Look up terminal result from FFI-specific cache
             if let Some(result) = self.completed_tasks.get(&task_execution_id) {
                 return Ok(match result {
                     TaskResultInternal::Completed { output } => FfiTaskResult::Completed {
@@ -574,11 +488,10 @@ impl FfiWorkflowContext {
         name: String,
         timeout_ms: Option<i64>,
     ) -> Result<FfiPromiseResult, FfiError> {
-        let promise_seq = self.next_promise_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let promise_seq = self.replay_engine.next_promise_seq();
 
-        if promise_seq < self.promise_events.len() {
+        if let Some(event) = self.replay_engine.get_promise_event(promise_seq) {
             // Replay: validate promise name matches
-            let event = &self.promise_events[promise_seq];
             let event_name = event.get_string("promiseId").unwrap_or_default();
 
             if event_name != name {
@@ -590,7 +503,7 @@ impl FfiWorkflowContext {
                 });
             }
 
-            // Look up terminal result
+            // Look up terminal result from FFI-specific cache
             if let Some(result) = self.resolved_promises.get(&name) {
                 return Ok(match result {
                     PromiseResultInternal::Resolved { value } => FfiPromiseResult::Resolved {
@@ -624,12 +537,11 @@ impl FfiWorkflowContext {
     /// - `Fired` if timer already fired during replay
     /// - `Pending` if timer is new or not yet fired
     pub fn start_timer(&self, duration_ms: i64) -> Result<FfiTimerResult, FfiError> {
-        let timer_seq = self.next_timer_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let timer_seq = self.replay_engine.next_timer_seq();
         let timer_id = format!("timer-{}", timer_seq);
 
-        if timer_seq < self.timer_events.len() {
+        if let Some(event) = self.replay_engine.get_timer_event(timer_seq) {
             // Replay: validate timer ID matches
-            let event = &self.timer_events[timer_seq];
             let event_timer_id = event.get_string("timerId").unwrap_or_default();
 
             if event_timer_id != timer_id {
@@ -641,7 +553,7 @@ impl FfiWorkflowContext {
                 });
             }
 
-            // Check if timer fired
+            // Check if timer fired from FFI-specific cache
             if self.fired_timers.contains(&timer_id) {
                 return Ok(FfiTimerResult::Fired);
             }
@@ -673,11 +585,10 @@ impl FfiWorkflowContext {
         task_queue: Option<String>,
         priority_seconds: Option<i32>,
     ) -> Result<FfiChildWorkflowResult, FfiError> {
-        let child_seq = self.next_child_workflow_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let child_seq = self.replay_engine.next_child_workflow_seq();
 
-        if child_seq < self.child_workflow_events.len() {
+        if let Some(event) = self.replay_engine.get_child_workflow_event(child_seq) {
             // Replay: validate name matches
-            let event = &self.child_workflow_events[child_seq];
             let event_name = event
                 .get_string("childWorkflowExecutionName")
                 .unwrap_or_default();
@@ -694,7 +605,7 @@ impl FfiWorkflowContext {
             // Also validate kind if provided
             if let Some(ref expected_kind) = kind {
                 let event_kind = event.get_string("workflowKind").unwrap_or_default();
-                if &event_kind != expected_kind {
+                if event_kind != expected_kind {
                     return Err(FfiError::DeterminismViolation {
                         msg: format!(
                             "Child workflow kind mismatch at ChildWorkflow({}): expected '{}', got '{}'",
@@ -706,9 +617,10 @@ impl FfiWorkflowContext {
 
             let child_execution_id = event
                 .get_string("childWorkflowExecutionId")
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .to_string();
 
-            // Look up terminal result
+            // Look up terminal result from FFI-specific cache
             if let Some(result) = self.completed_child_workflows.get(&child_execution_id) {
                 return Ok(match result {
                     ChildWorkflowResultInternal::Completed { output } => {
@@ -751,11 +663,10 @@ impl FfiWorkflowContext {
     /// - `Cached` if operation already executed during replay
     /// - `Execute` if operation is new and should be executed
     pub fn run_operation(&self, name: String) -> Result<FfiOperationResult, FfiError> {
-        let operation_seq = self.next_operation_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let operation_seq = self.replay_engine.next_operation_seq();
 
-        if operation_seq < self.operation_events.len() {
+        if let Some(event) = self.replay_engine.get_operation_event(operation_seq) {
             // Replay: validate operation name matches
-            let event = &self.operation_events[operation_seq];
             let event_name = event.get_string("operationName").unwrap_or_default();
 
             if event_name != name {
@@ -767,7 +678,7 @@ impl FfiWorkflowContext {
                 });
             }
 
-            // Return cached result
+            // Return cached result from FFI-specific cache
             if let Some(value) = self.operation_cache.get(&name) {
                 return Ok(FfiOperationResult::Cached {
                     value: value.clone(),
@@ -780,9 +691,7 @@ impl FfiWorkflowContext {
             })
         } else {
             // New operation - SDK should execute
-            Ok(FfiOperationResult::Execute {
-                operation_seq: operation_seq as u32,
-            })
+            Ok(FfiOperationResult::Execute { operation_seq })
         }
     }
 
@@ -817,10 +726,10 @@ impl FfiWorkflowContext {
 
     /// Set workflow state.
     pub fn set_state(&self, key: String, value: Vec<u8>) -> Result<(), FfiError> {
-        let state_seq = self.next_state_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let state_seq = self.replay_engine.next_state_seq() as usize;
 
         // During replay, we still validate but don't generate commands for replayed state
-        if state_seq >= self.state_events.len() {
+        if state_seq >= self.replay_engine.state_event_count() {
             // New command
             self.commands.lock().push(FfiWorkflowCommand::SetState {
                 key: key.clone(),
@@ -828,19 +737,19 @@ impl FfiWorkflowContext {
             });
         }
 
-        // Always update local state
-        self.state.write().insert(key, value);
+        // Always update local FFI state
+        self.ffi_state.write().insert(key, value);
         Ok(())
     }
 
     /// Get workflow state.
     pub fn get_state(&self, key: String) -> Option<Vec<u8>> {
-        self.state.read().get(&key).cloned()
+        self.ffi_state.read().get(&key).cloned()
     }
 
     /// Clear workflow state.
     pub fn clear_state(&self, key: String) {
-        self.state.write().remove(&key);
+        self.ffi_state.write().remove(&key);
         self.commands
             .lock()
             .push(FfiWorkflowCommand::ClearState { key });
@@ -848,7 +757,7 @@ impl FfiWorkflowContext {
 
     /// Get all state keys.
     pub fn state_keys(&self) -> Vec<String> {
-        self.state.read().keys().cloned().collect()
+        self.ffi_state.read().keys().cloned().collect()
     }
 
     /// Check if cancellation has been requested.

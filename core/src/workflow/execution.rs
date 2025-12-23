@@ -118,10 +118,13 @@ pub struct SeededRandom {
 }
 
 impl SeededRandom {
-    /// Create a new seeded random with the given seed
+    /// Create a new seeded random with the given seed.
+    ///
+    /// Note: A seed of 0 is replaced with 1 because xorshift64 produces
+    /// all zeros when the state is 0.
     pub fn new(seed: u64) -> Self {
         Self {
-            state: RwLock::new(seed),
+            state: RwLock::new(if seed == 0 { 1 } else { seed }),
         }
     }
 

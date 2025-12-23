@@ -125,6 +125,36 @@ See the [examples](./examples) directory for complete working examples:
 | [data-pipeline](./examples/data-pipeline) | ETL pipeline with DAG pattern |
 | [patterns](./examples/patterns) | Timers, promises, child workflows, retry |
 
+## Testing
+
+### Run Tests
+
+```bash
+# Run all tests
+cargo test --workspace
+
+# Run unit tests only
+cargo test --test unit -p flovyn-sdk
+
+# Run TCK (conformance) tests
+cargo test --test tck -p flovyn-sdk
+
+# Run E2E tests (requires Docker)
+FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-sdk -- --include-ignored
+```
+
+### E2E Test Logging
+
+E2E tests default to `warn` level to reduce noise. To see more detailed logs:
+
+```bash
+# Show INFO logs
+RUST_LOG=info FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-sdk -- --include-ignored
+
+# Show DEBUG logs for debugging
+RUST_LOG=flovyn_sdk=debug FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-sdk -- --include-ignored --nocapture
+```
+
 ## Deterministic APIs
 
 Workflows must be deterministic. Use these APIs instead of standard library:

@@ -15,6 +15,9 @@ use std::marker::PhantomData;
 use std::time::Duration;
 use uuid::Uuid;
 
+// Re-export DeterministicRandom from core for public API compatibility
+pub use flovyn_core::workflow::execution::DeterministicRandom;
+
 /// Options for scheduling a task
 #[derive(Debug, Clone, Default)]
 pub struct ScheduleTaskOptions {
@@ -26,21 +29,6 @@ pub struct ScheduleTaskOptions {
     pub queue: Option<String>,
     /// Maximum retry attempts
     pub max_retries: Option<u32>,
-}
-
-/// A deterministic random number generator
-pub trait DeterministicRandom: Send + Sync {
-    /// Generate a random i32 in the range [min, max)
-    fn next_int(&self, min: i32, max: i32) -> i32;
-
-    /// Generate a random i64 in the range [min, max)
-    fn next_long(&self, min: i64, max: i64) -> i64;
-
-    /// Generate a random f64 in the range [0, 1)
-    fn next_double(&self) -> f64;
-
-    /// Generate a random bool
-    fn next_bool(&self) -> bool;
 }
 
 /// Context for workflow execution providing deterministic APIs and side effect management.

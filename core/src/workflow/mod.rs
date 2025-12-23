@@ -4,6 +4,7 @@ pub mod command;
 pub mod event;
 pub mod execution;
 pub mod recorder;
+pub mod replay_engine;
 
 pub use command::WorkflowCommand;
 pub use event::{EventType, ReplayEvent};
@@ -12,3 +13,4 @@ pub use execution::{
     WorkflowMetadata,
 };
 pub use recorder::{CommandCollector, CommandRecorder, ValidatingCommandRecorder};
+pub use replay_engine::ReplayEngine;

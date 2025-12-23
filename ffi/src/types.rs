@@ -224,6 +224,24 @@ pub struct FfiReplayEvent {
     pub timestamp_ms: i64,
 }
 
+impl FfiReplayEvent {
+    /// Convert to core ReplayEvent for use with ReplayEngine.
+    pub fn to_replay_event(&self) -> Option<flovyn_core::workflow::ReplayEvent> {
+        use chrono::{DateTime, Utc};
+
+        let data: serde_json::Value = serde_json::from_slice(&self.data).ok()?;
+        let timestamp = DateTime::<Utc>::from_timestamp_millis(self.timestamp_ms)
+            .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+
+        Some(flovyn_core::workflow::ReplayEvent::new(
+            self.sequence_number,
+            self.event_type.into(),
+            data,
+            timestamp,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

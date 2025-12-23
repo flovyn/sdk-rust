@@ -14,7 +14,7 @@
 //! # Requirements
 //!
 //! - Docker must be installed and running
-//! - Flovyn server Docker image must be available (`flovyn-server-test:latest`)
+//! - Flovyn server Docker image must be available (`rg.fr-par.scw.cloud/flovyn/flovyn-server:latest`)
 //! - Dev infrastructure running (PostgreSQL on 5435, NATS on 4222)
 
 mod child_workflow_tests;
@@ -59,7 +59,7 @@ fn init_tracing() {
     TRACING_INITIALIZED.call_once(|| {
         use tracing_subscriber::{fmt, EnvFilter};
 
-        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
 
         fmt()
             .with_env_filter(filter)

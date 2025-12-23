@@ -12,69 +12,15 @@ use crate::workflow::future::{
 use crate::workflow::recorder::CommandRecorder;
 use async_trait::async_trait;
 use flovyn_core::generated::flovyn_v1::ExecutionSpan;
+use flovyn_core::workflow::execution::SeededRandom;
+use flovyn_core::workflow::ReplayEngine;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::Weak;
 use std::time::Duration;
 use uuid::Uuid;
-
-/// Seeded deterministic random number generator
-pub struct SeededRandom {
-    /// Current seed state
-    state: RwLock<u64>,
-}
-
-impl SeededRandom {
-    /// Create a new seeded random with the given seed
-    pub fn new(seed: u64) -> Self {
-        Self {
-            state: RwLock::new(seed),
-        }
-    }
-
-    /// Get next random u64 using xorshift64
-    fn next_u64(&self) -> u64 {
-        let mut state = self.state.write();
-        let mut x = *state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        *state = x;
-        x
-    }
-}
-
-impl DeterministicRandom for SeededRandom {
-    fn next_int(&self, min: i32, max: i32) -> i32 {
-        if min >= max {
-            return min;
-        }
-        let range = (max - min) as u64;
-        let random = self.next_u64();
-        min + (random % range) as i32
-    }
-
-    fn next_long(&self, min: i64, max: i64) -> i64 {
-        if min >= max {
-            return min;
-        }
-        let range = (max - min) as u64;
-        let random = self.next_u64();
-        min + (random % range) as i64
-    }
-
-    fn next_double(&self) -> f64 {
-        let random = self.next_u64();
-        // Convert to f64 in range [0, 1)
-        (random as f64) / (u64::MAX as f64)
-    }
-
-    fn next_bool(&self) -> bool {
-        self.next_u64().is_multiple_of(2)
-    }
-}
 
 /// Concrete implementation of WorkflowContext
 pub struct WorkflowContextImpl<R: CommandRecorder> {
@@ -90,8 +36,8 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
     /// Command recorder for determinism validation
     recorder: RwLock<R>,
 
-    /// Existing events from previous execution (for replay)
-    existing_events: Vec<ReplayEvent>,
+    /// Replay engine for event pre-filtering, sequence management, and terminal event lookup
+    replay_engine: ReplayEngine,
 
     /// Current sequence number (1-indexed)
     sequence_number: AtomicI32,
@@ -104,12 +50,6 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
 
     /// Seeded random number generator
     random: SeededRandom,
-
-    /// Workflow state
-    state: RwLock<HashMap<String, Value>>,
-
-    /// Operation result cache (operation_name -> result)
-    operation_cache: RwLock<HashMap<String, Value>>,
 
     /// Whether cancellation has been requested
     cancellation_requested: AtomicBool,
@@ -130,38 +70,6 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
     /// Separate from sequence_number because sequence depends on existingEvents.size
     /// which changes between executions. This counter ensures timer IDs are consistent.
     sleep_call_counter: AtomicI32,
-
-    // ============= Per-Type Event Lists for Sequence-Based Replay =============
-    // Pre-filtered event lists for O(1) lookup by per-type index.
-    // During replay, commands are matched to events by (type, per_type_index).
-    /// TaskScheduled events only
-    task_events: Vec<ReplayEvent>,
-    /// ChildWorkflowInitiated events only
-    child_workflow_events: Vec<ReplayEvent>,
-    /// TimerStarted events only
-    timer_events: Vec<ReplayEvent>,
-    /// OperationCompleted events only
-    operation_events: Vec<ReplayEvent>,
-    /// PromiseCreated events only
-    promise_events: Vec<ReplayEvent>,
-    /// StateSet and StateCleared events only
-    state_events: Vec<ReplayEvent>,
-
-    // ============= Per-Type Sequence Counters =============
-    // Counters for tracking which event to match next within each type.
-    // Commands are matched by position in their type-specific event list.
-    /// Counter for task scheduling (Task(0), Task(1), ...)
-    next_task_seq: AtomicU32,
-    /// Counter for child workflows (ChildWorkflow(0), ChildWorkflow(1), ...)
-    next_child_workflow_seq: AtomicU32,
-    /// Counter for timers (Timer(0), Timer(1), ...)
-    next_timer_seq: AtomicU32,
-    /// Counter for operations (Operation(0), Operation(1), ...)
-    next_operation_seq: AtomicU32,
-    /// Counter for promises (Promise(0), Promise(1), ...)
-    next_promise_seq: AtomicU32,
-    /// Counter for state operations (State(0), State(1), ...)
-    next_state_seq: AtomicU32,
 
     /// Whether telemetry is enabled for span recording
     #[allow(dead_code)]
@@ -206,112 +114,33 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
         // Create seed from workflow execution ID for deterministic randomness
         let seed = workflow_execution_id.as_u128() as u64;
 
-        // Pre-populate operation cache from existing events
-        let mut operation_cache = HashMap::new();
-        let mut state = HashMap::new();
-
-        for event in &existing_events {
-            match event.event_type() {
-                EventType::OperationCompleted => {
-                    if let Some(name) = event.get_string("operationName") {
-                        if let Some(result) = event.get("result") {
-                            operation_cache.insert(name.to_string(), result.clone());
-                        }
-                    }
-                }
-                EventType::StateSet => {
-                    if let Some(key) = event.get_string("key") {
-                        if let Some(value) = event.get("value") {
-                            state.insert(key.to_string(), value.clone());
-                        }
-                    }
-                }
-                EventType::StateCleared => {
-                    if let Some(key) = event.get_string("key") {
-                        state.remove(key);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Pre-filter events by type for O(1) lookup during replay
-        // Each list contains events of a specific type, in sequence order
-        let task_events: Vec<ReplayEvent> = existing_events
-            .iter()
-            .filter(|e| e.event_type() == EventType::TaskScheduled)
-            .cloned()
-            .collect();
-
-        let child_workflow_events: Vec<ReplayEvent> = existing_events
-            .iter()
-            .filter(|e| e.event_type() == EventType::ChildWorkflowInitiated)
-            .cloned()
-            .collect();
-
-        let timer_events: Vec<ReplayEvent> = existing_events
-            .iter()
-            .filter(|e| e.event_type() == EventType::TimerStarted)
-            .cloned()
-            .collect();
-
-        let operation_events: Vec<ReplayEvent> = existing_events
-            .iter()
-            .filter(|e| e.event_type() == EventType::OperationCompleted)
-            .cloned()
-            .collect();
-
-        let promise_events: Vec<ReplayEvent> = existing_events
-            .iter()
-            .filter(|e| e.event_type() == EventType::PromiseCreated)
-            .cloned()
-            .collect();
-
-        let state_events: Vec<ReplayEvent> = existing_events
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e.event_type(),
-                    EventType::StateSet | EventType::StateCleared
-                )
-            })
-            .cloned()
-            .collect();
-
         // Start sequence number from the next available position
         // If there are existing events (replay), continue from after them
         let initial_sequence = (existing_events.len() as i32) + 1;
+
+        // Create ReplayEngine which handles:
+        // - Event pre-filtering by type
+        // - Per-type sequence counters
+        // - Terminal event lookup
+        // - State and operation cache management
+        let replay_engine = ReplayEngine::new(existing_events);
 
         Self {
             workflow_execution_id,
             tenant_id,
             input,
             recorder: RwLock::new(recorder),
-            existing_events,
+            replay_engine,
             sequence_number: AtomicI32::new(initial_sequence),
             current_time: AtomicI64::new(start_time_millis),
             uuid_counter: AtomicI64::new(0),
             random: SeededRandom::new(seed),
-            state: RwLock::new(state),
-            operation_cache: RwLock::new(operation_cache),
             cancellation_requested: AtomicBool::new(false),
             pending_tasks: RwLock::new(HashMap::new()),
             pending_promises: RwLock::new(HashMap::new()),
             pending_timers: RwLock::new(HashMap::new()),
             pending_child_workflows: RwLock::new(HashMap::new()),
             sleep_call_counter: AtomicI32::new(0),
-            task_events,
-            child_workflow_events,
-            timer_events,
-            operation_events,
-            promise_events,
-            state_events,
-            next_task_seq: AtomicU32::new(0),
-            next_child_workflow_seq: AtomicU32::new(0),
-            next_timer_seq: AtomicU32::new(0),
-            next_operation_seq: AtomicU32::new(0),
-            next_promise_seq: AtomicU32::new(0),
-            next_state_seq: AtomicU32::new(0),
             enable_telemetry,
             recorded_spans: RwLock::new(Vec::new()),
         }
@@ -330,106 +159,11 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             .map_err(FlovynError::DeterminismViolation)
     }
 
-    /// Find terminal event (TaskCompleted or TaskFailed) for a task by taskExecutionId.
-    /// Returns the latest terminal event if multiple exist (e.g., retries).
-    fn find_terminal_task_event(&self, task_execution_id: &str) -> Option<&ReplayEvent> {
-        // Debug: Count terminal events and their IDs
-        let terminal_events: Vec<_> = self
-            .existing_events
-            .iter()
-            .filter(|e| {
-                e.event_type() == EventType::TaskCompleted
-                    || e.event_type() == EventType::TaskFailed
-            })
-            .collect();
-
-        let terminal_ids: Vec<_> = terminal_events
-            .iter()
-            .map(|e| {
-                e.get_string("taskExecutionId")
-                    .or_else(|| e.get_string("taskId"))
-                    .unwrap_or("MISSING")
-            })
-            .collect();
-
-        tracing::debug!(
-            task_execution_id = %task_execution_id,
-            terminal_events_count = terminal_events.len(),
-            terminal_ids = ?terminal_ids,
-            "find_terminal_task_event: searching"
-        );
-
-        let result = self
-            .existing_events
-            .iter()
-            .filter(|e| {
-                let matches_id = e
-                    .get_string("taskExecutionId")
-                    .or_else(|| e.get_string("taskId"))
-                    .map(|id| id == task_execution_id)
-                    .unwrap_or(false);
-                matches_id
-                    && (e.event_type() == EventType::TaskCompleted
-                        || e.event_type() == EventType::TaskFailed)
-            })
-            .max_by_key(|e| e.sequence_number());
-
-        tracing::debug!(
-            task_execution_id = %task_execution_id,
-            found = result.is_some(),
-            "find_terminal_task_event: result"
-        );
-
-        result
-    }
-
-    /// Find terminal event (ChildWorkflowCompleted or ChildWorkflowFailed) for a child workflow by name.
-    /// Returns the terminal event if it exists.
-    fn find_terminal_child_workflow_event(&self, name: &str) -> Option<&ReplayEvent> {
-        self.existing_events
-            .iter()
-            .filter(|e| {
-                e.get_string("childExecutionName")
-                    .map(|n| n == name)
-                    .unwrap_or(false)
-                    && (e.event_type() == EventType::ChildWorkflowCompleted
-                        || e.event_type() == EventType::ChildWorkflowFailed)
-            })
-            .max_by_key(|e| e.sequence_number())
-    }
-
-    /// Find terminal event (TimerFired or TimerCancelled) for a timer by timerId.
-    fn find_terminal_timer_event(&self, timer_id: &str) -> Option<&ReplayEvent> {
-        self.existing_events
-            .iter()
-            .filter(|e| {
-                e.get_string("timerId")
-                    .map(|id| id == timer_id)
-                    .unwrap_or(false)
-                    && (e.event_type() == EventType::TimerFired
-                        || e.event_type() == EventType::TimerCancelled)
-            })
-            .max_by_key(|e| e.sequence_number())
-    }
-
-    /// Find terminal event (PromiseResolved, PromiseRejected, or PromiseTimeout) for a promise.
-    fn find_terminal_promise_event(&self, promise_name: &str) -> Option<&ReplayEvent> {
-        self.existing_events
-            .iter()
-            .filter(|e| {
-                // PromiseCreated uses promiseId, terminal events use promiseName
-                let matches_name = e
-                    .get_string("promiseName")
-                    .or_else(|| e.get_string("promiseId"))
-                    .map(|n| n == promise_name)
-                    .unwrap_or(false);
-                matches_name
-                    && (e.event_type() == EventType::PromiseResolved
-                        || e.event_type() == EventType::PromiseRejected
-                        || e.event_type() == EventType::PromiseTimeout)
-            })
-            .max_by_key(|e| e.sequence_number())
-    }
+    // Terminal event lookup methods are now provided by ReplayEngine:
+    // - replay_engine.find_terminal_task_event()
+    // - replay_engine.find_terminal_timer_event()
+    // - replay_engine.find_terminal_promise_event()
+    // - replay_engine.find_terminal_child_workflow_event()
 
     /// Request cancellation
     pub fn request_cancellation(&self) {
@@ -510,17 +244,16 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     // are implemented below as Future-returning methods for parallel execution support.
 
     async fn get_raw(&self, key: &str) -> Result<Option<Value>> {
-        let state = self.state.read();
-        Ok(state.get(key).cloned())
+        Ok(self.replay_engine.get_state(key))
     }
 
     async fn set_raw(&self, key: &str, value: Value) -> Result<()> {
         // Get per-type sequence and increment atomically.
         // This assigns State(0), State(1), etc. to each set()/clear() call.
-        let state_seq = self.next_state_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let state_seq = self.replay_engine.next_state_seq();
 
         // Look for event at this per-type index
-        if let Some(state_event) = self.state_events.get(state_seq) {
+        if let Some(state_event) = self.replay_engine.get_state_event(state_seq) {
             // Validate event type is StateSet
             if state_event.event_type() != EventType::StateSet {
                 return Err(FlovynError::DeterminismViolation(
@@ -548,9 +281,8 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 ));
             }
 
-            // State was already set - update local state (it's already up to date from constructor)
-            let mut state = self.state.write();
-            state.insert(key.to_string(), value);
+            // State was already set - update replay engine state
+            self.replay_engine.set_state(key, value);
             return Ok(());
         }
 
@@ -562,19 +294,18 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             value: value.clone(),
         })?;
 
-        // Update state
-        let mut state = self.state.write();
-        state.insert(key.to_string(), value);
+        // Update state in replay engine
+        self.replay_engine.set_state(key, value);
         Ok(())
     }
 
     async fn clear(&self, key: &str) -> Result<()> {
         // Get per-type sequence and increment atomically.
         // This assigns State(0), State(1), etc. to each set()/clear() call.
-        let state_seq = self.next_state_seq.fetch_add(1, Ordering::SeqCst) as usize;
+        let state_seq = self.replay_engine.next_state_seq();
 
         // Look for event at this per-type index
-        if let Some(state_event) = self.state_events.get(state_seq) {
+        if let Some(state_event) = self.replay_engine.get_state_event(state_seq) {
             // Validate event type is StateCleared
             if state_event.event_type() != EventType::StateCleared {
                 return Err(FlovynError::DeterminismViolation(
@@ -602,9 +333,8 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 ));
             }
 
-            // State was already cleared - update local state
-            let mut state = self.state.write();
-            state.remove(key);
+            // State was already cleared - update replay engine state
+            self.replay_engine.clear_state(key);
             return Ok(());
         }
 
@@ -615,18 +345,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             key: key.to_string(),
         })?;
 
-        // Update state
-        let mut state = self.state.write();
-        state.remove(key);
+        // Update state in replay engine
+        self.replay_engine.clear_state(key);
         Ok(())
     }
 
     async fn clear_all(&self) -> Result<()> {
         // Clear all keys by clearing each one
-        let keys: Vec<String> = {
-            let state = self.state.read();
-            state.keys().cloned().collect()
-        };
+        let keys = self.replay_engine.state_keys();
 
         for key in keys {
             self.clear(&key).await?;
@@ -635,8 +361,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     async fn state_keys(&self) -> Result<Vec<String>> {
-        let state = self.state.read();
-        Ok(state.keys().cloned().collect())
+        Ok(self.replay_engine.state_keys())
     }
 
     fn is_cancellation_requested(&self) -> bool {
@@ -668,7 +393,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         options: ScheduleTaskOptions,
     ) -> TaskFutureRaw {
         // Get per-type sequence and increment atomically.
-        let task_seq = self.next_task_seq.fetch_add(1, Ordering::SeqCst);
+        let task_seq = self.replay_engine.next_task_seq();
 
         // CRITICAL: Always generate UUID to keep counter synchronized across replay.
         // This ensures deterministic UUID generation even when extending a replay.
@@ -676,7 +401,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         let generated_id = self.random_uuid();
 
         // Look for event at this per-type index (replay case)
-        if let Some(scheduled_event) = self.task_events.get(task_seq as usize) {
+        if let Some(scheduled_event) = self.replay_engine.get_task_event(task_seq) {
             // Validate task type matches
             let event_task_type = scheduled_event
                 .get_string("taskType")
@@ -701,8 +426,9 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .unwrap_or(Uuid::nil());
 
             // Look for terminal event (completed/failed) for this task
-            if let Some(terminal_event) =
-                self.find_terminal_task_event(&task_execution_id.to_string())
+            if let Some(terminal_event) = self
+                .replay_engine
+                .find_terminal_task_event(&task_execution_id.to_string())
             {
                 if terminal_event.event_type() == EventType::TaskCompleted {
                     let result = terminal_event
@@ -767,7 +493,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
     fn sleep(&self, duration: Duration) -> TimerFuture {
         // Get per-type sequence and increment atomically.
-        let timer_seq = self.next_timer_seq.fetch_add(1, Ordering::SeqCst);
+        let timer_seq = self.replay_engine.next_timer_seq();
 
         // Generate deterministic timer ID
         let sleep_count = self.sleep_call_counter.fetch_add(1, Ordering::SeqCst) + 1;
@@ -775,7 +501,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         let duration_ms = duration.as_millis() as i64;
 
         // Look for event at this per-type index (replay case)
-        if let Some(started_event) = self.timer_events.get(timer_seq as usize) {
+        if let Some(started_event) = self.replay_engine.get_timer_event(timer_seq) {
             // Validate timer ID matches
             let event_timer_id = started_event
                 .get_string("timerId")
@@ -793,7 +519,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             }
 
             // Look for terminal event (fired/cancelled) for this timer
-            if let Some(terminal_event) = self.find_terminal_timer_event(&event_timer_id) {
+            if let Some(terminal_event) = self
+                .replay_engine
+                .find_terminal_timer_event(&event_timer_id)
+            {
                 if terminal_event.event_type() == EventType::TimerFired {
                     return TimerFuture::from_replay(
                         timer_seq,
@@ -840,10 +569,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         input: Value,
     ) -> ChildWorkflowFutureRaw {
         // Get per-type sequence and increment atomically.
-        let cw_seq = self.next_child_workflow_seq.fetch_add(1, Ordering::SeqCst);
+        let cw_seq = self.replay_engine.next_child_workflow_seq();
 
         // Look for event at this per-type index (replay case)
-        if let Some(initiated_event) = self.child_workflow_events.get(cw_seq as usize) {
+        if let Some(initiated_event) = self.replay_engine.get_child_workflow_event(cw_seq) {
             // Validate child workflow name matches
             let event_name = initiated_event
                 .get_string("childExecutionName")
@@ -885,7 +614,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .unwrap_or(Uuid::nil());
 
             // Look for terminal event (completed/failed) for this child workflow
-            if let Some(terminal_event) = self.find_terminal_child_workflow_event(&event_name) {
+            if let Some(terminal_event) = self
+                .replay_engine
+                .find_terminal_child_workflow_event(&event_name)
+            {
                 if terminal_event.event_type() == EventType::ChildWorkflowCompleted {
                     let result = terminal_event.get("output").cloned().unwrap_or(Value::Null);
                     return ChildWorkflowFuture::from_replay(
@@ -954,10 +686,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
     fn promise_raw(&self, name: &str) -> PromiseFutureRaw {
         // Get per-type sequence and increment atomically.
-        let promise_seq = self.next_promise_seq.fetch_add(1, Ordering::SeqCst);
+        let promise_seq = self.replay_engine.next_promise_seq();
 
         // Look for event at this per-type index (replay case)
-        if let Some(created_event) = self.promise_events.get(promise_seq as usize) {
+        if let Some(created_event) = self.replay_engine.get_promise_event(promise_seq) {
             // Validate promise name/ID matches
             let event_promise_id = created_event
                 .get_string("promiseId")
@@ -976,7 +708,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             }
 
             // Look for terminal event (resolved/rejected/timeout)
-            if let Some(terminal_event) = self.find_terminal_promise_event(&event_promise_id) {
+            if let Some(terminal_event) = self
+                .replay_engine
+                .find_terminal_promise_event(&event_promise_id)
+            {
                 match terminal_event.event_type() {
                     EventType::PromiseResolved => {
                         let value = terminal_event.get("value").cloned().unwrap_or(Value::Null);
@@ -1050,10 +785,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
     fn run_raw(&self, name: &str, result: Value) -> OperationFutureRaw {
         // Get per-type sequence and increment atomically.
-        let op_seq = self.next_operation_seq.fetch_add(1, Ordering::SeqCst);
+        let op_seq = self.replay_engine.next_operation_seq();
 
         // Look for event at this per-type index (replay case)
-        if let Some(operation_event) = self.operation_events.get(op_seq as usize) {
+        if let Some(operation_event) = self.replay_engine.get_operation_event(op_seq) {
             // Validate operation name matches
             // Note: Server may use "name" or "operationName" for the field
             let event_op_name = operation_event
@@ -1082,12 +817,6 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         }
 
         // No event at this per-type index → new operation
-        // Record and cache the result
-        {
-            let mut cache = self.operation_cache.write();
-            cache.insert(name.to_string(), result.clone());
-        }
-
         let sequence = self.next_sequence();
         if let Err(e) = self.record_command(WorkflowCommand::RecordOperation {
             sequence_number: sequence,

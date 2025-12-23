@@ -41,10 +41,7 @@ async fn test_e2e_task_loop_replay() {
 
         // This test is a placeholder - full implementation requires
         // the workflow executor to be wired up to the test harness
-        println!(
-            "Task loop replay test: workflow_execution_id={}, tenant_id={}",
-            workflow_execution_id, tenant_id
-        );
+        let _ = (workflow_execution_id, tenant_id); // suppress unused warnings
     })
     .await;
 }
@@ -61,10 +58,7 @@ async fn test_e2e_child_workflow_loop_replay() {
         let tenant_id = harness.tenant_id();
 
         // Similar to task loop test - validates child workflow replay
-        println!(
-            "Child workflow loop replay test: workflow_execution_id={}, tenant_id={}",
-            workflow_execution_id, tenant_id
-        );
+        let _ = (workflow_execution_id, tenant_id); // suppress unused warnings
     })
     .await;
 }
@@ -106,9 +100,6 @@ async fn test_e2e_determinism_violation_on_task_type_change() {
             // Try to schedule a different task type - should cause determinism violation
             // Note: This requires a task submitter, so we're testing the validation logic
             // directly through the context
-            println!(
-                "Determinism violation test: expecting TaskTypeMismatch when scheduling task-B"
-            );
 
             // In a full test, we would execute:
             // let result = _ctx.schedule_raw("task-B", serde_json::json!({})).await;
