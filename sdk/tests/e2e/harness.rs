@@ -281,11 +281,12 @@ impl TestHarness {
             .await
             .expect("Failed to parse tenant response");
 
-        // Create worker token via REST API
+        // Create worker token via trusted plugin endpoint
+        // Path: /api/tenants/{tenant_slug}/worker-token/tokens
         let token_response = client
             .post(format!(
-                "{}/api/tenants/{}/worker-tokens",
-                base_url, tenant.slug
+                "{}/api/tenants/{}/worker-token/tokens",
+                base_url, tenant_slug
             ))
             .header("Authorization", format!("Bearer {}", jwt))
             .json(&serde_json::json!({
