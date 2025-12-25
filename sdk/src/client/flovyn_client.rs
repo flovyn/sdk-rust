@@ -5,9 +5,7 @@
 
 use crate::client::builder::FlovynClientBuilder;
 use crate::client::hook::WorkflowHook;
-use crate::client::{
-    TaskExecutionClient, WorkerTokenInterceptor, WorkflowDispatch, WorkflowQueryClient,
-};
+use crate::client::{AuthInterceptor, TaskExecutionClient, WorkflowDispatch, WorkflowQueryClient};
 use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
 use crate::task::registry::TaskRegistry;
@@ -406,7 +404,7 @@ impl FlovynClient {
             value: value_bytes,
         };
 
-        let interceptor = WorkerTokenInterceptor::new(&self.worker_token);
+        let interceptor = AuthInterceptor::api_key(&self.worker_token);
         let mut client =
             flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
                 self.channel.clone(),
@@ -435,7 +433,7 @@ impl FlovynClient {
             error: error.to_string(),
         };
 
-        let interceptor = WorkerTokenInterceptor::new(&self.worker_token);
+        let interceptor = AuthInterceptor::api_key(&self.worker_token);
         let mut client =
             flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
                 self.channel.clone(),

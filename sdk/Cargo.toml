@@ -73,9 +73,11 @@ libc = "0.2"
 # tonic-build moved to flovyn-core
 
 [features]
-default = []
+default = ["oauth2"]
 # Enable testing utilities (MockWorkflowContext, TestWorkflowEnvironment, etc.)
 testing = []
+# Enable OAuth2 authentication (client credentials flow)
+oauth2 = ["flovyn-core/oauth2"]
 
 [[test]]
 name = "unit"

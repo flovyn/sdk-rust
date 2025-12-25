@@ -1,6 +1,6 @@
 //! WorkflowDispatch client wrapper
 
-use crate::client::auth::WorkerTokenInterceptor;
+use crate::client::auth::AuthInterceptor;
 use crate::error::CoreResult;
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient;
@@ -11,7 +11,7 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 /// Type alias for authenticated client
-type AuthClient = WorkflowDispatchClient<InterceptedService<Channel, WorkerTokenInterceptor>>;
+type AuthClient = WorkflowDispatchClient<InterceptedService<Channel, AuthInterceptor>>;
 
 /// Client for workflow dispatch operations
 #[derive(Clone)]
@@ -20,9 +20,9 @@ pub struct WorkflowDispatch {
 }
 
 impl WorkflowDispatch {
-    /// Create from a channel with worker token authentication
+    /// Create from a channel with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = WorkerTokenInterceptor::new(token);
+        let interceptor = AuthInterceptor::api_key(token);
         Self {
             inner: WorkflowDispatchClient::with_interceptor(channel, interceptor),
         }

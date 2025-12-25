@@ -94,6 +94,10 @@ pub enum FlovynError {
     #[error("Timeout: {0}")]
     Timeout(String),
 
+    /// Authentication error (e.g., OIDC token fetch failed)
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
+
     /// Generic error
     #[error("{0}")]
     Other(String),

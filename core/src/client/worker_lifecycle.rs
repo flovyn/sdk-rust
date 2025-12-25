@@ -3,7 +3,7 @@
 //! This module provides the client for the WorkerLifecycle gRPC service,
 //! which handles worker registration and heartbeat operations.
 
-use crate::client::auth::WorkerTokenInterceptor;
+use crate::client::auth::AuthInterceptor;
 use crate::error::CoreResult;
 use crate::generated::flovyn_v1::{
     self, TaskCapability, WorkerHeartbeatRequest, WorkerRegistrationRequest,
@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 /// Type alias for authenticated client
 type AuthClient = flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient<
-    InterceptedService<Channel, WorkerTokenInterceptor>,
+    InterceptedService<Channel, AuthInterceptor>,
 >;
 
 /// Worker types for registration
@@ -72,9 +72,9 @@ pub struct WorkerLifecycleClient {
 }
 
 impl WorkerLifecycleClient {
-    /// Create a new WorkerLifecycleClient with worker token authentication
+    /// Create a new WorkerLifecycleClient with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = WorkerTokenInterceptor::new(token);
+        let interceptor = AuthInterceptor::api_key(token);
         Self {
             stub: flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient::with_interceptor(
                 channel,

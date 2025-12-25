@@ -2,6 +2,22 @@
 //!
 //! These records define the configuration needed to create workers and clients.
 
+/// OAuth2 client credentials for authentication.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct OAuth2Credentials {
+    /// OAuth2 client ID.
+    pub client_id: String,
+
+    /// OAuth2 client secret.
+    pub client_secret: String,
+
+    /// Token endpoint URL (e.g., "https://keycloak.example.com/realms/myrealm/protocol/openid-connect/token").
+    pub token_endpoint: String,
+
+    /// Optional scopes (space-separated if multiple).
+    pub scopes: Option<String>,
+}
+
 /// Configuration for creating a CoreWorker.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct WorkerConfig {
@@ -10,7 +26,12 @@ pub struct WorkerConfig {
 
     /// Worker token for authentication (should start with "fwt_").
     /// If not provided or not starting with "fwt_", a placeholder will be used.
+    /// Ignored if oauth2_credentials is provided.
     pub worker_token: Option<String>,
+
+    /// OAuth2 client credentials for authentication.
+    /// If provided, the SDK will fetch a JWT using client credentials flow.
+    pub oauth2_credentials: Option<OAuth2Credentials>,
 
     /// Tenant ID (UUID format) for worker registration.
     pub tenant_id: String,
@@ -39,6 +60,7 @@ impl Default for WorkerConfig {
         Self {
             server_url: "http://localhost:9090".to_string(),
             worker_token: None,
+            oauth2_credentials: None,
             tenant_id: "00000000-0000-0000-0000-000000000000".to_string(),
             task_queue: "default".to_string(),
             worker_identity: None,
@@ -58,7 +80,12 @@ pub struct ClientConfig {
 
     /// Client token for authentication (should start with "fct_").
     /// If not provided, a placeholder will be used.
+    /// Ignored if oauth2_credentials is provided.
     pub client_token: Option<String>,
+
+    /// OAuth2 client credentials for authentication.
+    /// If provided, the SDK will fetch a JWT using client credentials flow.
+    pub oauth2_credentials: Option<OAuth2Credentials>,
 
     /// Tenant ID (UUID format) for operations.
     pub tenant_id: String,
@@ -69,6 +96,7 @@ impl Default for ClientConfig {
         Self {
             server_url: "http://localhost:9090".to_string(),
             client_token: None,
+            oauth2_credentials: None,
             tenant_id: "00000000-0000-0000-0000-000000000000".to_string(),
         }
     }

@@ -66,9 +66,9 @@ pub use workflow::{
 
 // Re-export client types
 pub use client::{
-    RegistrationResult, ReportExecutionSpansResult, StartWorkflowResult, SubmitTaskResult,
-    TaskExecutionClient, TaskExecutionInfo, WorkerLifecycleClient, WorkerTokenInterceptor,
-    WorkerType, WorkflowDispatch, WorkflowEvent, WorkflowExecutionInfo, WorkflowQueryClient,
+    AuthInterceptor, RegistrationResult, ReportExecutionSpansResult, StartWorkflowResult,
+    SubmitTaskResult, TaskExecutionClient, TaskExecutionInfo, WorkerLifecycleClient, WorkerType,
+    WorkflowDispatch, WorkflowEvent, WorkflowExecutionInfo, WorkflowQueryClient,
 };
 
 // Re-export task streaming types

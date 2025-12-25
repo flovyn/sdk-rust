@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use flovyn_core::client::{
-    TaskExecutionClient, WorkerLifecycleClient, WorkerType, WorkflowDispatch,
+    oauth2, TaskExecutionClient, WorkerLifecycleClient, WorkerType, WorkflowDispatch,
 };
 use flovyn_core::task::TaskMetadata;
 use flovyn_core::workflow::WorkflowMetadata;
@@ -53,6 +53,11 @@ impl CoreWorker {
     ///
     /// This establishes a connection to the Flovyn server but does not
     /// register the worker yet. Call `register()` to register.
+    ///
+    /// Authentication priority:
+    /// 1. OAuth2 credentials (if provided, fetches JWT token)
+    /// 2. Worker token (if provided)
+    /// 3. Placeholder token (for testing)
     #[uniffi::constructor]
     pub fn new(config: WorkerConfig) -> Result<Arc<Self>, FfiError> {
         // Create a Tokio runtime
@@ -74,14 +79,34 @@ impl CoreWorker {
                 })
         })?;
 
-        // Use the worker token if provided and it starts with 'fwt_'
-        // Otherwise generate a placeholder (useful for testing without auth)
-        let worker_token = config
-            .worker_token
-            .as_ref()
-            .filter(|t| t.starts_with("fwt_"))
-            .cloned()
-            .unwrap_or_else(|| format!("fwt_placeholder-{}", Uuid::new_v4()));
+        // Determine authentication token
+        // Priority: OAuth2 credentials > worker_token > placeholder
+        let worker_token = if let Some(oauth2_creds) = &config.oauth2_credentials {
+            // Fetch token using OAuth2 client credentials flow
+            let core_creds = oauth2::OAuth2Credentials::new(
+                &oauth2_creds.client_id,
+                &oauth2_creds.client_secret,
+                &oauth2_creds.token_endpoint,
+            );
+            let core_creds = if let Some(scopes) = &oauth2_creds.scopes {
+                core_creds.with_scopes(scopes.split_whitespace().map(String::from).collect())
+            } else {
+                core_creds
+            };
+
+            runtime.block_on(async {
+                oauth2::fetch_access_token(&core_creds)
+                    .await
+                    .map(|r| r.access_token)
+                    .map_err(|e| FfiError::Other {
+                        msg: format!("OAuth2 token fetch failed: {}", e),
+                    })
+            })?
+        } else if let Some(token) = &config.worker_token {
+            token.clone()
+        } else {
+            format!("fwt_placeholder-{}", Uuid::new_v4())
+        };
 
         Ok(Arc::new(Self {
             channel,

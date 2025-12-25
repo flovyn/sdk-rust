@@ -9,7 +9,10 @@ mod worker_lifecycle;
 mod workflow_dispatch;
 mod workflow_query;
 
-pub use auth::WorkerTokenInterceptor;
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
+
+pub use auth::AuthInterceptor;
 pub use task_execution::{SubmitTaskResult, TaskExecutionClient, TaskExecutionInfo};
 pub use worker_lifecycle::{RegistrationResult, WorkerLifecycleClient, WorkerType};
 pub use workflow_dispatch::{
@@ -17,3 +20,6 @@ pub use workflow_dispatch::{
     WorkflowExecutionInfo,
 };
 pub use workflow_query::WorkflowQueryClient;
+
+#[cfg(feature = "oauth2")]
+pub use oauth2::{fetch_access_token, CachedToken, OAuth2Credentials, TokenResponse};

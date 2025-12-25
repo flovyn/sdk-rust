@@ -1,6 +1,6 @@
 //! TaskExecution client wrapper
 
-use crate::client::auth::WorkerTokenInterceptor;
+use crate::client::auth::AuthInterceptor;
 use crate::error::CoreResult;
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::task_execution_client::TaskExecutionClient as GrpcTaskExecutionClient;
@@ -14,7 +14,7 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 /// Type alias for authenticated client
-type AuthClient = GrpcTaskExecutionClient<InterceptedService<Channel, WorkerTokenInterceptor>>;
+type AuthClient = GrpcTaskExecutionClient<InterceptedService<Channel, AuthInterceptor>>;
 
 /// Client for task execution operations
 pub struct TaskExecutionClient {
@@ -24,9 +24,9 @@ pub struct TaskExecutionClient {
 }
 
 impl TaskExecutionClient {
-    /// Create from a channel with worker token authentication
+    /// Create from a channel with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = WorkerTokenInterceptor::new(token);
+        let interceptor = AuthInterceptor::api_key(token);
         Self {
             inner: GrpcTaskExecutionClient::with_interceptor(channel, interceptor),
             stream_sequence: AtomicU32::new(0),

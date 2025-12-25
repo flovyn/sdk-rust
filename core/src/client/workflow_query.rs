@@ -1,6 +1,6 @@
 //! WorkflowQuery client wrapper for querying workflow state
 
-use crate::client::auth::WorkerTokenInterceptor;
+use crate::client::auth::AuthInterceptor;
 use crate::error::{CoreError, CoreResult};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::workflow_query_client::WorkflowQueryClient as GrpcWorkflowQueryClient;
@@ -11,7 +11,7 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 /// Type alias for authenticated client
-type AuthClient = GrpcWorkflowQueryClient<InterceptedService<Channel, WorkerTokenInterceptor>>;
+type AuthClient = GrpcWorkflowQueryClient<InterceptedService<Channel, AuthInterceptor>>;
 
 /// Client for workflow query operations
 pub struct WorkflowQueryClient {
@@ -19,9 +19,9 @@ pub struct WorkflowQueryClient {
 }
 
 impl WorkflowQueryClient {
-    /// Create from a channel with worker token authentication
+    /// Create from a channel with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = WorkerTokenInterceptor::new(token);
+        let interceptor = AuthInterceptor::api_key(token);
         Self {
             inner: GrpcWorkflowQueryClient::with_interceptor(channel, interceptor),
         }

@@ -15,6 +15,9 @@ use std::time::Duration;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+#[cfg(feature = "oauth2")]
+use flovyn_core::client::oauth2::{self, OAuth2Credentials};
+
 /// Default task queue name
 pub const DEFAULT_TASK_QUEUE: &str = "default";
 
@@ -56,6 +59,9 @@ pub struct FlovynClientBuilder {
     lifecycle_hooks: Vec<Arc<dyn WorkerLifecycleHook>>,
     /// Reconnection strategy for connection recovery
     reconnection_strategy: ReconnectionStrategy,
+    /// OAuth2 credentials for client credentials flow
+    #[cfg(feature = "oauth2")]
+    oauth2_credentials: Option<OAuth2Credentials>,
 }
 
 impl Default for FlovynClientBuilder {
@@ -88,6 +94,8 @@ impl FlovynClientBuilder {
             enable_telemetry: false,
             lifecycle_hooks: Vec::new(),
             reconnection_strategy: ReconnectionStrategy::default(),
+            #[cfg(feature = "oauth2")]
+            oauth2_credentials: None,
         }
     }
 
@@ -182,8 +190,116 @@ impl FlovynClientBuilder {
     ///
     /// The worker token is passed in the Authorization header for all gRPC requests.
     /// This is required when the server has security enabled.
+    ///
+    /// Worker tokens must start with "fwt_" or "fct_" prefix.
+    /// For static API keys (any format), use `.api_key()` instead.
     pub fn worker_token(mut self, token: impl Into<String>) -> Self {
-        self.worker_token = Some(token.into());
+        let token = token.into();
+        // Validate worker token prefix for early error detection
+        assert!(
+            token.starts_with("fwt_") || token.starts_with("fct_"),
+            "Worker token must start with 'fwt_' or 'fct_' prefix. For static API keys, use .api_key() instead."
+        );
+        self.worker_token = Some(token);
+        self
+    }
+
+    /// Set a static API key for gRPC authentication
+    ///
+    /// The API key is passed in the Authorization header for all gRPC requests.
+    /// Use this when the server is configured with static API keys.
+    ///
+    /// Unlike `.worker_token()`, this method accepts any key format without prefix validation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let client = FlovynClient::builder()
+    ///     .server_address("localhost", 9090)
+    ///     .tenant_id(tenant_id)
+    ///     .api_key("flovyn_wk_live_xyz789...")
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn api_key(mut self, key: impl Into<String>) -> Self {
+        self.worker_token = Some(key.into());
+        self
+    }
+
+    /// Set OAuth2 client credentials for authentication
+    ///
+    /// The SDK will fetch a JWT from the OAuth2 provider using the client credentials
+    /// flow and use it for all gRPC requests.
+    ///
+    /// # Arguments
+    ///
+    /// * `client_id` - OAuth2 client ID
+    /// * `client_secret` - OAuth2 client secret
+    /// * `token_endpoint` - Token endpoint URL (e.g., `https://idp.example.com/realms/my-realm/protocol/openid-connect/token`)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let client = FlovynClient::builder()
+    ///     .server_address("localhost", 9090)
+    ///     .tenant_id(tenant_id)
+    ///     .oauth2_client_credentials(
+    ///         "my-worker-client",
+    ///         "my-client-secret",
+    ///         "https://keycloak.example.com/realms/flovyn/protocol/openid-connect/token"
+    ///     )
+    ///     .build()
+    ///     .await?;
+    /// ```
+    ///
+    /// # Note
+    ///
+    /// This method requires the `oauth2` feature to be enabled (enabled by default).
+    #[cfg(feature = "oauth2")]
+    pub fn oauth2_client_credentials(
+        mut self,
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+        token_endpoint: impl Into<String>,
+    ) -> Self {
+        self.oauth2_credentials = Some(OAuth2Credentials::new(
+            client_id,
+            client_secret,
+            token_endpoint,
+        ));
+        self
+    }
+
+    /// Set OAuth2 credentials with additional scopes
+    ///
+    /// Same as `oauth2_client_credentials` but allows specifying additional scopes.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let client = FlovynClient::builder()
+    ///     .server_address("localhost", 9090)
+    ///     .tenant_id(tenant_id)
+    ///     .oauth2_client_credentials_with_scopes(
+    ///         "my-worker-client",
+    ///         "my-client-secret",
+    ///         "https://keycloak.example.com/realms/flovyn/protocol/openid-connect/token",
+    ///         vec!["openid".to_string(), "profile".to_string()]
+    ///     )
+    ///     .build()
+    ///     .await?;
+    /// ```
+    #[cfg(feature = "oauth2")]
+    pub fn oauth2_client_credentials_with_scopes(
+        mut self,
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+        token_endpoint: impl Into<String>,
+        scopes: Vec<String>,
+    ) -> Self {
+        self.oauth2_credentials = Some(
+            OAuth2Credentials::new(client_id, client_secret, token_endpoint).with_scopes(scopes),
+        );
         self
     }
 
@@ -345,12 +461,29 @@ impl FlovynClientBuilder {
     /// Build the FlovynClient
     ///
     /// # Errors
-    /// Returns an error if worker_token is not set.
+    /// Returns an error if no authentication method is configured.
     pub async fn build(self) -> Result<super::FlovynClient> {
-        // Require worker_token for authentication
+        // Determine authentication token
+        // Priority: OAuth2 credentials > explicit worker_token/api_key
+        #[cfg(feature = "oauth2")]
+        let worker_token = if let Some(oauth2_creds) = &self.oauth2_credentials {
+            // Fetch token using OAuth2 client credentials flow
+            let token_response = oauth2::fetch_access_token(oauth2_creds)
+                .await
+                .map_err(FlovynError::AuthenticationError)?;
+            token_response.access_token
+        } else if let Some(token) = self.worker_token {
+            token
+        } else {
+            return Err(FlovynError::InvalidConfiguration(
+                "Authentication required. Use .worker_token(\"fwt_...\"), .api_key(\"...\"), or .oauth2_client_credentials(...).".to_string(),
+            ));
+        };
+
+        #[cfg(not(feature = "oauth2"))]
         let worker_token = self.worker_token.ok_or_else(|| {
             FlovynError::InvalidConfiguration(
-                "worker_token is required. Use .worker_token(\"fwt_...\") to set it.".to_string(),
+                "Authentication required. Use .worker_token(\"fwt_...\") for worker tokens or .api_key(\"...\") for static API keys.".to_string(),
             )
         })?;
 
@@ -552,5 +685,48 @@ mod tests {
             }
             _ => panic!("Expected Fixed strategy"),
         }
+    }
+
+    #[test]
+    fn test_builder_worker_token() {
+        let builder = FlovynClientBuilder::new().worker_token("fwt_test123");
+        assert_eq!(builder.worker_token, Some("fwt_test123".to_string()));
+    }
+
+    #[test]
+    fn test_builder_worker_token_client() {
+        let builder = FlovynClientBuilder::new().worker_token("fct_client123");
+        assert_eq!(builder.worker_token, Some("fct_client123".to_string()));
+    }
+
+    #[test]
+    #[should_panic(expected = "Worker token must start with 'fwt_' or 'fct_' prefix")]
+    fn test_builder_worker_token_invalid_prefix() {
+        FlovynClientBuilder::new().worker_token("invalid_token");
+    }
+
+    #[test]
+    fn test_builder_api_key() {
+        let builder = FlovynClientBuilder::new().api_key("my-static-api-key");
+        assert_eq!(builder.worker_token, Some("my-static-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_builder_api_key_accepts_any_format() {
+        // API key accepts any format without validation
+        let builder = FlovynClientBuilder::new().api_key("flovyn_wk_live_xyz123");
+        assert_eq!(
+            builder.worker_token,
+            Some("flovyn_wk_live_xyz123".to_string())
+        );
+
+        let builder = FlovynClientBuilder::new().api_key("simple-key");
+        assert_eq!(builder.worker_token, Some("simple-key".to_string()));
+
+        let builder = FlovynClientBuilder::new().api_key("uuid-like-550e8400-e29b-41d4");
+        assert_eq!(
+            builder.worker_token,
+            Some("uuid-like-550e8400-e29b-41d4".to_string())
+        );
     }
 }

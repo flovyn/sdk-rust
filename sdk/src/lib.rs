@@ -132,6 +132,8 @@ pub use telemetry::{RecordingSpan, SpanCollector};
 
 /// Prelude module for convenient imports
 pub mod prelude {
+    #[cfg(feature = "oauth2")]
+    pub use crate::client::OAuth2Credentials;
     pub use crate::client::{
         FlovynClient, FlovynClientBuilder, StartWorkflowOptions, StartWorkflowResult, WorkerHandle,
     };
