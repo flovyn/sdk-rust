@@ -61,6 +61,10 @@ tokio-test = "0.4"
 proptest = "1"
 futures = "0.3"
 
+# Model checking
+stateright = "0.30"
+num_cpus = "1.16"
+
 # E2E test dependencies
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
@@ -90,3 +94,7 @@ path = "tests/tck/mod.rs"
 [[test]]
 name = "e2e"
 path = "tests/e2e/mod.rs"
+
+[[test]]
+name = "model"
+path = "tests/model/mod.rs"

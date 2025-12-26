@@ -3,6 +3,8 @@
 // Tests are in the source files using #[cfg(test)] modules
 // This file is a placeholder for additional integration-style unit tests
 
+mod determinism_props;
+mod mutations;
 mod shared_corpus;
 mod state_machine_props;
 

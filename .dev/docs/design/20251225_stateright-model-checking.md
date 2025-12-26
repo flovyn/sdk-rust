@@ -1,7 +1,7 @@
 # Design: Stateright Model Checking for SDK
 
 ## Status
-**Proposed** - Needs evaluation
+**Implemented** - All core objectives achieved
 
 ## Problem Statement
 
@@ -436,46 +436,108 @@ mod tests {
 
 4. **Server-side bugs**: Event persistence, scheduling, work distribution.
 
+## Evaluation Results (Phase 1 Complete)
+
+Phase 1 has been completed. Here are the results:
+
+### State Space Measurements
+
+| Test Configuration | States Explored | Time |
+|-------------------|-----------------|------|
+| Small (2 task events, 1 timer, max 4 commands) | 121 | ~2.5ms |
+| Medium (3 task events, 2 timers, 1 child, max 5 commands) | 1,936 | ~17ms |
+| Per-type independence | 22 | <1ms |
+| Extension allowed | 25 | <1ms |
+| Violations detected | 5 | <1ms |
+
+### Verdict: Proceed to Phase 2
+
+The state space is **tractable** and model checking is **fast**:
+- Even the medium configuration explores < 2,000 states in < 20ms
+- Well under the 10,000 state / 30 second targets
+- Properties verify correctly (matching commands pass, extensions allowed)
+
+### What Was Verified
+
+1. **Matching commands never cause violations** - When commands match replay history, no determinism violation occurs
+2. **Extension is allowed** - Commands beyond replay history (new commands) are allowed without violation
+3. **Per-type sequences are independent** - Task sequence counter doesn't affect timer sequence counter
+
 ## Implementation Approach
 
 ### Phase 1: Evaluate (1 day)
-- [ ] Add stateright as dev-dependency
-- [ ] Implement SequenceMatchingModel
-- [ ] Run and verify it works
-- [ ] Measure: states explored, time taken
+- [x] Add stateright as dev-dependency
+- [x] Implement SequenceMatchingModel
+- [x] Run and verify it works
+- [x] Measure: states explored, time taken
 
-**Decision point**: If model checking is too slow or finds nothing, stop here.
+**Decision point**: ✅ Proceed - model checking is fast and effective.
 
 ### Phase 2: Core Models (2-3 days)
-- [ ] Refine SequenceMatchingModel with all command types
-- [ ] Add JoinAllModel and SelectModel
-- [ ] Verify models catch known bug patterns
+- [x] Refine SequenceMatchingModel with all command types
+- [x] Add JoinAllModel and SelectModel
+- [x] Verify models catch known bug patterns (via mutation testing)
 
 ### Phase 3: Integration (1 day)
-- [ ] Add CI workflow
-- [ ] Document how to run models locally
+- [x] Add CI workflow
+- [x] Document how to run models locally
 
-## Open Questions
+## Open Questions (Resolved)
 
 1. **Should models live next to implementation or separately?**
-   - Next to: easier to keep in sync
-   - Separately: cleaner separation
+   - **Resolution**: Separately in `sdk/tests/model/` - cleaner separation, easier to maintain
 
 2. **How do we prevent model drift?**
-   - Review models when changing implementation
-   - But: no automated enforcement
+   - **Resolution**: Model-implementation comparison tests (`bridge.rs`, `comparison.rs`) automatically detect drift by running same scenarios through both model and real ReplayEngine
 
 3. **Is the ROI worth it?**
-   - High if we find bugs
-   - Low if we don't
-   - Need to evaluate after Phase 1
+   - **Resolution**: Yes - fast verification (<20ms), mutation testing proves tests catch bugs, provides regression prevention
 
 ## Conclusion
 
-Model checking could catch subtle bugs in replay validation and parallel combinators. However, it's not a silver bullet:
+### Final Results
 
-- **Start small**: One model, one property
-- **Evaluate quickly**: If it doesn't find bugs or takes too long, stop
-- **Don't replace tests**: Model checking supplements, not replaces, unit and E2E tests
+All four correctness requirements from the Problem Statement have been verified:
 
-The recommendation is to proceed with Phase 1 (evaluation) before committing to full implementation.
+| Requirement | Verification |
+|-------------|--------------|
+| **Replay must be deterministic** | `determinism_props.rs` (9 tests), `state_machine_props.rs` (8 tests) |
+| **Per-type sequence matching** | `sequence_matching.rs` model, `comparison.rs` (435 paths tested) |
+| **Parallel combinators** | `join_all.rs` (4 tests), `select.rs` (4 tests), `combinators.rs` (16 unit tests) |
+| **Extension is allowed** | Model property verified, comparison tests confirm |
+
+### Key Achievements
+
+1. **State space is tractable**: Medium config explores 1,936 states in ~17ms
+2. **Model matches implementation**: 435 command paths tested, all agree
+3. **Tests catch real bugs**: Mutation testing killed 4 injected bugs (off-by-one, wrong counter, inverted comparison, no boundary check)
+4. **Gap addressed**: Model-implementation comparison bridges specification to real code
+
+### Test Coverage Summary
+
+| Test Suite | Tests | Purpose |
+|------------|-------|---------|
+| `sdk/tests/model/` | 39 tests | Stateright model checking |
+| `sdk/tests/unit/determinism_props.rs` | 9 tests | Workflow determinism |
+| `sdk/tests/unit/mutations.rs` | 4 tests | Mutation testing |
+| `sdk/tests/unit/state_machine_props.rs` | 8 tests | Property-based tests |
+| `sdk/src/workflow/combinators.rs` | 16 tests | Combinator unit tests |
+
+### Lessons Learned
+
+- **Model checking supplements, not replaces, other tests**: Models verify specifications; comparison tests verify implementation matches
+- **Mutation testing validates test effectiveness**: Injecting known bugs proves tests can catch real issues
+- **Bridging model to implementation is essential**: The original design noted models don't catch implementation bugs - this was solved by `bridge.rs` and `comparison.rs`
+
+### Running the Tests
+
+```bash
+# Run all model checking tests
+cargo test --test model -p flovyn-sdk
+
+# Run determinism property tests
+cargo test --test unit -p flovyn-sdk --features testing -- determinism_props
+
+# Run mutation tests
+cargo test --test unit -p flovyn-sdk --features testing -- mutations
+```

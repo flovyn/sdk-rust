@@ -11,10 +11,11 @@ cargo build --workspace
 # Run all tests
 cargo test --workspace
 
-# Run specific test suite (unit, tck, or e2e)
+# Run specific test suite (unit, tck, e2e, or model)
 cargo test --test unit -p flovyn-sdk
 cargo test --test tck -p flovyn-sdk
 cargo test --test e2e -p flovyn-sdk
+cargo test --test model -p flovyn-sdk    # Stateright model checking
 
 # Run tests with testing utilities feature
 cargo test --features testing
