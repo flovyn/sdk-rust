@@ -10,7 +10,7 @@ repository = "https://github.com/flovyn/sdk-rust"
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
-flovyn-core = { path = "../core" }
+flovyn-sdk-core = { path = "../core" }
 uniffi = { version = "0.28", features = ["cli"] }
 tokio = { version = "1.37", features = ["rt-multi-thread", "sync"] }
 tonic = "0.11"

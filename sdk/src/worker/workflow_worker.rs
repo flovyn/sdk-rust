@@ -15,7 +15,7 @@ use crate::workflow::context_impl::WorkflowContextImpl;
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::recorder::CommandCollector;
 use chrono::Utc;
-use flovyn_core::generated::flovyn_v1;
+use flovyn_sdk_core::generated::flovyn_v1;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

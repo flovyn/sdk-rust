@@ -11,7 +11,7 @@ pub struct OAuth2Credentials {
     /// OAuth2 client secret.
     pub client_secret: String,
 
-    /// Token endpoint URL (e.g., "https://keycloak.example.com/realms/myrealm/protocol/openid-connect/token").
+    /// Token endpoint URL (e.g., `https://keycloak.example.com/realms/myrealm/protocol/openid-connect/token`).
     pub token_endpoint: String,
 
     /// Optional scopes (space-separated if multiple).
@@ -21,7 +21,7 @@ pub struct OAuth2Credentials {
 /// Configuration for creating a CoreWorker.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct WorkerConfig {
-    /// Server URL (e.g., "http://localhost:9090").
+    /// Server URL (e.g., `http://localhost:9090`).
     pub server_url: String,
 
     /// Worker token for authentication (should start with "fwt_").
@@ -75,7 +75,7 @@ impl Default for WorkerConfig {
 /// Configuration for creating a CoreClient.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ClientConfig {
-    /// Server URL (e.g., "http://localhost:9090").
+    /// Server URL (e.g., `http://localhost:9090`).
     pub server_url: String,
 
     /// Client token for authentication (should start with "fct_").

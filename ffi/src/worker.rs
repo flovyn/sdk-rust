@@ -5,11 +5,11 @@
 
 use std::sync::Arc;
 
-use flovyn_core::client::{
+use flovyn_sdk_core::client::{
     oauth2, TaskExecutionClient, WorkerLifecycleClient, WorkerType, WorkflowDispatch,
 };
-use flovyn_core::task::TaskMetadata;
-use flovyn_core::workflow::WorkflowMetadata;
+use flovyn_sdk_core::task::TaskMetadata;
+use flovyn_sdk_core::workflow::WorkflowMetadata;
 use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -310,7 +310,7 @@ impl CoreWorker {
         let commands = context.take_commands();
 
         // Convert FFI commands to proto commands for gRPC submission
-        let proto_commands: Vec<flovyn_core::generated::flovyn_v1::WorkflowCommand> = commands
+        let proto_commands: Vec<flovyn_sdk_core::generated::flovyn_v1::WorkflowCommand> = commands
             .iter()
             .enumerate()
             .map(|(i, cmd)| cmd.to_proto_command(i as i32 + 1))

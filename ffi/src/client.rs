@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use flovyn_core::client::{WorkflowDispatch, WorkflowQueryClient};
+use flovyn_sdk_core::client::{WorkflowDispatch, WorkflowQueryClient};
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use uuid::Uuid;

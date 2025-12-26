@@ -1,11 +1,11 @@
 //! Error types for the Flovyn SDK
 
 // Re-export core error types
-pub use flovyn_core::{CoreError, DeterminismViolationError};
+pub use flovyn_sdk_core::{CoreError, DeterminismViolationError};
 
 // Re-export EventType for use in error tests
 #[cfg(test)]
-use flovyn_core::EventType;
+use flovyn_sdk_core::EventType;
 
 /// Main error type for the Flovyn SDK
 #[derive(Debug, thiserror::Error)]

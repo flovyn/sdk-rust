@@ -8,7 +8,7 @@ repository = "https://github.com/flovyn/sdk-rust"
 
 [dependencies]
 # Flovyn Core
-flovyn-core = { path = "../core" }
+flovyn-sdk-core = { path = "../core" }
 
 # Async runtime
 tokio = { version = "1.37", features = ["full"] }
@@ -81,7 +81,7 @@ default = ["oauth2"]
 # Enable testing utilities (MockWorkflowContext, TestWorkflowEnvironment, etc.)
 testing = []
 # Enable OAuth2 authentication (client credentials flow)
-oauth2 = ["flovyn-core/oauth2"]
+oauth2 = ["flovyn-sdk-core/oauth2"]
 
 [[test]]
 name = "unit"

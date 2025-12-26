@@ -7,7 +7,7 @@
 //! OpenTelemetry dependencies.
 
 use crate::client::WorkflowDispatch;
-use flovyn_core::generated::flovyn_v1::{ExecutionSpan, SdkInfo};
+use flovyn_sdk_core::generated::flovyn_v1::{ExecutionSpan, SdkInfo};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;

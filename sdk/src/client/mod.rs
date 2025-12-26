@@ -5,7 +5,7 @@ pub mod flovyn_client;
 pub mod hook;
 
 // Re-export gRPC client types from core
-pub use flovyn_core::client::{
+pub use flovyn_sdk_core::client::{
     AuthInterceptor, RegistrationResult, ReportExecutionSpansResult,
     StartWorkflowResult as GrpcStartWorkflowResult, SubmitTaskResult, TaskExecutionClient,
     TaskExecutionInfo, WorkerLifecycleClient, WorkerType, WorkflowDispatch, WorkflowEvent,
@@ -13,7 +13,7 @@ pub use flovyn_core::client::{
 };
 
 // Re-export conflict types from core worker module
-pub use flovyn_core::worker::{TaskConflict, WorkflowConflict};
+pub use flovyn_sdk_core::worker::{TaskConflict, WorkflowConflict};
 
 // Re-export high-level client types
 pub use builder::{FlovynClientBuilder, DEFAULT_TASK_QUEUE};
@@ -22,4 +22,4 @@ pub use hook::{CompositeWorkflowHook, LoggingHook, NoOpHook, WorkflowHook};
 
 // Re-export OAuth2 types from core when feature is enabled
 #[cfg(feature = "oauth2")]
-pub use flovyn_core::client::OAuth2Credentials;
+pub use flovyn_sdk_core::client::OAuth2Credentials;

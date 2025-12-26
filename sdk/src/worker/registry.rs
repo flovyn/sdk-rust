@@ -34,9 +34,9 @@ pub struct WorkflowMetadata {
     pub content_hash: Option<String>,
 }
 
-impl From<WorkflowMetadata> for flovyn_core::WorkflowMetadata {
+impl From<WorkflowMetadata> for flovyn_sdk_core::WorkflowMetadata {
     fn from(m: WorkflowMetadata) -> Self {
-        flovyn_core::WorkflowMetadata {
+        flovyn_sdk_core::WorkflowMetadata {
             kind: m.kind,
             name: m.name,
             description: m.description,

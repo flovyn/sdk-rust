@@ -3,7 +3,7 @@
 //! This module re-exports recorder types from flovyn-core.
 
 // Re-export all recorder types from core
-pub use flovyn_core::workflow::recorder::{
+pub use flovyn_sdk_core::workflow::recorder::{
     CommandCollector, CommandRecorder, ValidatingCommandRecorder,
 };
 

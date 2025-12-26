@@ -26,8 +26,8 @@
 
 use super::sequence_matching::{Command, SequenceMatchingModel, SequenceMatchingState};
 use chrono::Utc;
-use flovyn_core::workflow::event::{EventType, ReplayEvent};
-use flovyn_core::workflow::ReplayEngine;
+use flovyn_sdk_core::workflow::event::{EventType, ReplayEvent};
+use flovyn_sdk_core::workflow::ReplayEngine;
 use serde_json::json;
 
 /// Outcome of executing a command on the real ReplayEngine.

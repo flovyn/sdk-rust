@@ -17,7 +17,7 @@ use crate::worker::lifecycle::{
 use crate::worker::registry::WorkflowRegistry;
 use crate::worker::task_worker::{TaskExecutorWorker, TaskWorkerConfig};
 use crate::worker::workflow_worker::{WorkflowExecutorWorker, WorkflowWorkerConfig};
-use flovyn_core::generated::flovyn_v1;
+use flovyn_sdk_core::generated::flovyn_v1;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -302,15 +302,17 @@ impl FlovynClient {
             };
 
         // Start task worker if there are registered tasks
+        // Note: Use the same worker_name as the workflow worker so both register
+        // capabilities under the same worker entry on the server
         let (task_handle, task_ready, task_running) = if self.task_registry.has_registrations() {
             let config = TaskWorkerConfig {
-                worker_id: format!("{}-task", self.worker_id),
+                worker_id: self.worker_id.clone(),
                 tenant_id: self.tenant_id,
                 queue: self.task_queue.clone(),
                 poll_timeout: self.poll_timeout,
                 worker_labels: self.config.worker_labels.clone(),
                 heartbeat_interval: self.heartbeat_interval,
-                worker_name: self.worker_name.clone().map(|n| format!("{}-task", n)),
+                worker_name: self.worker_name.clone(),
                 worker_version: self.worker_version.clone(),
                 space_id: self.space_id,
                 enable_auto_registration: self.enable_auto_registration,

@@ -26,7 +26,7 @@
 
 use super::bridge::{build_engine_from_model, execute_command, CommandOutcome};
 use super::sequence_matching::{Command, SequenceMatchingModel};
-use flovyn_core::workflow::ReplayEngine;
+use flovyn_sdk_core::workflow::ReplayEngine;
 use stateright::Model;
 
 // ============================================================================

@@ -3,7 +3,7 @@
 //! This module provides uniffi-compatible error types that wrap internal
 //! errors from `flovyn-core` for consumption by foreign languages.
 
-use flovyn_core::{CoreError, DeterminismViolationError};
+use flovyn_sdk_core::{CoreError, DeterminismViolationError};
 
 /// FFI-compatible error type for all operations.
 ///
@@ -142,8 +142,8 @@ mod tests {
     fn test_from_determinism_violation() {
         let violation = DeterminismViolationError::TypeMismatch {
             sequence: 1,
-            expected: flovyn_core::EventType::OperationCompleted,
-            actual: flovyn_core::EventType::TaskScheduled,
+            expected: flovyn_sdk_core::EventType::OperationCompleted,
+            actual: flovyn_sdk_core::EventType::TaskScheduled,
         };
         let ffi_err: FfiError = violation.into();
         assert!(matches!(ffi_err, FfiError::DeterminismViolation { .. }));

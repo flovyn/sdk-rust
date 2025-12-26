@@ -16,7 +16,7 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 #[cfg(feature = "oauth2")]
-use flovyn_core::client::oauth2::{self, OAuth2Credentials};
+use flovyn_sdk_core::client::oauth2::{self, OAuth2Credentials};
 
 /// Default task queue name
 pub const DEFAULT_TASK_QUEUE: &str = "default";

@@ -5,7 +5,7 @@
 
 /// Event types that can occur during workflow execution.
 ///
-/// This enum mirrors `flovyn_core::EventType` but with uniffi support.
+/// This enum mirrors `flovyn_sdk_core::EventType` but with uniffi support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiEventType {
     // Workflow lifecycle events
@@ -47,9 +47,9 @@ pub enum FfiEventType {
     TimerCancelled,
 }
 
-impl From<flovyn_core::EventType> for FfiEventType {
-    fn from(event_type: flovyn_core::EventType) -> Self {
-        use flovyn_core::EventType;
+impl From<flovyn_sdk_core::EventType> for FfiEventType {
+    fn from(event_type: flovyn_sdk_core::EventType) -> Self {
+        use flovyn_sdk_core::EventType;
         match event_type {
             EventType::WorkflowStarted => FfiEventType::WorkflowStarted,
             EventType::WorkflowCompleted => FfiEventType::WorkflowCompleted,
@@ -79,9 +79,9 @@ impl From<flovyn_core::EventType> for FfiEventType {
     }
 }
 
-impl From<FfiEventType> for flovyn_core::EventType {
+impl From<FfiEventType> for flovyn_sdk_core::EventType {
     fn from(event_type: FfiEventType) -> Self {
-        use flovyn_core::EventType;
+        use flovyn_sdk_core::EventType;
         match event_type {
             FfiEventType::WorkflowStarted => EventType::WorkflowStarted,
             FfiEventType::WorkflowCompleted => EventType::WorkflowCompleted,
@@ -156,13 +156,13 @@ pub enum FfiStopReason {
     Error { msg: String },
 }
 
-impl From<flovyn_core::StopReason> for FfiStopReason {
-    fn from(reason: flovyn_core::StopReason) -> Self {
+impl From<flovyn_sdk_core::StopReason> for FfiStopReason {
+    fn from(reason: flovyn_sdk_core::StopReason) -> Self {
         match reason {
-            flovyn_core::StopReason::Graceful => FfiStopReason::Graceful,
-            flovyn_core::StopReason::Immediate => FfiStopReason::Immediate,
-            flovyn_core::StopReason::Aborted => FfiStopReason::Aborted,
-            flovyn_core::StopReason::Error(m) => FfiStopReason::Error { msg: m },
+            flovyn_sdk_core::StopReason::Graceful => FfiStopReason::Graceful,
+            flovyn_sdk_core::StopReason::Immediate => FfiStopReason::Immediate,
+            flovyn_sdk_core::StopReason::Aborted => FfiStopReason::Aborted,
+            flovyn_sdk_core::StopReason::Error(m) => FfiStopReason::Error { msg: m },
         }
     }
 }
@@ -186,15 +186,15 @@ pub enum FfiTaskExecutionResult {
     Cancelled,
 }
 
-impl From<flovyn_core::TaskExecutionResult> for FfiTaskExecutionResult {
-    fn from(result: flovyn_core::TaskExecutionResult) -> Self {
+impl From<flovyn_sdk_core::TaskExecutionResult> for FfiTaskExecutionResult {
+    fn from(result: flovyn_sdk_core::TaskExecutionResult) -> Self {
         match result {
-            flovyn_core::TaskExecutionResult::Completed { output } => {
+            flovyn_sdk_core::TaskExecutionResult::Completed { output } => {
                 FfiTaskExecutionResult::Completed {
                     output: serde_json::to_vec(&output).unwrap_or_default(),
                 }
             }
-            flovyn_core::TaskExecutionResult::Failed {
+            flovyn_sdk_core::TaskExecutionResult::Failed {
                 error_message,
                 is_retryable,
                 ..
@@ -202,8 +202,8 @@ impl From<flovyn_core::TaskExecutionResult> for FfiTaskExecutionResult {
                 error: error_message,
                 retryable: is_retryable,
             },
-            flovyn_core::TaskExecutionResult::Cancelled => FfiTaskExecutionResult::Cancelled,
-            flovyn_core::TaskExecutionResult::TimedOut => FfiTaskExecutionResult::Failed {
+            flovyn_sdk_core::TaskExecutionResult::Cancelled => FfiTaskExecutionResult::Cancelled,
+            flovyn_sdk_core::TaskExecutionResult::TimedOut => FfiTaskExecutionResult::Failed {
                 error: "Task timed out".to_string(),
                 retryable: true,
             },
@@ -226,14 +226,14 @@ pub struct FfiReplayEvent {
 
 impl FfiReplayEvent {
     /// Convert to core ReplayEvent for use with ReplayEngine.
-    pub fn to_replay_event(&self) -> Option<flovyn_core::workflow::ReplayEvent> {
+    pub fn to_replay_event(&self) -> Option<flovyn_sdk_core::workflow::ReplayEvent> {
         use chrono::{DateTime, Utc};
 
         let data: serde_json::Value = serde_json::from_slice(&self.data).ok()?;
         let timestamp = DateTime::<Utc>::from_timestamp_millis(self.timestamp_ms)
             .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
 
-        Some(flovyn_core::workflow::ReplayEvent::new(
+        Some(flovyn_sdk_core::workflow::ReplayEvent::new(
             self.sequence_number,
             self.event_type.into(),
             data,
@@ -248,19 +248,19 @@ mod tests {
 
     #[test]
     fn test_event_type_roundtrip() {
-        let event_type = flovyn_core::EventType::TaskCompleted;
+        let event_type = flovyn_sdk_core::EventType::TaskCompleted;
         let ffi_type: FfiEventType = event_type.into();
-        let back: flovyn_core::EventType = ffi_type.into();
+        let back: flovyn_sdk_core::EventType = ffi_type.into();
         assert_eq!(event_type, back);
     }
 
     #[test]
     fn test_stop_reason_conversion() {
-        let reason = flovyn_core::StopReason::Graceful;
+        let reason = flovyn_sdk_core::StopReason::Graceful;
         let ffi_reason: FfiStopReason = reason.into();
         assert!(matches!(ffi_reason, FfiStopReason::Graceful));
 
-        let reason = flovyn_core::StopReason::Error("test error".to_string());
+        let reason = flovyn_sdk_core::StopReason::Error("test error".to_string());
         let ffi_reason: FfiStopReason = reason.into();
         assert!(matches!(ffi_reason, FfiStopReason::Error { msg } if msg == "test error"));
     }

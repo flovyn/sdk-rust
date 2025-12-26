@@ -114,10 +114,9 @@ async fn assert_deterministic<W>(
         "Workflow result status differs between runs"
     );
 
-    if result1.is_ok() {
+    if let (Ok(output1), Ok(output2)) = (&result1, &result2) {
         assert_eq!(
-            result1.unwrap(),
-            result2.unwrap(),
+            output1, output2,
             "Workflow produced different output on second run"
         );
     }

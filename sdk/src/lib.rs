@@ -72,7 +72,7 @@ pub mod worker;
 pub mod workflow;
 
 // Re-export generated module from core
-pub use flovyn_core::generated;
+pub use flovyn_sdk_core::generated;
 
 /// Testing utilities for workflows and tasks.
 /// Available only with the `testing` feature enabled.

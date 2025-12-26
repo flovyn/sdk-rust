@@ -40,6 +40,6 @@
 //! - Streaming errors don't fail the task
 
 // Re-export streaming types from core
-pub use flovyn_core::task::streaming::{
+pub use flovyn_sdk_core::task::streaming::{
     StreamError, StreamEvent, StreamEventType, TaskStreamEvent,
 };

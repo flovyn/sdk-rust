@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use flovyn_core::client::oauth2::{OAuth2Credentials, fetch_access_token};
+//! use flovyn_sdk_core::client::oauth2::{OAuth2Credentials, fetch_access_token};
 //!
 //! let credentials = OAuth2Credentials::new(
 //!     "my-client-id",

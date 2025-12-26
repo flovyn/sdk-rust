@@ -11,9 +11,9 @@ use crate::workflow::future::{
 };
 use crate::workflow::recorder::CommandRecorder;
 use async_trait::async_trait;
-use flovyn_core::generated::flovyn_v1::ExecutionSpan;
-use flovyn_core::workflow::execution::SeededRandom;
-use flovyn_core::workflow::ReplayEngine;
+use flovyn_sdk_core::generated::flovyn_v1::ExecutionSpan;
+use flovyn_sdk_core::workflow::execution::SeededRandom;
+use flovyn_sdk_core::workflow::ReplayEngine;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;

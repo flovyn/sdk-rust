@@ -13,8 +13,8 @@
 //!    - If new: generate command and return Pending
 //! 5. Commands are extracted at completion time
 
-use flovyn_core::workflow::execution::{DeterministicRandom, SeededRandom};
-use flovyn_core::workflow::ReplayEngine;
+use flovyn_sdk_core::workflow::execution::{DeterministicRandom, SeededRandom};
+use flovyn_sdk_core::workflow::ReplayEngine;
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -186,7 +186,7 @@ impl ParsedEvent {
     }
 }
 
-// SeededRandom is imported from flovyn_core::workflow::execution
+// SeededRandom is imported from flovyn_sdk_core::workflow::execution
 
 // ============================================================================
 // FfiWorkflowContext - Main context object
@@ -245,7 +245,7 @@ impl FfiWorkflowContext {
         cancellation_requested: bool,
     ) -> Arc<Self> {
         // Convert FFI events to core ReplayEvents for ReplayEngine
-        let replay_events: Vec<flovyn_core::workflow::ReplayEvent> =
+        let replay_events: Vec<flovyn_sdk_core::workflow::ReplayEvent> =
             events.iter().filter_map(|e| e.to_replay_event()).collect();
 
         // Create the replay engine

@@ -1,5 +1,5 @@
 [package]
-name = "flovyn-core"
+name = "flovyn-sdk-core"
 version = "0.1.0"
 edition = "2021"
 description = "Flovyn Core - Language-agnostic workflow orchestration core"

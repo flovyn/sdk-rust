@@ -16,7 +16,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 // Re-export DeterministicRandom from core for public API compatibility
-pub use flovyn_core::workflow::execution::DeterministicRandom;
+pub use flovyn_sdk_core::workflow::execution::DeterministicRandom;
 
 /// Options for scheduling a task
 #[derive(Debug, Clone, Default)]

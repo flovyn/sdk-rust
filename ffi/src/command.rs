@@ -143,8 +143,8 @@ impl FfiWorkflowCommand {
     pub fn to_proto_command(
         &self,
         sequence_number: i32,
-    ) -> flovyn_core::generated::flovyn_v1::WorkflowCommand {
-        use flovyn_core::generated::flovyn_v1::{self, workflow_command::CommandData};
+    ) -> flovyn_sdk_core::generated::flovyn_v1::WorkflowCommand {
+        use flovyn_sdk_core::generated::flovyn_v1::{self, workflow_command::CommandData};
 
         let (command_type, command_data) = match self {
             FfiWorkflowCommand::RecordOperation {
@@ -305,8 +305,8 @@ impl FfiWorkflowCommand {
     }
 
     /// Convert to core WorkflowCommand with a sequence number.
-    pub fn to_core_command(&self, sequence_number: i32) -> flovyn_core::WorkflowCommand {
-        use flovyn_core::WorkflowCommand;
+    pub fn to_core_command(&self, sequence_number: i32) -> flovyn_sdk_core::WorkflowCommand {
+        use flovyn_sdk_core::WorkflowCommand;
 
         match self {
             FfiWorkflowCommand::RecordOperation {
@@ -443,7 +443,7 @@ mod tests {
         let core_cmd = cmd.to_core_command(1);
         assert!(matches!(
             core_cmd,
-            flovyn_core::WorkflowCommand::RecordOperation {
+            flovyn_sdk_core::WorkflowCommand::RecordOperation {
                 sequence_number: 1,
                 ..
             }
@@ -458,7 +458,7 @@ mod tests {
         let core_cmd = cmd.to_core_command(10);
         assert!(matches!(
             core_cmd,
-            flovyn_core::WorkflowCommand::CompleteWorkflow {
+            flovyn_sdk_core::WorkflowCommand::CompleteWorkflow {
                 sequence_number: 10,
                 ..
             }
@@ -479,7 +479,7 @@ mod tests {
         let core_cmd = cmd.to_core_command(5);
         assert!(matches!(
             core_cmd,
-            flovyn_core::WorkflowCommand::ScheduleTask {
+            flovyn_sdk_core::WorkflowCommand::ScheduleTask {
                 sequence_number: 5,
                 ..
             }

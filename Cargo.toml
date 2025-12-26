@@ -19,7 +19,7 @@ rust-version = "1.82.0"
 
 [workspace.dependencies]
 # Flovyn SDK
-flovyn-core = { path = "./core" }
+flovyn-sdk-core = { path = "./core" }
 flovyn-sdk = { path = "./sdk" }
 
 # Async runtime

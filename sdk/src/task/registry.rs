@@ -34,9 +34,9 @@ pub struct TaskMetadata {
     pub heartbeat_timeout_seconds: Option<u32>,
 }
 
-impl From<TaskMetadata> for flovyn_core::TaskMetadata {
+impl From<TaskMetadata> for flovyn_sdk_core::TaskMetadata {
     fn from(m: TaskMetadata) -> Self {
-        flovyn_core::TaskMetadata {
+        flovyn_sdk_core::TaskMetadata {
             kind: m.kind,
             name: m.name,
             description: m.description,

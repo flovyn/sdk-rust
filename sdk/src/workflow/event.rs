@@ -3,6 +3,6 @@
 //! This module re-exports event types from flovyn-core.
 
 // Re-export all event types from core
-pub use flovyn_core::workflow::event::{EventType, ReplayEvent};
+pub use flovyn_sdk_core::workflow::event::{EventType, ReplayEvent};
 
 // Note: All tests for these types are in flovyn-core
