@@ -1,13 +1,11 @@
 //! TaskExecutorWorker - Polling service for task execution
 
-use crate::client::{TaskExecutionClient, WorkerLifecycleClient, WorkerType, WorkflowDispatch};
+use crate::client::{TaskExecutionClient, WorkerLifecycleClient, WorkflowDispatch};
 use crate::error::{FlovynError, Result};
 use crate::task::executor::{TaskExecutionResult, TaskExecutor, TaskExecutorConfig};
 use crate::task::registry::TaskRegistry;
 use crate::telemetry::{task_execute_span, SpanCollector};
-use crate::worker::lifecycle::{
-    HookChain, ReconnectionStrategy, RegistrationInfo, StopReason, TaskConflict, WorkerInternals,
-};
+use crate::worker::lifecycle::{HookChain, ReconnectionStrategy, StopReason, WorkerInternals};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,6 +45,9 @@ pub struct TaskWorkerConfig {
     pub lifecycle_hooks: HookChain,
     /// Reconnection strategy for connection recovery
     pub reconnection_strategy: ReconnectionStrategy,
+    /// Pre-registered server worker ID (from unified registration)
+    /// If set, skip auto-registration and use this ID
+    pub server_worker_id: Option<Uuid>,
 }
 
 impl Default for TaskWorkerConfig {
@@ -66,6 +67,7 @@ impl Default for TaskWorkerConfig {
             enable_telemetry: false,
             lifecycle_hooks: HookChain::new(),
             reconnection_strategy: ReconnectionStrategy::default(),
+            server_worker_id: None,
         }
     }
 }
@@ -182,84 +184,6 @@ impl TaskExecutorWorker {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Register worker with the server
-    async fn register_with_server(&mut self) -> Result<()> {
-        if !self.config.enable_auto_registration {
-            debug!("Auto-registration disabled, skipping task worker registration");
-            return Ok(());
-        }
-
-        let worker_name = self
-            .config
-            .worker_name
-            .clone()
-            .unwrap_or_else(|| self.config.worker_id.clone());
-
-        let tasks = self.registry.get_all_metadata();
-        let task_kinds: Vec<String> = tasks.iter().map(|m| m.kind.clone()).collect();
-
-        info!(
-            worker_name = %worker_name,
-            task_count = tasks.len(),
-            "Registering task worker with server"
-        );
-
-        let mut lifecycle_client =
-            WorkerLifecycleClient::new(self.channel.clone(), &self.config.worker_token);
-
-        let result = lifecycle_client
-            .register_worker(
-                &worker_name,
-                &self.config.worker_version,
-                WorkerType::Task,
-                self.config.tenant_id,
-                self.config.space_id,
-                vec![], // No workflows for task worker
-                tasks.into_iter().map(Into::into).collect(),
-            )
-            .await?;
-
-        // Convert to RegistrationInfo and update internals
-        let registration_info = RegistrationInfo {
-            worker_id: result.worker_id,
-            success: result.success,
-            registered_at: std::time::SystemTime::now(),
-            workflow_kinds: vec![],
-            task_kinds,
-            workflow_conflicts: vec![],
-            task_conflicts: result
-                .task_conflicts
-                .iter()
-                .map(|c| TaskConflict {
-                    kind: c.kind.clone(),
-                    reason: c.reason.clone(),
-                    existing_worker_id: c.existing_worker_id.clone(),
-                })
-                .collect(),
-        };
-
-        if result.success {
-            self.server_worker_id = Some(result.worker_id);
-            info!(
-                server_worker_id = %result.worker_id,
-                "Task worker registered successfully"
-            );
-        } else {
-            warn!(
-                error = ?result.error,
-                task_conflicts = result.task_conflicts.len(),
-                "Task worker registration failed or had conflicts"
-            );
-        }
-
-        // Update internals and emit events
-        self.internals
-            .set_registration_info(registration_info)
-            .await;
-
-        Ok(())
-    }
-
     /// Run heartbeat loop
     async fn heartbeat_loop(
         channel: Channel,
@@ -316,14 +240,14 @@ impl TaskExecutorWorker {
             "Starting task worker"
         );
 
-        // Emit Starting event
-        self.internals.record_starting().await;
-
-        // Register with server
-        if let Err(e) = self.register_with_server().await {
-            warn!("Failed to register task worker: {}", e);
-            // Continue anyway - registration is best-effort
+        // Only emit Starting event if we're doing auto-registration
+        // (unified registration already set the status to Running)
+        if self.config.enable_auto_registration {
+            self.internals.record_starting().await;
         }
+
+        // Use the server_worker_id from config (set by unified registration in FlovynClient)
+        self.server_worker_id = self.config.server_worker_id;
 
         // Start heartbeat loop in background
         let heartbeat_running = self.running.clone();

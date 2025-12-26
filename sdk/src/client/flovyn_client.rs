@@ -5,7 +5,10 @@
 
 use crate::client::builder::FlovynClientBuilder;
 use crate::client::hook::WorkflowHook;
-use crate::client::{AuthInterceptor, TaskExecutionClient, WorkflowDispatch, WorkflowQueryClient};
+use crate::client::{
+    AuthInterceptor, TaskExecutionClient, WorkerLifecycleClient, WorkerType, WorkflowDispatch,
+    WorkflowQueryClient,
+};
 use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
 use crate::task::registry::TaskRegistry;
@@ -26,7 +29,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::{watch, Notify};
 use tonic::transport::Channel;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Result of starting a workflow
@@ -252,6 +255,9 @@ impl FlovynClient {
         // Create shutdown channel for immediate shutdown signaling
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
+        // Perform unified registration for both workflows and tasks
+        let server_worker_id = self.register_unified(&internals).await?;
+
         // Start workflow worker if there are registered workflows
         let (workflow_handle, workflow_ready, workflow_running) =
             if self.workflow_registry.has_registrations() {
@@ -265,12 +271,13 @@ impl FlovynClient {
                     worker_name: self.worker_name.clone(),
                     worker_version: self.worker_version.clone(),
                     space_id: self.space_id,
-                    enable_auto_registration: self.enable_auto_registration,
+                    enable_auto_registration: false, // Unified registration already done
                     enable_notifications: true,
                     worker_token: self.worker_token.clone(),
                     enable_telemetry: self.enable_telemetry,
                     lifecycle_hooks: self.lifecycle_hooks.clone(),
                     reconnection_strategy: self.reconnection_strategy.clone(),
+                    server_worker_id,
                 };
 
                 let mut worker = WorkflowExecutorWorker::new(
@@ -302,8 +309,6 @@ impl FlovynClient {
             };
 
         // Start task worker if there are registered tasks
-        // Note: Use the same worker_name as the workflow worker so both register
-        // capabilities under the same worker entry on the server
         let (task_handle, task_ready, task_running) = if self.task_registry.has_registrations() {
             let config = TaskWorkerConfig {
                 worker_id: self.worker_id.clone(),
@@ -315,11 +320,12 @@ impl FlovynClient {
                 worker_name: self.worker_name.clone(),
                 worker_version: self.worker_version.clone(),
                 space_id: self.space_id,
-                enable_auto_registration: self.enable_auto_registration,
+                enable_auto_registration: false, // Unified registration already done
                 worker_token: self.worker_token.clone(),
                 enable_telemetry: self.enable_telemetry,
                 lifecycle_hooks: self.lifecycle_hooks.clone(),
                 reconnection_strategy: self.reconnection_strategy.clone(),
+                server_worker_id,
             };
 
             let mut worker =
@@ -627,6 +633,106 @@ impl FlovynClient {
     /// Get the task registry
     pub fn task_registry(&self) -> &TaskRegistry {
         &self.task_registry
+    }
+
+    /// Perform unified registration for both workflows and tasks
+    ///
+    /// This sends a single registration request with all workflow and task capabilities,
+    /// using UNIFIED worker type. Returns the server-assigned worker ID.
+    async fn register_unified(&self, internals: &Arc<WorkerInternals>) -> Result<Option<Uuid>> {
+        if !self.enable_auto_registration {
+            debug!("Auto-registration disabled, skipping unified registration");
+            return Ok(None);
+        }
+
+        // Skip if no capabilities to register
+        if !self.workflow_registry.has_registrations() && !self.task_registry.has_registrations() {
+            debug!("No workflows or tasks registered, skipping registration");
+            return Ok(None);
+        }
+
+        let worker_name = self
+            .worker_name
+            .clone()
+            .unwrap_or_else(|| self.worker_id.clone());
+
+        // Collect all workflow metadata
+        let workflows = self.workflow_registry.get_all_metadata();
+        let workflow_kinds: Vec<String> = workflows.iter().map(|m| m.kind.clone()).collect();
+
+        // Collect all task metadata
+        let tasks = self.task_registry.get_all_metadata();
+        let task_kinds: Vec<String> = tasks.iter().map(|m| m.kind.clone()).collect();
+
+        info!(
+            worker_name = %worker_name,
+            workflow_count = workflows.len(),
+            task_count = tasks.len(),
+            "Registering worker with unified capabilities"
+        );
+
+        let mut lifecycle_client =
+            WorkerLifecycleClient::new(self.channel.clone(), &self.worker_token);
+
+        let result = lifecycle_client
+            .register_worker(
+                &worker_name,
+                &self.worker_version,
+                WorkerType::Unified,
+                self.tenant_id,
+                self.space_id,
+                workflows.into_iter().map(Into::into).collect(),
+                tasks.into_iter().map(Into::into).collect(),
+            )
+            .await?;
+
+        // Convert to RegistrationInfo and update internals
+        let registration_info = RegistrationInfo {
+            worker_id: result.worker_id,
+            success: result.success,
+            registered_at: std::time::SystemTime::now(),
+            workflow_kinds,
+            task_kinds,
+            workflow_conflicts: result
+                .workflow_conflicts
+                .iter()
+                .map(|c| WorkflowConflict {
+                    kind: c.kind.clone(),
+                    reason: c.reason.clone(),
+                    existing_worker_id: c.existing_worker_id.clone(),
+                })
+                .collect(),
+            task_conflicts: result
+                .task_conflicts
+                .iter()
+                .map(|c| TaskConflict {
+                    kind: c.kind.clone(),
+                    reason: c.reason.clone(),
+                    existing_worker_id: c.existing_worker_id.clone(),
+                })
+                .collect(),
+        };
+
+        let server_worker_id = if result.success {
+            info!(
+                server_worker_id = %result.worker_id,
+                "Worker registered successfully with unified capabilities"
+            );
+            Some(result.worker_id)
+        } else {
+            warn!(
+                error = ?result.error,
+                workflow_conflicts = result.workflow_conflicts.len(),
+                task_conflicts = result.task_conflicts.len(),
+                "Worker registration failed or had conflicts"
+            );
+            None
+        };
+
+        // Update internals and emit events
+        internals.set_registration_info(registration_info).await;
+
+        Ok(server_worker_id)
     }
 }
 
