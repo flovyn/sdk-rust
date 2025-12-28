@@ -37,7 +37,7 @@ pub struct WorkerConfig {
     pub tenant_id: String,
 
     /// Task queue to poll for work.
-    pub task_queue: String,
+    pub queue: String,
 
     /// Optional worker identity for debugging/monitoring.
     pub worker_identity: Option<String>,
@@ -62,7 +62,7 @@ impl Default for WorkerConfig {
             worker_token: None,
             oauth2_credentials: None,
             tenant_id: "00000000-0000-0000-0000-000000000000".to_string(),
-            task_queue: "default".to_string(),
+            queue: "default".to_string(),
             worker_identity: None,
             max_concurrent_workflow_tasks: Some(100),
             max_concurrent_tasks: Some(100),
@@ -112,7 +112,7 @@ mod tests {
         assert_eq!(config.server_url, "http://localhost:9090");
         assert!(config.worker_token.is_none());
         assert_eq!(config.tenant_id, "00000000-0000-0000-0000-000000000000");
-        assert_eq!(config.task_queue, "default");
+        assert_eq!(config.queue, "default");
         assert!(config.worker_identity.is_none());
     }
 

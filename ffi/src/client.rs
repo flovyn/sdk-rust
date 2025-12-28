@@ -84,7 +84,7 @@ impl CoreClient {
     /// # Arguments
     /// * `workflow_kind` - The type/kind of workflow to start
     /// * `input` - Serialized input as JSON bytes
-    /// * `task_queue` - Optional task queue (defaults to "default")
+    /// * `queue` - Optional task queue (defaults to "default")
     /// * `workflow_version` - Optional workflow version
     /// * `idempotency_key` - Optional idempotency key for deduplication
     ///
@@ -94,7 +94,7 @@ impl CoreClient {
         &self,
         workflow_kind: String,
         input: Vec<u8>,
-        task_queue: Option<String>,
+        queue: Option<String>,
         workflow_version: Option<String>,
         idempotency_key: Option<String>,
     ) -> Result<StartWorkflowResponse, FfiError> {
@@ -109,7 +109,7 @@ impl CoreClient {
                     &self.config.tenant_id,
                     &workflow_kind,
                     input_value,
-                    task_queue.as_deref(),
+                    queue.as_deref(),
                     workflow_version.as_deref(),
                     idempotency_key.as_deref(),
                 )

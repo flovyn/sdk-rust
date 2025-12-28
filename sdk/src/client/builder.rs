@@ -28,7 +28,7 @@ pub const DEFAULT_TASK_QUEUE: &str = "default";
 /// let client = FlovynClient::builder()
 ///     .server_address("localhost", 9090)
 ///     .tenant_id(tenant_id)
-///     .task_queue("my-queue")
+///     .queue("my-queue")
 ///     .register_workflow(MyWorkflow::new())
 ///     .register_task(MyTask::new())
 ///     .build()
@@ -39,7 +39,7 @@ pub struct FlovynClientBuilder {
     server_port: u16,
     tenant_id: Uuid,
     worker_id: String,
-    task_queue: String,
+    queue: String,
     config: FlovynClientConfig,
     custom_channel: Option<Channel>,
     poll_timeout: Duration,
@@ -78,7 +78,7 @@ impl FlovynClientBuilder {
             server_port: 9090,
             tenant_id: Uuid::new_v4(),
             worker_id: format!("worker-{}", Uuid::new_v4()),
-            task_queue: DEFAULT_TASK_QUEUE.to_string(),
+            queue: DEFAULT_TASK_QUEUE.to_string(),
             config: FlovynClientConfig::default(),
             custom_channel: None,
             poll_timeout: Duration::from_secs(60),
@@ -123,8 +123,8 @@ impl FlovynClientBuilder {
     /// Workers only execute workflows from their assigned queue.
     ///
     /// Default: "default"
-    pub fn task_queue(mut self, queue: impl Into<String>) -> Self {
-        self.task_queue = queue.into();
+    pub fn queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = queue.into();
         self
     }
 
@@ -520,7 +520,7 @@ impl FlovynClientBuilder {
         Ok(super::FlovynClient {
             tenant_id: self.tenant_id,
             worker_id: self.worker_id,
-            task_queue: self.task_queue,
+            queue: self.queue,
             poll_timeout: self.poll_timeout,
             config: self.config,
             channel,
@@ -551,7 +551,7 @@ mod tests {
         let builder = FlovynClientBuilder::new();
         assert_eq!(builder.server_host, "localhost");
         assert_eq!(builder.server_port, 9090);
-        assert_eq!(builder.task_queue, "default");
+        assert_eq!(builder.queue, "default");
         assert_eq!(builder.poll_timeout, Duration::from_secs(60));
     }
 
@@ -570,9 +570,9 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_task_queue() {
-        let builder = FlovynClientBuilder::new().task_queue("gpu-workers");
-        assert_eq!(builder.task_queue, "gpu-workers");
+    fn test_builder_queue() {
+        let builder = FlovynClientBuilder::new().queue("gpu-workers");
+        assert_eq!(builder.queue, "gpu-workers");
     }
 
     #[test]

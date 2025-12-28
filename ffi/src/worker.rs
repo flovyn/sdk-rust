@@ -152,7 +152,7 @@ impl CoreWorker {
             .config
             .worker_identity
             .clone()
-            .unwrap_or_else(|| format!("ffi-worker-{}", &self.config.task_queue));
+            .unwrap_or_else(|| format!("ffi-worker-{}", &self.config.queue));
 
         // Get tenant ID from config
         let tenant_id = Uuid::parse_str(&self.config.tenant_id).unwrap_or_else(|_| Uuid::nil());
@@ -216,7 +216,7 @@ impl CoreWorker {
                 .poll_workflow(
                     &worker_id.to_string(),
                     &self.config.tenant_id,
-                    &self.config.task_queue,
+                    &self.config.queue,
                     std::time::Duration::from_secs(30),
                 )
                 .await
@@ -382,7 +382,7 @@ impl CoreWorker {
                 .poll_task(
                     &worker_id.to_string(),
                     &self.config.tenant_id,
-                    &self.config.task_queue,
+                    &self.config.queue,
                     std::time::Duration::from_secs(30),
                 )
                 .await

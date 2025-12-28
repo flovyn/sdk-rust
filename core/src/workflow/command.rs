@@ -56,7 +56,7 @@ pub enum WorkflowCommand {
         child_execution_id: Uuid,
         input: Value,
         #[serde(rename = "taskQueue")]
-        task_queue: String,
+        queue: String,
         #[serde(rename = "prioritySeconds")]
         priority_seconds: i32,
     },
@@ -389,7 +389,7 @@ mod tests {
             definition_id: None,
             child_execution_id: Uuid::new_v4(),
             input: json!({"orderId": "123"}),
-            task_queue: "default".to_string(),
+            queue: "default".to_string(),
             priority_seconds: 0,
         };
 
@@ -451,7 +451,7 @@ mod tests {
                 definition_id: None,
                 child_execution_id: Uuid::nil(),
                 input: json!(null),
-                task_queue: "q".to_string(),
+                queue: "q".to_string(),
                 priority_seconds: 0,
             },
             WorkflowCommand::CompleteWorkflow {

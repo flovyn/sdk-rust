@@ -77,7 +77,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .server_address(&server_host, server_port)
         .tenant_id(tenant_id)
         .worker_token(worker_token)
-        .task_queue("patterns")
+        .queue("patterns")
         .max_concurrent_workflows(10)
         // Timer workflows
         .register_workflow(ReminderWorkflow)

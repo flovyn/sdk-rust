@@ -57,7 +57,7 @@ message PollRequest {
   string tenant_id = 2;
 
   // Task queue to poll from (e.g., "default", "gpu-workers")
-  string task_queue = 3;
+  string queue = 3;
 
   // Long polling timeout in seconds (e.g., 60)
   int64 timeout_seconds = 4;
@@ -77,7 +77,7 @@ message SubscriptionRequest {
   string tenant_id = 2;
 
   // Task queue to subscribe to
-  string task_queue = 3;
+  string queue = 3;
 }
 
 message PollResponse {
@@ -102,7 +102,7 @@ message WorkflowExecution {
   bytes input = 4;
 
   // Task queue for worker routing (e.g., "default", "gpu-workers")
-  string task_queue = 5;
+  string queue = 5;
 
   // Time-offset priority in milliseconds (priority score = created_at - priority_ms)
   int64 priority_ms = 6;
@@ -142,7 +142,7 @@ message WorkAvailableEvent {
   string tenant_id = 1;
 
   // Task queue where work is available
-  string task_queue = 2;
+  string queue = 2;
 
   // Timestamp of notification (milliseconds since epoch)
   int64 timestamp_ms = 3;
@@ -155,7 +155,7 @@ message StartWorkflowRequest {
   map<string, string> labels = 4;
 
   // Task queue routing (default: "default")
-  string task_queue = 5;
+  string queue = 5;
 
   // Time-offset priority in seconds (default: 0)
   int32 priority_seconds = 6;
@@ -213,7 +213,7 @@ message StartChildWorkflowRequest {
   bytes input = 6;
 
   // Task queue (inherits parent if empty)
-  string task_queue = 7;
+  string queue = 7;
 
   // Time-offset priority in seconds (default: 0)
   int32 priority_seconds = 8;
@@ -567,7 +567,7 @@ message ScheduleChildWorkflowCommand {
   optional string workflow_definition_id = 3;
   string child_workflow_execution_id = 4;
   bytes input = 5;
-  string task_queue = 6;
+  string queue = 6;
   int32 priority_seconds = 7;
 }
 

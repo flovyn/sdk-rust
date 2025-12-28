@@ -669,7 +669,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             definition_id: None,
             child_execution_id,
             input,
-            task_queue: String::new(),
+            queue: String::new(),
             priority_seconds: 0,
         }) {
             return ChildWorkflowFuture::with_error(e);

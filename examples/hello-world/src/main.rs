@@ -163,7 +163,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .server_address(&server_host, server_port)
         .tenant_id(tenant_id)
         .worker_token(worker_token)
-        .task_queue("hello-world")
+        .queue("hello-world")
         .register_workflow(GreetingWorkflow)
         .register_task(EchoTask)
         .build()

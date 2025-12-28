@@ -49,7 +49,7 @@ pub struct StartWorkflowOptions {
     /// Labels for the workflow
     pub labels: std::collections::HashMap<String, String>,
     /// Task queue to use
-    pub task_queue: String,
+    pub queue: String,
     /// Priority in seconds (higher = lower priority)
     pub priority_seconds: i32,
     /// Idempotency key for deduplication
@@ -64,7 +64,7 @@ impl StartWorkflowOptions {
     /// Create new options with default task queue
     pub fn new() -> Self {
         Self {
-            task_queue: "default".to_string(),
+            queue: "default".to_string(),
             ..Default::default()
         }
     }
@@ -76,8 +76,8 @@ impl StartWorkflowOptions {
     }
 
     /// Set task queue
-    pub fn with_task_queue(mut self, queue: impl Into<String>) -> Self {
-        self.task_queue = queue.into();
+    pub fn with_queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = queue.into();
         self
     }
 
@@ -110,7 +110,7 @@ impl StartWorkflowOptions {
 pub struct FlovynClient {
     pub(crate) tenant_id: Uuid,
     pub(crate) worker_id: String,
-    pub(crate) task_queue: String,
+    pub(crate) queue: String,
     pub(crate) poll_timeout: Duration,
     pub(crate) config: FlovynClientConfig,
     pub(crate) channel: Channel,
@@ -152,8 +152,8 @@ impl FlovynClient {
     }
 
     /// Get the task queue
-    pub fn task_queue(&self) -> &str {
-        &self.task_queue
+    pub fn queue(&self) -> &str {
+        &self.queue
     }
 
     /// Check if a workflow is registered
@@ -241,7 +241,7 @@ impl FlovynClient {
         info!(
             worker_id = %self.worker_id,
             tenant_id = %self.tenant_id,
-            task_queue = %self.task_queue,
+            queue = %self.queue,
             "Starting FlovynClient"
         );
 
@@ -264,7 +264,7 @@ impl FlovynClient {
                 let config = WorkflowWorkerConfig {
                     worker_id: self.worker_id.clone(),
                     tenant_id: self.tenant_id,
-                    task_queue: self.task_queue.clone(),
+                    queue: self.queue.clone(),
                     poll_timeout: self.poll_timeout,
                     max_concurrent: self.config.workflow_config.max_concurrent,
                     heartbeat_interval: self.heartbeat_interval,
@@ -313,7 +313,7 @@ impl FlovynClient {
             let config = TaskWorkerConfig {
                 worker_id: self.worker_id.clone(),
                 tenant_id: self.tenant_id,
-                queue: self.task_queue.clone(),
+                queue: self.queue.clone(),
                 poll_timeout: self.poll_timeout,
                 worker_labels: self.config.worker_labels.clone(),
                 heartbeat_interval: self.heartbeat_interval,
@@ -384,7 +384,7 @@ impl FlovynClient {
                 &self.tenant_id.to_string(),
                 workflow_kind,
                 input,
-                Some(&options.task_queue),
+                Some(&options.queue),
                 options.workflow_version.as_deref(),
                 options.idempotency_key.as_deref(),
             )
@@ -1057,7 +1057,7 @@ mod tests {
     #[test]
     fn test_start_workflow_options_default() {
         let options = StartWorkflowOptions::new();
-        assert_eq!(options.task_queue, "default");
+        assert_eq!(options.queue, "default");
         assert_eq!(options.priority_seconds, 0);
         assert!(options.idempotency_key.is_none());
     }
@@ -1065,11 +1065,11 @@ mod tests {
     #[test]
     fn test_start_workflow_options_builder() {
         let options = StartWorkflowOptions::new()
-            .with_task_queue("gpu-workers")
+            .with_queue("gpu-workers")
             .with_priority(10)
             .with_idempotency_key("order-123");
 
-        assert_eq!(options.task_queue, "gpu-workers");
+        assert_eq!(options.queue, "gpu-workers");
         assert_eq!(options.priority_seconds, 10);
         assert_eq!(options.idempotency_key, Some("order-123".to_string()));
     }
@@ -1121,13 +1121,13 @@ mod tests {
     #[test]
     fn test_start_workflow_options_full_builder() {
         let options = StartWorkflowOptions::new()
-            .with_task_queue("ml-workers")
+            .with_queue("ml-workers")
             .with_priority(5)
             .with_workflow_version("1.2.3")
             .with_idempotency_key("order-456")
             .with_idempotency_key_ttl(Duration::from_secs(7200));
 
-        assert_eq!(options.task_queue, "ml-workers");
+        assert_eq!(options.queue, "ml-workers");
         assert_eq!(options.priority_seconds, 5);
         assert_eq!(options.workflow_version, Some("1.2.3".to_string()));
         assert_eq!(options.idempotency_key, Some("order-456".to_string()));

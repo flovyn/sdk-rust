@@ -21,13 +21,13 @@ async fn test_e2e_parallel_tasks_join_all() {
     with_timeout(TEST_TIMEOUT, "test_e2e_parallel_tasks_join_all", async {
         let harness = get_harness().await;
 
-        let task_queue = "parallel-join-all-queue";
+        let queue = "parallel-join-all-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-parallel-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(ParallelTasksWorkflow)
             .register_task(ProcessItemTask)
             .build()
@@ -43,7 +43,7 @@ async fn test_e2e_parallel_tasks_join_all() {
         // Start a workflow that schedules 3 tasks in parallel
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "parallel-tasks-workflow",
@@ -81,13 +81,13 @@ async fn test_e2e_fan_out_fan_in() {
     with_timeout(TEST_TIMEOUT, "test_e2e_fan_out_fan_in", async {
         let harness = get_harness().await;
 
-        let task_queue = "fan-out-fan-in-queue";
+        let queue = "fan-out-fan-in-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-fan-out-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(FanOutFanInWorkflow)
             .register_task(ProcessItemTask)
             .build()
@@ -101,7 +101,7 @@ async fn test_e2e_fan_out_fan_in() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "fan-out-fan-in-workflow",
@@ -146,13 +146,13 @@ async fn test_e2e_racing_tasks_select() {
     with_timeout(TEST_TIMEOUT, "test_e2e_racing_tasks_select", async {
         let harness = get_harness().await;
 
-        let task_queue = "racing-select-queue";
+        let queue = "racing-select-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-racing-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(RacingTasksWorkflow)
             .register_task(FetchDataTask)
             .build()
@@ -166,7 +166,7 @@ async fn test_e2e_racing_tasks_select() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "racing-tasks-workflow",
@@ -200,13 +200,13 @@ async fn test_e2e_timeout_success() {
     with_timeout(TEST_TIMEOUT, "test_e2e_timeout_success", async {
         let harness = get_harness().await;
 
-        let task_queue = "timeout-success-queue";
+        let queue = "timeout-success-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-timeout-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(TimeoutTaskWorkflow)
             .register_task(SlowOperationTask)
             .build()
@@ -220,7 +220,7 @@ async fn test_e2e_timeout_success() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "timeout-task-workflow",
@@ -251,13 +251,13 @@ async fn test_e2e_mixed_parallel_operations() {
     with_timeout(timeout, "test_e2e_mixed_parallel_operations", async {
         let harness = get_harness().await;
 
-        let task_queue = "mixed-parallel-queue";
+        let queue = "mixed-parallel-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-mixed-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(MixedParallelWorkflow)
             .register_task(ProcessItemTask)
             .register_task(SlowOperationTask)
@@ -272,7 +272,7 @@ async fn test_e2e_mixed_parallel_operations() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "mixed-parallel-workflow",
@@ -316,13 +316,13 @@ async fn test_e2e_parallel_large_batch() {
     with_timeout(timeout, "test_e2e_parallel_large_batch", async {
         let harness = get_harness().await;
 
-        let task_queue = "parallel-large-batch-queue";
+        let queue = "parallel-large-batch-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-large-batch-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(ParallelTasksWorkflow)
             .register_task(ProcessItemTask)
             .build()
@@ -338,7 +338,7 @@ async fn test_e2e_parallel_large_batch() {
         let items: Vec<String> = (1..=10).map(|i| format!("item-{}", i)).collect();
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "parallel-tasks-workflow",

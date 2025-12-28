@@ -582,7 +582,7 @@ impl FfiWorkflowContext {
         name: String,
         kind: Option<String>,
         input: Vec<u8>,
-        task_queue: Option<String>,
+        queue: Option<String>,
         priority_seconds: Option<i32>,
     ) -> Result<FfiChildWorkflowResult, FfiError> {
         let child_seq = self.replay_engine.next_child_workflow_seq();
@@ -649,7 +649,7 @@ impl FfiWorkflowContext {
                     kind,
                     child_execution_id: child_execution_id.clone(),
                     input,
-                    task_queue: task_queue.unwrap_or_else(|| "default".to_string()),
+                    queue: queue.unwrap_or_else(|| "default".to_string()),
                     priority_seconds: priority_seconds.unwrap_or(0),
                 });
 

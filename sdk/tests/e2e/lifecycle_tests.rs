@@ -27,7 +27,7 @@ async fn test_worker_status_transitions() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-status-test-worker")
-            .task_queue("lifecycle-status-queue")
+            .queue("lifecycle-status-queue")
             .register_workflow(EchoWorkflow)
             .build()
             .await
@@ -83,7 +83,7 @@ async fn test_registration_info() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-registration-test-worker")
-            .task_queue("lifecycle-registration-queue")
+            .queue("lifecycle-registration-queue")
             .register_workflow(EchoWorkflow)
             .build()
             .await
@@ -136,7 +136,7 @@ async fn test_connection_info() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-connection-test-worker")
-            .task_queue("lifecycle-connection-queue")
+            .queue("lifecycle-connection-queue")
             .heartbeat_interval(Duration::from_secs(2))
             .register_workflow(EchoWorkflow)
             .build()
@@ -184,14 +184,12 @@ async fn test_connection_info() {
 #[ignore] // Enable when Docker is available
 async fn test_worker_metrics() {
     with_timeout(TEST_TIMEOUT, "test_worker_metrics", async {
-        let env = E2ETestEnvBuilder::with_task_queue(
-            "lifecycle-metrics-worker",
-            "lifecycle-metrics-queue",
-        )
-        .await
-        .register_workflow(DoublerWorkflow)
-        .build_and_start()
-        .await;
+        let env =
+            E2ETestEnvBuilder::with_queue("lifecycle-metrics-worker", "lifecycle-metrics-queue")
+                .await
+                .register_workflow(DoublerWorkflow)
+                .build_and_start()
+                .await;
 
         // Check initial metrics
         let initial_metrics = env.client().worker_internals().unwrap().metrics();
@@ -251,7 +249,7 @@ async fn test_lifecycle_events() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-events-test-worker")
-            .task_queue("lifecycle-events-queue")
+            .queue("lifecycle-events-queue")
             .register_workflow(EchoWorkflow)
             .build()
             .await
@@ -306,7 +304,7 @@ async fn test_lifecycle_events() {
 #[ignore] // Enable when Docker is available
 async fn test_filtered_event_subscription() {
     with_timeout(TEST_TIMEOUT, "test_filtered_event_subscription", async {
-        let env = E2ETestEnvBuilder::with_task_queue(
+        let env = E2ETestEnvBuilder::with_queue(
             "lifecycle-filtered-events-worker",
             "lifecycle-filtered-events-queue",
         )
@@ -379,7 +377,7 @@ async fn test_pause_resume() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-pause-resume-worker")
-            .task_queue("lifecycle-pause-resume-queue")
+            .queue("lifecycle-pause-resume-queue")
             .register_workflow(EchoWorkflow)
             .build()
             .await
@@ -455,7 +453,7 @@ async fn test_pause_invalid_state() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-pause-invalid-worker")
-            .task_queue("lifecycle-pause-invalid-queue")
+            .queue("lifecycle-pause-invalid-queue")
             .register_workflow(EchoWorkflow)
             .build()
             .await
@@ -494,7 +492,7 @@ async fn test_resume_invalid_state() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-resume-invalid-worker")
-            .task_queue("lifecycle-resume-invalid-queue")
+            .queue("lifecycle-resume-invalid-queue")
             .register_workflow(EchoWorkflow)
             .build()
             .await
@@ -525,7 +523,7 @@ async fn test_worker_uptime() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-uptime-worker")
-            .task_queue("lifecycle-uptime-queue")
+            .queue("lifecycle-uptime-queue")
             .register_workflow(EchoWorkflow)
             .build()
             .await
@@ -573,7 +571,7 @@ async fn test_client_config_accessors() {
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-config-worker")
-            .task_queue("lifecycle-config-queue")
+            .queue("lifecycle-config-queue")
             .heartbeat_interval(Duration::from_secs(15))
             .poll_timeout(Duration::from_secs(20))
             .register_workflow(EchoWorkflow)

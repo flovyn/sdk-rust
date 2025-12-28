@@ -62,7 +62,7 @@ pub enum FfiWorkflowCommand {
         /// Serialized input as JSON bytes.
         input: Vec<u8>,
         /// Task queue for the child.
-        task_queue: String,
+        queue: String,
         /// Priority in seconds.
         priority_seconds: i32,
     },
@@ -190,7 +190,7 @@ impl FfiWorkflowCommand {
                 kind,
                 child_execution_id,
                 input,
-                task_queue,
+                queue,
                 priority_seconds,
             } => (
                 flovyn_v1::CommandType::ScheduleChildWorkflow as i32,
@@ -201,7 +201,7 @@ impl FfiWorkflowCommand {
                         workflow_definition_id: None,
                         child_workflow_execution_id: child_execution_id.clone(),
                         input: input.clone(),
-                        task_queue: task_queue.clone(),
+                        queue: queue.clone(),
                         priority_seconds: *priority_seconds,
                     },
                 )),
@@ -350,7 +350,7 @@ impl FfiWorkflowCommand {
                 kind,
                 child_execution_id,
                 input,
-                task_queue,
+                queue,
                 priority_seconds,
             } => WorkflowCommand::ScheduleChildWorkflow {
                 sequence_number,
@@ -360,7 +360,7 @@ impl FfiWorkflowCommand {
                 child_execution_id: Uuid::parse_str(child_execution_id)
                     .unwrap_or_else(|_| Uuid::nil()),
                 input: serde_json::from_slice(input).unwrap_or(serde_json::Value::Null),
-                task_queue: task_queue.clone(),
+                queue: queue.clone(),
                 priority_seconds: *priority_seconds,
             },
             FfiWorkflowCommand::CompleteWorkflow { output } => WorkflowCommand::CompleteWorkflow {

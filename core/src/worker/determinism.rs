@@ -636,7 +636,7 @@ mod tests {
             definition_id: None,
             child_execution_id: Uuid::new_v4(),
             input: json!({}),
-            task_queue: "default".to_string(),
+            queue: "default".to_string(),
             priority_seconds: 0,
         };
         let event = ReplayEvent::new(
@@ -709,7 +709,7 @@ mod tests {
                 definition_id: None,
                 child_execution_id: Uuid::nil(),
                 input: json!(null),
-                task_queue: "".to_string(),
+                queue: "".to_string(),
                 priority_seconds: 0,
             }),
             EventType::ChildWorkflowInitiated

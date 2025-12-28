@@ -29,7 +29,7 @@ pub struct WorkflowWorkerConfig {
     /// Tenant ID
     pub tenant_id: Uuid,
     /// Task queue to poll from
-    pub task_queue: String,
+    pub queue: String,
     /// Long polling timeout
     pub poll_timeout: Duration,
     /// Maximum concurrent workflow executions
@@ -64,7 +64,7 @@ impl Default for WorkflowWorkerConfig {
         Self {
             worker_id: Uuid::new_v4().to_string(),
             tenant_id: Uuid::nil(),
-            task_queue: "default".to_string(),
+            queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
             max_concurrent: 1,
             heartbeat_interval: Duration::from_secs(30),
@@ -87,7 +87,7 @@ impl std::fmt::Debug for WorkflowWorkerConfig {
         f.debug_struct("WorkflowWorkerConfig")
             .field("worker_id", &self.worker_id)
             .field("tenant_id", &self.tenant_id)
-            .field("task_queue", &self.task_queue)
+            .field("queue", &self.queue)
             .field("poll_timeout", &self.poll_timeout)
             .field("max_concurrent", &self.max_concurrent)
             .field("heartbeat_interval", &self.heartbeat_interval)
@@ -263,7 +263,7 @@ impl WorkflowExecutorWorker {
                 .subscribe_to_notifications(
                     &config.worker_id,
                     &config.tenant_id.to_string(),
-                    &config.task_queue,
+                    &config.queue,
                 )
                 .await;
 
@@ -282,7 +282,7 @@ impl WorkflowExecutorWorker {
                             Some(Ok(event)) => {
                                 debug!(
                                     tenant_id = %event.tenant_id,
-                                    task_queue = %event.task_queue,
+                                    queue = %event.queue,
                                     "Received work available notification"
                                 );
                                 // Signal the polling loop to wake up immediately
@@ -328,7 +328,7 @@ impl WorkflowExecutorWorker {
         info!(
             worker_id = %self.config.worker_id,
             tenant_id = %self.config.tenant_id,
-            task_queue = %self.config.task_queue,
+            queue = %self.config.queue,
             "Starting workflow worker"
         );
 
@@ -547,7 +547,7 @@ impl WorkflowExecutorWorker {
             .poll_workflow(
                 &config.worker_id,
                 &config.tenant_id.to_string(),
-                &config.task_queue,
+                &config.queue,
                 config.poll_timeout,
             )
             .await?;
@@ -950,7 +950,7 @@ impl WorkflowExecutorWorker {
                 definition_id,
                 child_execution_id,
                 input,
-                task_queue,
+                queue,
                 priority_seconds,
                 ..
             } => (
@@ -962,7 +962,7 @@ impl WorkflowExecutorWorker {
                         workflow_definition_id: definition_id.map(|id| id.to_string()),
                         child_workflow_execution_id: child_execution_id.to_string(),
                         input: serde_json::to_vec(input).unwrap_or_default(),
-                        task_queue: task_queue.clone(),
+                        queue: queue.clone(),
                         priority_seconds: *priority_seconds,
                     },
                 )),
@@ -1009,7 +1009,7 @@ mod tests {
     #[test]
     fn test_workflow_worker_config_default() {
         let config = WorkflowWorkerConfig::default();
-        assert_eq!(config.task_queue, "default");
+        assert_eq!(config.queue, "default");
         assert_eq!(config.poll_timeout, Duration::from_secs(60));
         assert_eq!(config.max_concurrent, 1);
         assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
@@ -1025,7 +1025,7 @@ mod tests {
         let config = WorkflowWorkerConfig {
             worker_id: "test-worker".to_string(),
             tenant_id: Uuid::new_v4(),
-            task_queue: "high-priority".to_string(),
+            queue: "high-priority".to_string(),
             poll_timeout: Duration::from_secs(30),
             max_concurrent: 10,
             heartbeat_interval: Duration::from_secs(15),
@@ -1041,7 +1041,7 @@ mod tests {
         };
 
         assert_eq!(config.worker_id, "test-worker");
-        assert_eq!(config.task_queue, "high-priority");
+        assert_eq!(config.queue, "high-priority");
         assert_eq!(config.max_concurrent, 10);
         assert_eq!(config.worker_name, Some("My Worker".to_string()));
         assert_eq!(config.worker_version, "2.0.0");

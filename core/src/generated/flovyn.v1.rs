@@ -10,7 +10,7 @@ pub struct PollRequest {
     pub tenant_id: ::prost::alloc::string::String,
     /// Task queue to poll from (e.g., "default", "gpu-workers")
     #[prost(string, tag = "3")]
-    pub task_queue: ::prost::alloc::string::String,
+    pub queue: ::prost::alloc::string::String,
     /// Long polling timeout in seconds (e.g., 60)
     #[prost(int64, tag = "4")]
     pub timeout_seconds: i64,
@@ -32,7 +32,7 @@ pub struct SubscriptionRequest {
     pub tenant_id: ::prost::alloc::string::String,
     /// Task queue to subscribe to
     #[prost(string, tag = "3")]
-    pub task_queue: ::prost::alloc::string::String,
+    pub queue: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -61,7 +61,7 @@ pub struct WorkflowExecution {
     pub input: ::prost::alloc::vec::Vec<u8>,
     /// Task queue for worker routing (e.g., "default", "gpu-workers")
     #[prost(string, tag = "5")]
-    pub task_queue: ::prost::alloc::string::String,
+    pub queue: ::prost::alloc::string::String,
     /// Time-offset priority in milliseconds (priority score = created_at - priority_ms)
     #[prost(int64, tag = "6")]
     pub priority_ms: i64,
@@ -103,7 +103,7 @@ pub struct WorkAvailableEvent {
     pub tenant_id: ::prost::alloc::string::String,
     /// Task queue where work is available
     #[prost(string, tag = "2")]
-    pub task_queue: ::prost::alloc::string::String,
+    pub queue: ::prost::alloc::string::String,
     /// Timestamp of notification (milliseconds since epoch)
     #[prost(int64, tag = "3")]
     pub timestamp_ms: i64,
@@ -122,7 +122,7 @@ pub struct StartWorkflowRequest {
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// Task queue routing (default: "default")
     #[prost(string, tag = "5")]
-    pub task_queue: ::prost::alloc::string::String,
+    pub queue: ::prost::alloc::string::String,
     /// Time-offset priority in seconds (default: 0)
     #[prost(int32, tag = "6")]
     pub priority_seconds: i32,
@@ -191,7 +191,7 @@ pub struct StartChildWorkflowRequest {
     pub input: ::prost::alloc::vec::Vec<u8>,
     /// Task queue (inherits parent if empty)
     #[prost(string, tag = "7")]
-    pub task_queue: ::prost::alloc::string::String,
+    pub queue: ::prost::alloc::string::String,
     /// Time-offset priority in seconds (default: 0)
     #[prost(int32, tag = "8")]
     pub priority_seconds: i32,
@@ -635,7 +635,7 @@ pub struct ScheduleChildWorkflowCommand {
     #[prost(bytes = "vec", tag = "5")]
     pub input: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "6")]
-    pub task_queue: ::prost::alloc::string::String,
+    pub queue: ::prost::alloc::string::String,
     #[prost(int32, tag = "7")]
     pub priority_seconds: i32,
 }

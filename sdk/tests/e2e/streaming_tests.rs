@@ -48,13 +48,13 @@ async fn test_task_streams_tokens() {
     with_timeout(TEST_TIMEOUT, "test_task_streams_tokens", async {
         let harness = get_harness().await;
 
-        let task_queue = format!("stream-tokens-{}", uuid::Uuid::new_v4());
+        let queue = format!("stream-tokens-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-streaming-worker")
             .worker_token(harness.worker_token())
-            .task_queue(&task_queue)
+            .queue(&queue)
             .register_workflow(StreamingTokenWorkflow)
             .register_task(StreamingTokenTask)
             .build()
@@ -68,7 +68,7 @@ async fn test_task_streams_tokens() {
         // Start a workflow that schedules a streaming token task
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&task_queue);
+            .with_queue(&queue);
 
         let result = client
             .start_workflow_and_wait_with_options(
@@ -109,13 +109,13 @@ async fn test_task_streams_progress() {
     with_timeout(TEST_TIMEOUT, "test_task_streams_progress", async {
         let harness = get_harness().await;
 
-        let task_queue = format!("stream-progress-{}", uuid::Uuid::new_v4());
+        let queue = format!("stream-progress-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-progress-worker")
             .worker_token(harness.worker_token())
-            .task_queue(&task_queue)
+            .queue(&queue)
             .register_workflow(StreamingProgressWorkflow)
             .register_task(StreamingProgressTask)
             .build()
@@ -128,7 +128,7 @@ async fn test_task_streams_progress() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&task_queue);
+            .with_queue(&queue);
 
         let result = client
             .start_workflow_and_wait_with_options(
@@ -164,13 +164,13 @@ async fn test_task_streams_data() {
     with_timeout(TEST_TIMEOUT, "test_task_streams_data", async {
         let harness = get_harness().await;
 
-        let task_queue = format!("stream-data-{}", uuid::Uuid::new_v4());
+        let queue = format!("stream-data-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-data-worker")
             .worker_token(harness.worker_token())
-            .task_queue(&task_queue)
+            .queue(&queue)
             .register_workflow(StreamingDataWorkflow)
             .register_task(StreamingDataTask)
             .build()
@@ -183,7 +183,7 @@ async fn test_task_streams_data() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&task_queue);
+            .with_queue(&queue);
 
         let result = client
             .start_workflow_and_wait_with_options(
@@ -220,13 +220,13 @@ async fn test_task_streams_errors() {
     with_timeout(TEST_TIMEOUT, "test_task_streams_errors", async {
         let harness = get_harness().await;
 
-        let task_queue = format!("stream-errors-{}", uuid::Uuid::new_v4());
+        let queue = format!("stream-errors-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-error-worker")
             .worker_token(harness.worker_token())
-            .task_queue(&task_queue)
+            .queue(&queue)
             .register_workflow(StreamingErrorWorkflow)
             .register_task(StreamingErrorTask)
             .build()
@@ -239,7 +239,7 @@ async fn test_task_streams_errors() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&task_queue);
+            .with_queue(&queue);
 
         let result = client
             .start_workflow_and_wait_with_options(
@@ -276,13 +276,13 @@ async fn test_task_streams_all_types() {
     with_timeout(TEST_TIMEOUT, "test_task_streams_all_types", async {
         let harness = get_harness().await;
 
-        let task_queue = format!("stream-all-{}", uuid::Uuid::new_v4());
+        let queue = format!("stream-all-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-allstreaming-worker")
             .worker_token(harness.worker_token())
-            .task_queue(&task_queue)
+            .queue(&queue)
             .register_workflow(StreamingAllTypesWorkflow)
             .register_task(StreamingAllTypesTask)
             .build()
@@ -295,7 +295,7 @@ async fn test_task_streams_all_types() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&task_queue);
+            .with_queue(&queue);
 
         let result = client
             .start_workflow_and_wait_with_options(
@@ -370,13 +370,13 @@ async fn test_task_streams_custom_tokens() {
     with_timeout(TEST_TIMEOUT, "test_task_streams_custom_tokens", async {
         let harness = get_harness().await;
 
-        let task_queue = format!("stream-custom-{}", uuid::Uuid::new_v4());
+        let queue = format!("stream-custom-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-custom-worker")
             .worker_token(harness.worker_token())
-            .task_queue(&task_queue)
+            .queue(&queue)
             .register_workflow(StreamingTokenWorkflow)
             .register_task(StreamingTokenTask)
             .build()
@@ -389,7 +389,7 @@ async fn test_task_streams_custom_tokens() {
 
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&task_queue);
+            .with_queue(&queue);
 
         // Test with custom tokens
         let custom_tokens = vec!["The", " quick", " brown", " fox"];

@@ -33,13 +33,13 @@ impl WorkflowDispatch {
         &mut self,
         worker_id: &str,
         tenant_id: &str,
-        task_queue: &str,
+        queue: &str,
         timeout: Duration,
     ) -> CoreResult<Option<WorkflowExecutionInfo>> {
         let request = flovyn_v1::PollRequest {
             worker_id: worker_id.to_string(),
             tenant_id: tenant_id.to_string(),
-            task_queue: task_queue.to_string(),
+            queue: queue.to_string(),
             timeout_seconds: timeout.as_secs() as i64,
             worker_pool_id: None,
             workflow_capabilities: vec![],
@@ -55,7 +55,7 @@ impl WorkflowDispatch {
                 kind: we.kind,
                 tenant_id: we.tenant_id.parse().unwrap_or_default(),
                 input: serde_json::from_slice(&we.input).unwrap_or(Value::Null),
-                task_queue: we.task_queue,
+                queue: we.queue,
                 current_sequence: we.current_sequence,
                 workflow_task_time_millis: we.workflow_task_time_millis,
                 workflow_version: we.workflow_version,
@@ -68,12 +68,12 @@ impl WorkflowDispatch {
         &mut self,
         worker_id: &str,
         tenant_id: &str,
-        task_queue: &str,
+        queue: &str,
     ) -> CoreResult<tonic::codec::Streaming<flovyn_v1::WorkAvailableEvent>> {
         let request = flovyn_v1::SubscriptionRequest {
             worker_id: worker_id.to_string(),
             tenant_id: tenant_id.to_string(),
-            task_queue: task_queue.to_string(),
+            queue: queue.to_string(),
         };
 
         let response = self.inner.subscribe_to_notifications(request).await?;
@@ -87,7 +87,7 @@ impl WorkflowDispatch {
         tenant_id: &str,
         workflow_kind: &str,
         input: Value,
-        task_queue: Option<&str>,
+        queue: Option<&str>,
         workflow_version: Option<&str>,
         idempotency_key: Option<&str>,
     ) -> CoreResult<StartWorkflowResult> {
@@ -98,7 +98,7 @@ impl WorkflowDispatch {
             workflow_kind: workflow_kind.to_string(),
             input: input_bytes,
             labels: std::collections::HashMap::new(),
-            task_queue: task_queue.unwrap_or("default").to_string(),
+            queue: queue.unwrap_or("default").to_string(),
             priority_seconds: 0,
             workflow_definition_id: None,
             parent_workflow_execution_id: None,
@@ -317,7 +317,7 @@ pub struct WorkflowExecutionInfo {
     /// Input data
     pub input: Value,
     /// Task queue
-    pub task_queue: String,
+    pub queue: String,
     /// Current sequence number
     pub current_sequence: i32,
     /// Workflow task time (for deterministic time)
@@ -370,7 +370,7 @@ mod tests {
             kind: "test-workflow".to_string(),
             tenant_id: Uuid::new_v4(),
             input: serde_json::json!({"key": "value"}),
-            task_queue: "default".to_string(),
+            queue: "default".to_string(),
             current_sequence: 0,
             workflow_task_time_millis: 1234567890,
             workflow_version: Some("1.0.0".to_string()),

@@ -29,7 +29,7 @@ async fn test_comprehensive_workflow_features() {
         TEST_TIMEOUT,
         "test_comprehensive_workflow_features",
         async {
-            let env = E2ETestEnvBuilder::with_task_queue(
+            let env = E2ETestEnvBuilder::with_queue(
                 "e2e-comprehensive-worker",
                 "comprehensive-features-queue",
             )
@@ -82,7 +82,7 @@ async fn test_comprehensive_with_task_scheduling() {
     // Use longer timeout for task-based test
     let timeout = Duration::from_secs(90);
     with_timeout(timeout, "test_comprehensive_with_task_scheduling", async {
-        let env = E2ETestEnvBuilder::with_task_queue(
+        let env = E2ETestEnvBuilder::with_queue(
             "e2e-comprehensive-task-worker",
             "comprehensive-task-queue",
         )
@@ -132,17 +132,15 @@ async fn test_comprehensive_with_task_scheduling() {
 async fn test_all_basic_workflows() {
     let timeout = Duration::from_secs(120);
     with_timeout(timeout, "test_all_basic_workflows", async {
-        let env = E2ETestEnvBuilder::with_task_queue(
-            "e2e-all-workflows-worker",
-            "comprehensive-all-queue",
-        )
-        .await
-        .register_workflow(DoublerWorkflow)
-        .register_workflow(EchoWorkflow)
-        .register_workflow(StatefulWorkflow)
-        .register_workflow(FailingWorkflow::new("Test error"))
-        .build_and_start()
-        .await;
+        let env =
+            E2ETestEnvBuilder::with_queue("e2e-all-workflows-worker", "comprehensive-all-queue")
+                .await
+                .register_workflow(DoublerWorkflow)
+                .register_workflow(EchoWorkflow)
+                .register_workflow(StatefulWorkflow)
+                .register_workflow(FailingWorkflow::new("Test error"))
+                .build_and_start()
+                .await;
 
         // Test 1: Doubler workflow
         let doubler_result = env

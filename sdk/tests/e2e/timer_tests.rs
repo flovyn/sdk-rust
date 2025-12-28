@@ -18,13 +18,13 @@ async fn test_durable_timer_sleep() {
     with_timeout(TEST_TIMEOUT, "test_durable_timer_sleep", async {
         let harness = get_harness().await;
 
-        let task_queue = "timer-durable-queue";
+        let queue = "timer-durable-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-timer-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(TimerWorkflow)
             .build()
             .await
@@ -41,7 +41,7 @@ async fn test_durable_timer_sleep() {
         let start_time = Instant::now();
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "timer-workflow",
@@ -84,13 +84,13 @@ async fn test_short_timer() {
     with_timeout(TEST_TIMEOUT, "test_short_timer", async {
         let harness = get_harness().await;
 
-        let task_queue = "timer-short-queue";
+        let queue = "timer-short-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-short-timer-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(TimerWorkflow)
             .build()
             .await
@@ -105,7 +105,7 @@ async fn test_short_timer() {
         let start_time = Instant::now();
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_and_wait_with_options(
                 "timer-workflow",

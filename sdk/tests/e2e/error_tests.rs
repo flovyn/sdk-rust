@@ -19,13 +19,13 @@ async fn test_workflow_failure() {
     with_timeout(TEST_TIMEOUT, "test_workflow_failure", async {
         let harness = get_harness().await;
 
-        let task_queue = "error-failure-queue";
+        let queue = "error-failure-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-error-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(FailingWorkflow::new("Intentional test failure"))
             .build()
             .await
@@ -39,7 +39,7 @@ async fn test_workflow_failure() {
         // Start the failing workflow
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_with_options("failing-workflow", json!({}), options)
             .await
@@ -95,13 +95,13 @@ async fn test_error_message_preserved() {
 
         let specific_error = "Custom error message with specific details XYZ-123";
 
-        let task_queue = "error-message-queue";
+        let queue = "error-message-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_id("e2e-error-message-worker")
             .worker_token(harness.worker_token())
-            .task_queue(task_queue)
+            .queue(queue)
             .register_workflow(FailingWorkflow::new(specific_error))
             .build()
             .await
@@ -115,7 +115,7 @@ async fn test_error_message_preserved() {
         // Start the failing workflow
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(task_queue);
+            .with_queue(queue);
         let result = client
             .start_workflow_with_options("failing-workflow", json!({}), options)
             .await

@@ -67,23 +67,23 @@ pub struct E2ETestEnvironment {
     harness: &'static TestHarness,
     client: Option<FlovynClient>,
     handle: Option<WorkerHandle>,
-    task_queue: String,
+    queue: String,
 }
 
 impl E2ETestEnvironment {
     /// Create a new test environment using the global harness.
     pub async fn new() -> Self {
-        Self::with_task_queue("default").await
+        Self::with_queue("default").await
     }
 
     /// Create a new test environment with a specific task queue.
-    pub async fn with_task_queue(task_queue: &str) -> Self {
+    pub async fn with_queue(queue: &str) -> Self {
         let harness = get_harness().await;
         Self {
             harness,
             client: None,
             handle: None,
-            task_queue: task_queue.to_string(),
+            queue: queue.to_string(),
         }
     }
 
@@ -93,7 +93,7 @@ impl E2ETestEnvironment {
             .server_address(self.harness.grpc_host(), self.harness.grpc_port())
             .tenant_id(self.harness.tenant_id())
             .worker_token(self.harness.worker_token())
-            .task_queue(&self.task_queue)
+            .queue(&self.queue)
     }
 
     /// Build and store the client. Returns self for chaining.
@@ -127,7 +127,7 @@ impl E2ETestEnvironment {
     pub async fn start_workflow(&self, kind: &str, input: Value) -> Uuid {
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&self.task_queue);
+            .with_queue(&self.queue);
         let result = self
             .client()
             .start_workflow_with_options(kind, input, options)
@@ -151,7 +151,7 @@ impl E2ETestEnvironment {
     ) -> Result<Value, String> {
         let options = StartWorkflowOptions::new()
             .with_workflow_version("1.0.0")
-            .with_task_queue(&self.task_queue);
+            .with_queue(&self.queue);
         self.client()
             .start_workflow_and_wait_with_options(kind, input, options, timeout)
             .await
@@ -326,29 +326,29 @@ impl Drop for E2ETestEnvironment {
 pub struct E2ETestEnvBuilder {
     harness: &'static TestHarness,
     builder: FlovynClientBuilder,
-    task_queue: String,
+    queue: String,
 }
 
 impl E2ETestEnvBuilder {
     /// Create a new builder from the global harness.
     pub async fn new(worker_id: &str) -> Self {
-        Self::with_task_queue(worker_id, "default").await
+        Self::with_queue(worker_id, "default").await
     }
 
     /// Create a new builder with a specific task queue.
-    pub async fn with_task_queue(worker_id: &str, task_queue: &str) -> Self {
+    pub async fn with_queue(worker_id: &str, queue: &str) -> Self {
         let harness = get_harness().await;
         let builder = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
             .tenant_id(harness.tenant_id())
             .worker_token(harness.worker_token())
             .worker_id(worker_id)
-            .task_queue(task_queue);
+            .queue(queue);
 
         Self {
             harness,
             builder,
-            task_queue: task_queue.to_string(),
+            queue: queue.to_string(),
         }
     }
 
@@ -392,7 +392,7 @@ impl E2ETestEnvBuilder {
             harness: self.harness,
             client: Some(client),
             handle: Some(handle),
-            task_queue: self.task_queue,
+            queue: self.queue,
         }
     }
 }

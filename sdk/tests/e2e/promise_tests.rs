@@ -19,7 +19,7 @@ use std::time::Duration;
 #[ignore] // Enable when Docker is available
 async fn test_promise_resolve() {
     with_timeout(TEST_TIMEOUT, "test_promise_resolve", async {
-        let env = E2ETestEnvBuilder::with_task_queue("e2e-promise-worker", "promise-resolve-queue")
+        let env = E2ETestEnvBuilder::with_queue("e2e-promise-worker", "promise-resolve-queue")
             .await
             .register_workflow(PromiseWorkflow)
             .build_and_start()
@@ -79,7 +79,7 @@ async fn test_promise_resolve() {
 async fn test_promise_reject() {
     with_timeout(TEST_TIMEOUT, "test_promise_reject", async {
         let env =
-            E2ETestEnvBuilder::with_task_queue("e2e-promise-reject-worker", "promise-reject-queue")
+            E2ETestEnvBuilder::with_queue("e2e-promise-reject-worker", "promise-reject-queue")
                 .await
                 .register_workflow(PromiseWorkflow)
                 .build_and_start()
