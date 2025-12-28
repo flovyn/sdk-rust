@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "original-task",
+        "kind": "original-task",
         "taskExecutionId": "44444444-4444-4444-4444-000000000001",
         "input": {}
       }
@@ -39,7 +39,7 @@
     }
   ],
   "replay_commands": [
-    { "type": "ScheduleTask", "taskType": "changed-task" }
+    { "type": "ScheduleTask", "kind": "changed-task" }
   ],
   "determinism_test": {
     "type": "expect_violation",

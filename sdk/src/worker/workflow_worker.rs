@@ -871,14 +871,14 @@ impl WorkflowExecutorWorker {
                 })),
             ),
             WorkflowCommand::ScheduleTask {
-                task_type,
+                kind,
                 input,
                 task_execution_id,
                 ..
             } => (
                 flovyn_v1::CommandType::ScheduleTask as i32,
                 Some(CommandData::ScheduleTask(flovyn_v1::ScheduleTaskCommand {
-                    task_type: task_type.clone(),
+                    kind: kind.clone(),
                     input: serde_json::to_vec(input).unwrap_or_default(),
                     task_execution_id: task_execution_id.to_string(),
                 })),
@@ -1038,6 +1038,7 @@ mod tests {
             enable_telemetry: true,
             lifecycle_hooks: HookChain::new(),
             reconnection_strategy: ReconnectionStrategy::fixed(Duration::from_secs(5)),
+            server_worker_id: None,
         };
 
         assert_eq!(config.worker_id, "test-worker");
@@ -1105,7 +1106,7 @@ mod tests {
     fn test_convert_schedule_task_command() {
         let command = WorkflowCommand::ScheduleTask {
             sequence_number: 3,
-            task_type: "send-email".to_string(),
+            kind: "send-email".to_string(),
             input: serde_json::json!({"to": "user@example.com"}),
             task_execution_id: Uuid::new_v4(),
             priority_seconds: None,

@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "fetch-data",
+        "kind": "fetch-data",
         "taskExecutionId": "33333333-3333-3333-3333-333333333333",
         "input": { "source": "api" }
       }
@@ -54,7 +54,7 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "fetch-data" },
+    { "type": "ScheduleTask", "kind": "fetch-data" },
     { "type": "StartTimer", "timerId": "sleep-1" },
     { "type": "CancelTimer", "timerId": "sleep-1" },
     { "type": "CompleteWorkflow" }

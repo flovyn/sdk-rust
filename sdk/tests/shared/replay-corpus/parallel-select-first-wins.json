@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "fetch-primary",
+        "kind": "fetch-primary",
         "taskExecutionId": "77777777-7777-7777-7777-777777777777",
         "input": {}
       }
@@ -26,7 +26,7 @@
       "sequence_number": 3,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "fetch-fallback",
+        "kind": "fetch-fallback",
         "taskExecutionId": "88888888-8888-8888-8888-888888888888",
         "input": {}
       }
@@ -55,8 +55,8 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "fetch-primary" },
-    { "type": "ScheduleTask", "taskType": "fetch-fallback" },
+    { "type": "ScheduleTask", "kind": "fetch-primary" },
+    { "type": "ScheduleTask", "kind": "fetch-fallback" },
     { "type": "RequestCancelTask", "taskExecutionId": "77777777-7777-7777-7777-777777777777" },
     { "type": "CompleteWorkflow" }
   ],

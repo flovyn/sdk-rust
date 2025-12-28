@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "slow-operation",
+        "kind": "slow-operation",
         "taskExecutionId": "99999999-9999-9999-9999-999999999999",
         "input": {}
       }
@@ -54,7 +54,7 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "slow-operation" },
+    { "type": "ScheduleTask", "kind": "slow-operation" },
     { "type": "StartTimer", "timerId": "sleep-1" },
     { "type": "CancelTimer", "timerId": "sleep-1" },
     { "type": "CompleteWorkflow" }

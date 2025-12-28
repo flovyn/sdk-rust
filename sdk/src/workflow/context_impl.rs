@@ -402,17 +402,17 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
         // Look for event at this per-type index (replay case)
         if let Some(scheduled_event) = self.replay_engine.get_task_event(task_seq) {
-            // Validate task type matches
-            let event_task_type = scheduled_event
-                .get_string("taskType")
+            // Validate task kind matches
+            let event_kind = scheduled_event
+                .get_string("kind")
                 .unwrap_or_default()
                 .to_string();
 
-            if event_task_type != task_type {
+            if event_kind != task_type {
                 return TaskFuture::with_error(FlovynError::DeterminismViolation(
                     DeterminismViolationError::TaskTypeMismatch {
                         sequence: task_seq as i32,
-                        expected: event_task_type,
+                        expected: event_kind,
                         actual: task_type.to_string(),
                     },
                 ));
@@ -471,7 +471,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         let sequence = self.next_sequence();
         if let Err(e) = self.record_command(WorkflowCommand::ScheduleTask {
             sequence_number: sequence,
-            task_type: task_type.to_string(),
+            kind: task_type.to_string(),
             task_execution_id,
             input,
             priority_seconds: options.priority_seconds,
@@ -1163,7 +1163,7 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert!(matches!(
             &commands[0],
-            WorkflowCommand::ScheduleTask { task_type, .. } if task_type == "my-task"
+            WorkflowCommand::ScheduleTask { kind, .. } if kind == "my-task"
         ));
     }
 
@@ -1177,7 +1177,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "my-task",
+                    "kind": "my-task",
                     "taskExecutionId": task_execution_id.to_string(),
                     "input": {"input": true}
                 }),
@@ -1288,7 +1288,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "fast-task",
+                    "kind": "fast-task",
                     "taskExecutionId": task_id_1.to_string(),
                     "input": {"seq": 1}
                 }),
@@ -1308,7 +1308,7 @@ mod tests {
                 3,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "fast-task",
+                    "kind": "fast-task",
                     "taskExecutionId": task_id_2.to_string(),
                     "input": {"seq": 2}
                 }),
@@ -1358,7 +1358,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "slow-task",
+                    "kind": "slow-task",
                     "taskExecutionId": "task-pending",
                     "input": {}
                 }),
@@ -1397,7 +1397,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "failing-task",
+                    "kind": "failing-task",
                     "taskExecutionId": task_execution_id.to_string(),
                     "input": {}
                 }),
@@ -1754,7 +1754,7 @@ mod tests {
             1,
             EventType::TaskScheduled,
             serde_json::json!({
-                "taskType": "send-email",
+                "kind": "send-email",
                 "taskExecutionId": "task-abc-123"
             }),
             Utc::now(),
@@ -2185,7 +2185,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "task-A",
+                    "kind": "task-A",
                     "taskExecutionId": task_id_1.to_string()
                 }),
                 Utc::now(),
@@ -2203,7 +2203,7 @@ mod tests {
                 3,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "task-B",
+                    "kind": "task-B",
                     "taskExecutionId": task_id_2.to_string()
                 }),
                 Utc::now(),
@@ -2221,7 +2221,7 @@ mod tests {
                 5,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "task-A",
+                    "kind": "task-A",
                     "taskExecutionId": task_id_3.to_string()
                 }),
                 Utc::now(),
@@ -2275,7 +2275,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "task-A",
+                    "kind": "task-A",
                     "taskExecutionId": "task-1"
                 }),
                 Utc::now(),
@@ -2362,7 +2362,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "process-order",
+                    "kind": "process-order",
                     "taskExecutionId": task_execution_id.to_string()
                 }),
                 Utc::now(),
@@ -2476,7 +2476,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "process-item",
+                    "kind": "process-item",
                     "taskExecutionId": task_id_1.to_string()
                 }),
                 Utc::now(),
@@ -2495,7 +2495,7 @@ mod tests {
                 3,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "process-item",
+                    "kind": "process-item",
                     "taskExecutionId": task_id_2.to_string()
                 }),
                 Utc::now(),
@@ -2514,7 +2514,7 @@ mod tests {
                 5,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "process-item",
+                    "kind": "process-item",
                     "taskExecutionId": task_id_3.to_string()
                 }),
                 Utc::now(),
@@ -2623,11 +2623,11 @@ mod tests {
         let commands = ctx.get_commands();
         assert!(matches!(
             &commands[0],
-            WorkflowCommand::ScheduleTask { task_type, .. } if task_type == "task-1"
+            WorkflowCommand::ScheduleTask { kind, .. } if kind == "task-1"
         ));
         assert!(matches!(
             &commands[1],
-            WorkflowCommand::ScheduleTask { task_type, .. } if task_type == "task-2"
+            WorkflowCommand::ScheduleTask { kind, .. } if kind == "task-2"
         ));
         assert!(matches!(&commands[2], WorkflowCommand::StartTimer { .. }));
     }
@@ -2644,7 +2644,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "task-a",
+                    "kind": "task-a",
                     "taskExecutionId": "exec-a-0"
                 }),
                 Utc::now(),
@@ -2663,7 +2663,7 @@ mod tests {
                 3,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "task-b",
+                    "kind": "task-b",
                     "taskExecutionId": "exec-b-0"
                 }),
                 Utc::now(),
@@ -2682,7 +2682,7 @@ mod tests {
                 5,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "task-a",
+                    "kind": "task-a",
                     "taskExecutionId": "exec-a-1"
                 }),
                 Utc::now(),
@@ -2729,7 +2729,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "my-task",
+                    "kind": "my-task",
                     "taskExecutionId": "task-0"
                 }),
                 Utc::now(),
@@ -2766,7 +2766,7 @@ mod tests {
                 5,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "my-task",
+                    "kind": "my-task",
                     "taskExecutionId": "task-1"
                 }),
                 Utc::now(),
@@ -2819,7 +2819,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "slow-task",
+                    "kind": "slow-task",
                     "taskExecutionId": slow_exec_id
                 }),
                 Utc::now(),
@@ -2829,7 +2829,7 @@ mod tests {
                 2,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "fast-task",
+                    "kind": "fast-task",
                     "taskExecutionId": fast_exec_id
                 }),
                 Utc::now(),
@@ -2893,7 +2893,7 @@ mod tests {
                 1,
                 EventType::TaskScheduled,
                 serde_json::json!({
-                    "taskType": "fetch-data",
+                    "kind": "fetch-data",
                     "taskExecutionId": fetch_exec_id
                 }),
                 Utc::now(),

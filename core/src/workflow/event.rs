@@ -207,10 +207,10 @@ impl ReplayEvent {
         self
     }
 
-    /// Set the task type in the event data
-    pub fn with_task_type(mut self, task_type: String) -> Self {
+    /// Set the task kind in the event data
+    pub fn with_task_kind(mut self, kind: String) -> Self {
         if let Value::Object(ref mut map) = self.data {
-            map.insert("taskType".to_string(), Value::String(task_type));
+            map.insert("kind".to_string(), Value::String(kind));
         }
         self
     }
@@ -380,14 +380,14 @@ mod tests {
             5,
             EventType::TaskScheduled,
             serde_json::json!({
-                "taskType": "payment-task",
+                "kind": "payment-task",
                 "taskExecutionId": "abc-123",
                 "timeout": 30000
             }),
             now(),
         );
 
-        assert_eq!(event.get_string("taskType"), Some("payment-task"));
+        assert_eq!(event.get_string("kind"), Some("payment-task"));
         assert_eq!(event.get_i64("timeout"), Some(30000));
         assert!(event.get("nonexistent").is_none());
     }
@@ -444,11 +444,11 @@ mod tests {
     }
 
     #[test]
-    fn test_replay_event_builder_task_type() {
+    fn test_replay_event_builder_task_kind() {
         let event = ReplayEvent::new(0, EventType::TaskScheduled, serde_json::json!({}), now())
-            .with_task_type("payment-task".to_string());
+            .with_task_kind("payment-task".to_string());
 
-        assert_eq!(event.get_string("taskType"), Some("payment-task"));
+        assert_eq!(event.get_string("kind"), Some("payment-task"));
     }
 
     #[test]

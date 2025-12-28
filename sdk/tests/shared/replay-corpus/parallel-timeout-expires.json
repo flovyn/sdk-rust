@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "slow-operation",
+        "kind": "slow-operation",
         "taskExecutionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "input": {}
       }
@@ -53,7 +53,7 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "slow-operation" },
+    { "type": "ScheduleTask", "kind": "slow-operation" },
     { "type": "StartTimer", "timerId": "sleep-1" },
     { "type": "RequestCancelTask", "taskExecutionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
     { "type": "FailWorkflow", "error": "Operation timed out after 1000ms" }

@@ -324,7 +324,7 @@ service TaskExecution {
 message SubmitTaskRequest {
   string workflow_execution_id = 1;  // Optional for standalone tasks (empty string = standalone)
   string tenant_id = 2;
-  string task_type = 3;
+  string kind = 3;
   bytes input = 4;
   map<string, string> labels = 5;
   int32 max_retries = 6;
@@ -364,7 +364,7 @@ message PollTaskResponse {
 
 message TaskExecutionInfo {
   string task_execution_id = 1;
-  string task_type = 2;
+  string kind = 2;
   bytes input = 3;
   string workflow_execution_id = 4;  // Empty string for standalone tasks
   int32 execution_count = 5;
@@ -528,7 +528,7 @@ message ClearStateCommand {
 }
 
 message ScheduleTaskCommand {
-  string task_type = 1;
+  string kind = 1;
   bytes input = 2;
   string task_execution_id = 3;  // Unique ID for this task execution, used to match completions
 }

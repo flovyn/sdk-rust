@@ -426,14 +426,14 @@ impl FfiWorkflowContext {
         let task_seq = self.replay_engine.next_task_seq();
 
         if let Some(event) = self.replay_engine.get_task_event(task_seq) {
-            // Replay: validate task type matches
-            let event_task_type = event.get_string("taskType").unwrap_or_default();
+            // Replay: validate task kind matches
+            let event_kind = event.get_string("kind").unwrap_or_default();
 
-            if event_task_type != task_type {
+            if event_kind != task_type {
                 return Err(FfiError::DeterminismViolation {
                     msg: format!(
-                        "Task type mismatch at Task({}): expected '{}', got '{}'",
-                        task_seq, task_type, event_task_type
+                        "Task kind mismatch at Task({}): expected '{}', got '{}'",
+                        task_seq, task_type, event_kind
                     ),
                 });
             }
@@ -464,7 +464,7 @@ impl FfiWorkflowContext {
 
             self.commands.lock().push(FfiWorkflowCommand::ScheduleTask {
                 task_execution_id: task_execution_id.clone(),
-                task_type,
+                kind: task_type,
                 input,
                 priority_seconds: None,
                 max_retries: None,
@@ -820,7 +820,7 @@ mod tests {
                 sequence_number: 1,
                 event_type: FfiEventType::TaskScheduled,
                 data: serde_json::to_vec(&serde_json::json!({
-                    "taskType": "my-task",
+                    "kind": "my-task",
                     "taskExecutionId": task_id
                 }))
                 .unwrap(),
@@ -856,7 +856,7 @@ mod tests {
             sequence_number: 1,
             event_type: FfiEventType::TaskScheduled,
             data: serde_json::to_vec(&serde_json::json!({
-                "taskType": "original-task",
+                "kind": "original-task",
                 "taskExecutionId": task_id
             }))
             .unwrap(),

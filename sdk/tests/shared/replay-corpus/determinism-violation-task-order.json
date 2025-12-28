@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "task-A",
+        "kind": "task-A",
         "taskExecutionId": "33333333-3333-3333-3333-000000000001",
         "input": { "order": 1 }
       }
@@ -34,7 +34,7 @@
       "sequence_number": 4,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "task-B",
+        "kind": "task-B",
         "taskExecutionId": "33333333-3333-3333-3333-000000000002",
         "input": { "order": 2 }
       }
@@ -56,8 +56,8 @@
     }
   ],
   "replay_commands": [
-    { "type": "ScheduleTask", "taskType": "task-B" },
-    { "type": "ScheduleTask", "taskType": "task-A" }
+    { "type": "ScheduleTask", "kind": "task-B" },
+    { "type": "ScheduleTask", "kind": "task-A" }
   ],
   "determinism_test": {
     "type": "expect_violation",

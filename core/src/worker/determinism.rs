@@ -289,13 +289,13 @@ impl DeterminismValidator {
                     }
                 }
             }
-            WorkflowCommand::ScheduleTask { task_type, .. } => {
-                if let Some(historical_type) = event.get_string("taskType") {
-                    if historical_type != task_type {
+            WorkflowCommand::ScheduleTask { kind, .. } => {
+                if let Some(historical_kind) = event.get_string("kind") {
+                    if historical_kind != kind {
                         return DeterminismValidationResult::TaskTypeMismatch {
                             sequence,
-                            expected: historical_type.to_string(),
-                            actual: task_type.clone(),
+                            expected: historical_kind.to_string(),
+                            actual: kind.clone(),
                         };
                     }
                 }
@@ -479,7 +479,7 @@ mod tests {
         let event = ReplayEvent::new(
             1,
             EventType::TaskScheduled,
-            json!({"taskType": "some-task"}),
+            json!({"kind": "some-task"}),
             now(),
         );
 
@@ -525,7 +525,7 @@ mod tests {
         let validator = DeterminismValidator::new();
         let command = WorkflowCommand::ScheduleTask {
             sequence_number: 1,
-            task_type: "payment-task".to_string(),
+            kind: "payment-task".to_string(),
             task_execution_id: Uuid::new_v4(),
             input: json!({}),
             priority_seconds: None,
@@ -536,7 +536,7 @@ mod tests {
         let event = ReplayEvent::new(
             1,
             EventType::TaskScheduled,
-            json!({"taskType": "shipping-task"}),
+            json!({"kind": "shipping-task"}),
             now(),
         );
 
@@ -690,7 +690,7 @@ mod tests {
         assert_eq!(
             validator.command_to_event_type(&WorkflowCommand::ScheduleTask {
                 sequence_number: 0,
-                task_type: "".to_string(),
+                kind: "".to_string(),
                 task_execution_id: Uuid::nil(),
                 input: json!(null),
                 priority_seconds: None,
@@ -806,7 +806,7 @@ mod tests {
             ReplayEvent::new(
                 2,
                 EventType::TaskScheduled,
-                json!({"taskType": "process-data"}),
+                json!({"kind": "process-data"}),
                 now(),
             ),
             ReplayEvent::new(
@@ -825,7 +825,7 @@ mod tests {
             },
             WorkflowCommand::ScheduleTask {
                 sequence_number: 2,
-                task_type: "process-data".to_string(),
+                kind: "process-data".to_string(),
                 task_execution_id: Uuid::new_v4(),
                 input: json!({}),
                 priority_seconds: None,

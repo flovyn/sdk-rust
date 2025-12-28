@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "fetch-user",
+        "kind": "fetch-user",
         "taskExecutionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         "input": { "userId": "123" }
       }
@@ -26,7 +26,7 @@
       "sequence_number": 3,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "fetch-orders",
+        "kind": "fetch-orders",
         "taskExecutionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
         "input": { "userId": "123" }
       }
@@ -94,8 +94,8 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "fetch-user" },
-    { "type": "ScheduleTask", "taskType": "fetch-orders" },
+    { "type": "ScheduleTask", "kind": "fetch-user" },
+    { "type": "ScheduleTask", "kind": "fetch-orders" },
     { "type": "ScheduleChildWorkflow", "workflowName": "calculate-recommendations", "workflowKind": "recommendation-workflow" },
     { "type": "StartTimer", "timerId": "sleep-1" },
     { "type": "CompleteWorkflow" }

@@ -288,7 +288,7 @@ pub struct SubmitTaskRequest {
     #[prost(string, tag = "2")]
     pub tenant_id: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
-    pub task_type: ::prost::alloc::string::String,
+    pub kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub input: ::prost::alloc::vec::Vec<u8>,
     #[prost(map = "string, string", tag = "5")]
@@ -354,7 +354,7 @@ pub struct TaskExecutionInfo {
     #[prost(string, tag = "1")]
     pub task_execution_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub task_type: ::prost::alloc::string::String,
+    pub kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "3")]
     pub input: ::prost::alloc::vec::Vec<u8>,
     /// Empty string for standalone tasks
@@ -569,7 +569,7 @@ pub struct ClearStateCommand {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScheduleTaskCommand {
     #[prost(string, tag = "1")]
-    pub task_type: ::prost::alloc::string::String,
+    pub kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
     pub input: ::prost::alloc::vec::Vec<u8>,
     /// Unique ID for this task execution, used to match completions

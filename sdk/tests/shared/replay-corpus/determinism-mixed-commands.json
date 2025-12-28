@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "fetch-data",
+        "kind": "fetch-data",
         "taskExecutionId": "22222222-2222-2222-2222-000000000001",
         "input": { "source": "api" }
       }
@@ -68,7 +68,7 @@
       "sequence_number": 8,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "send-notification",
+        "kind": "send-notification",
         "taskExecutionId": "22222222-2222-2222-2222-000000000002",
         "input": { "message": "done" }
       }
@@ -90,10 +90,10 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "fetch-data" },
+    { "type": "ScheduleTask", "kind": "fetch-data" },
     { "type": "StartTimer", "timerId": "delay-1" },
     { "type": "ScheduleChildWorkflow", "workflowName": "process-data", "workflowKind": "processor" },
-    { "type": "ScheduleTask", "taskType": "send-notification" },
+    { "type": "ScheduleTask", "kind": "send-notification" },
     { "type": "CompleteWorkflow" }
   ],
   "determinism_test": {

@@ -29,8 +29,8 @@ pub enum WorkflowCommand {
     /// Schedule a task for execution
     ScheduleTask {
         sequence_number: i32,
-        #[serde(rename = "taskType")]
-        task_type: String,
+        #[serde(rename = "kind")]
+        kind: String,
         #[serde(rename = "taskExecutionId")]
         task_execution_id: Uuid,
         input: Value,
@@ -296,7 +296,7 @@ mod tests {
 
         let cmd = WorkflowCommand::ScheduleTask {
             sequence_number: 1,
-            task_type: "my-task".to_string(),
+            kind: "my-task".to_string(),
             task_execution_id: Uuid::new_v4(),
             input: json!({}),
             priority_seconds: None,
@@ -329,7 +329,7 @@ mod tests {
         let task_id = Uuid::new_v4();
         let cmd = WorkflowCommand::ScheduleTask {
             sequence_number: 2,
-            task_type: "payment-task".to_string(),
+            kind: "payment-task".to_string(),
             task_execution_id: task_id,
             input: json!({"amount": 100}),
             priority_seconds: Some(60),
@@ -341,7 +341,7 @@ mod tests {
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("ScheduleTask"));
         assert!(json.contains("payment-task"));
-        assert!(json.contains("taskType"));
+        assert!(json.contains("\"kind\""));
         assert!(json.contains("prioritySeconds"));
         assert!(json.contains("maxRetries"));
         assert!(json.contains("timeoutMs"));
@@ -436,7 +436,7 @@ mod tests {
             },
             WorkflowCommand::ScheduleTask {
                 sequence_number: 4,
-                task_type: "t".to_string(),
+                kind: "t".to_string(),
                 task_execution_id: Uuid::nil(),
                 input: json!(null),
                 priority_seconds: None,

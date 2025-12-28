@@ -102,7 +102,7 @@ impl WorkflowTestBuilder {
             self.sequence,
             EventType::TaskScheduled,
             serde_json::json!({
-                "taskType": task_type,
+                "kind": task_type,
                 "input": input
             }),
             Utc::now(),
@@ -117,7 +117,7 @@ impl WorkflowTestBuilder {
             self.sequence,
             EventType::TaskCompleted,
             serde_json::json!({
-                "taskType": task_type,
+                "kind": task_type,
                 "result": result
             }),
             Utc::now(),
@@ -134,7 +134,7 @@ impl WorkflowTestBuilder {
             self.sequence,
             EventType::TaskFailed,
             serde_json::json!({
-                "taskType": task_type,
+                "kind": task_type,
                 "error": error
             }),
             Utc::now(),

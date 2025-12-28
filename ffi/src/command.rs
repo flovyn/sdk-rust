@@ -37,8 +37,8 @@ pub enum FfiWorkflowCommand {
     ScheduleTask {
         /// Unique task execution ID.
         task_execution_id: String,
-        /// Task type/kind.
-        task_type: String,
+        /// Task kind.
+        kind: String,
         /// Serialized input as JSON bytes.
         input: Vec<u8>,
         /// Optional priority in seconds.
@@ -174,13 +174,13 @@ impl FfiWorkflowCommand {
             ),
             FfiWorkflowCommand::ScheduleTask {
                 task_execution_id,
-                task_type,
+                kind,
                 input,
                 ..
             } => (
                 flovyn_v1::CommandType::ScheduleTask as i32,
                 Some(CommandData::ScheduleTask(flovyn_v1::ScheduleTaskCommand {
-                    task_type: task_type.clone(),
+                    kind: kind.clone(),
                     input: input.clone(),
                     task_execution_id: task_execution_id.clone(),
                 })),
@@ -328,7 +328,7 @@ impl FfiWorkflowCommand {
             },
             FfiWorkflowCommand::ScheduleTask {
                 task_execution_id,
-                task_type,
+                kind,
                 input,
                 priority_seconds,
                 max_retries,
@@ -336,7 +336,7 @@ impl FfiWorkflowCommand {
                 queue,
             } => WorkflowCommand::ScheduleTask {
                 sequence_number,
-                task_type: task_type.clone(),
+                kind: kind.clone(),
                 task_execution_id: Uuid::parse_str(task_execution_id)
                     .unwrap_or_else(|_| Uuid::nil()),
                 input: serde_json::from_slice(input).unwrap_or(serde_json::Value::Null),
@@ -469,7 +469,7 @@ mod tests {
     fn test_schedule_task_conversion() {
         let cmd = FfiWorkflowCommand::ScheduleTask {
             task_execution_id: Uuid::nil().to_string(),
-            task_type: "my-task".to_string(),
+            kind: "my-task".to_string(),
             input: b"{}".to_vec(),
             priority_seconds: Some(30),
             max_retries: Some(3),

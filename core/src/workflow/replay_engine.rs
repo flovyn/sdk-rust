@@ -350,9 +350,9 @@ mod tests {
     #[test]
     fn test_new_filters_task_events() {
         let events = vec![
-            ReplayEvent::new(1, EventType::TaskScheduled, json!({"taskType": "a"}), now()),
+            ReplayEvent::new(1, EventType::TaskScheduled, json!({"kind": "a"}), now()),
             ReplayEvent::new(2, EventType::TimerStarted, json!({"timerId": "t1"}), now()),
-            ReplayEvent::new(3, EventType::TaskScheduled, json!({"taskType": "b"}), now()),
+            ReplayEvent::new(3, EventType::TaskScheduled, json!({"kind": "b"}), now()),
             ReplayEvent::new(
                 4,
                 EventType::PromiseCreated,
@@ -365,11 +365,11 @@ mod tests {
 
         assert_eq!(engine.task_event_count(), 2);
         assert_eq!(
-            engine.get_task_event(0).unwrap().get_string("taskType"),
+            engine.get_task_event(0).unwrap().get_string("kind"),
             Some("a")
         );
         assert_eq!(
-            engine.get_task_event(1).unwrap().get_string("taskType"),
+            engine.get_task_event(1).unwrap().get_string("kind"),
             Some("b")
         );
     }
@@ -378,7 +378,7 @@ mod tests {
     fn test_new_filters_timer_events() {
         let events = vec![
             ReplayEvent::new(1, EventType::TimerStarted, json!({"timerId": "t1"}), now()),
-            ReplayEvent::new(2, EventType::TaskScheduled, json!({"taskType": "a"}), now()),
+            ReplayEvent::new(2, EventType::TaskScheduled, json!({"kind": "a"}), now()),
             ReplayEvent::new(3, EventType::TimerStarted, json!({"timerId": "t2"}), now()),
         ];
 
@@ -1123,7 +1123,7 @@ mod tests {
             ReplayEvent::new(
                 1,
                 EventType::TaskScheduled,
-                json!({"taskType": "send-email", "taskExecutionId": "task-1"}),
+                json!({"kind": "send-email", "taskExecutionId": "task-1"}),
                 now(),
             ),
             ReplayEvent::new(
@@ -1141,7 +1141,7 @@ mod tests {
         assert_eq!(seq, 0);
 
         let event = engine.get_task_event(seq).unwrap();
-        assert_eq!(event.get_string("taskType"), Some("send-email"));
+        assert_eq!(event.get_string("kind"), Some("send-email"));
 
         let task_id = event.get_string("taskExecutionId").unwrap();
         let terminal = engine.find_terminal_task_event(task_id).unwrap();
@@ -1153,7 +1153,7 @@ mod tests {
         let events = vec![ReplayEvent::new(
             1,
             EventType::TaskScheduled,
-            json!({"taskType": "send-email", "taskExecutionId": "task-1"}),
+            json!({"kind": "send-email", "taskExecutionId": "task-1"}),
             now(),
         )];
 
@@ -1173,7 +1173,7 @@ mod tests {
             ReplayEvent::new(
                 1,
                 EventType::TaskScheduled,
-                json!({"taskType": "task1", "taskExecutionId": "t1"}),
+                json!({"kind": "task1", "taskExecutionId": "t1"}),
                 now(),
             ),
             ReplayEvent::new(
@@ -1191,7 +1191,7 @@ mod tests {
             ReplayEvent::new(
                 4,
                 EventType::TaskScheduled,
-                json!({"taskType": "task2", "taskExecutionId": "t2"}),
+                json!({"kind": "task2", "taskExecutionId": "t2"}),
                 now(),
             ),
             ReplayEvent::new(
@@ -1238,9 +1238,9 @@ mod tests {
     #[test]
     fn test_replay_scenario_determinism() {
         let events = vec![
-            ReplayEvent::new(1, EventType::TaskScheduled, json!({"taskType": "a"}), now()),
-            ReplayEvent::new(2, EventType::TaskScheduled, json!({"taskType": "b"}), now()),
-            ReplayEvent::new(3, EventType::TaskScheduled, json!({"taskType": "c"}), now()),
+            ReplayEvent::new(1, EventType::TaskScheduled, json!({"kind": "a"}), now()),
+            ReplayEvent::new(2, EventType::TaskScheduled, json!({"kind": "b"}), now()),
+            ReplayEvent::new(3, EventType::TaskScheduled, json!({"kind": "c"}), now()),
         ];
 
         // Create two engines with the same events
@@ -1254,8 +1254,8 @@ mod tests {
 
         // And the same event lookups
         assert_eq!(
-            engine1.get_task_event(0).unwrap().get_string("taskType"),
-            engine2.get_task_event(0).unwrap().get_string("taskType")
+            engine1.get_task_event(0).unwrap().get_string("kind"),
+            engine2.get_task_event(0).unwrap().get_string("kind")
         );
     }
 }

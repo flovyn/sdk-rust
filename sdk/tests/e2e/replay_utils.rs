@@ -124,14 +124,14 @@ mod tests {
         let event = WorkflowEventResponse {
             sequence_number: 1,
             event_type: "TaskScheduled".to_string(),
-            data: json!({ "taskType": "process-item", "taskExecutionId": "task-1" }),
+            data: json!({ "kind": "process-item", "taskExecutionId": "task-1" }),
             created_at: "2024-01-01T00:00:00Z".to_string(),
         };
 
         let replay_event = to_replay_event(&event);
         assert_eq!(replay_event.sequence_number(), 1);
         assert_eq!(replay_event.event_type(), EventType::TaskScheduled);
-        assert_eq!(replay_event.get_string("taskType"), Some("process-item"));
+        assert_eq!(replay_event.get_string("kind"), Some("process-item"));
     }
 
     #[test]
@@ -146,7 +146,7 @@ mod tests {
             WorkflowEventResponse {
                 sequence_number: 2,
                 event_type: "TaskScheduled".to_string(),
-                data: json!({ "taskType": "task-A" }),
+                data: json!({ "kind": "task-A" }),
                 created_at: "2024-01-01T00:00:01Z".to_string(),
             },
         ];
@@ -169,7 +169,7 @@ mod tests {
             WorkflowEventResponse {
                 sequence_number: 2,
                 event_type: "TaskScheduled".to_string(),
-                data: json!({ "taskType": "process", "taskExecutionId": "task-1" }),
+                data: json!({ "kind": "process", "taskExecutionId": "task-1" }),
                 created_at: "2024-01-01T00:00:01Z".to_string(),
             },
         ];

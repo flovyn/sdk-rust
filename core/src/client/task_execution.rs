@@ -59,7 +59,7 @@ impl TaskExecutionClient {
                 .map(|id| id.to_string())
                 .unwrap_or_default(),
             tenant_id: tenant_id.to_string(),
-            task_type: task_type.to_string(),
+            kind: task_type.to_string(),
             input: input_bytes,
             labels: std::collections::HashMap::new(),
             max_retries: max_retries as i32,
@@ -107,7 +107,7 @@ impl TaskExecutionClient {
             } else {
                 te.workflow_execution_id.parse().ok()
             },
-            task_type: te.task_type,
+            task_type: te.kind,
             input: serde_json::from_slice(&te.input).unwrap_or(Value::Null),
             execution_count: te.execution_count as u32,
             queue: te.queue,

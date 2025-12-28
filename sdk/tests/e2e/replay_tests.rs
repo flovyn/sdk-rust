@@ -79,7 +79,7 @@ async fn test_e2e_determinism_violation_on_task_type_change() {
                 sequence_number: 1,
                 event_type: "TaskScheduled".to_string(),
                 data: serde_json::json!({
-                    "taskType": "task-A",
+                    "kind": "task-A",
                     "taskExecutionId": "task-1"
                 }),
                 created_at: "2024-01-01T00:00:00Z".to_string(),

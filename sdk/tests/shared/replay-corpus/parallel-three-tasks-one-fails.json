@@ -17,7 +17,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "process-number",
+        "kind": "process-number",
         "taskExecutionId": "44444444-4444-4444-4444-444444444444",
         "input": { "number": 1 }
       }
@@ -26,7 +26,7 @@
       "sequence_number": 3,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "process-number",
+        "kind": "process-number",
         "taskExecutionId": "55555555-5555-5555-5555-555555555555",
         "input": { "number": 2 }
       }
@@ -35,7 +35,7 @@
       "sequence_number": 4,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "process-number",
+        "kind": "process-number",
         "taskExecutionId": "66666666-6666-6666-6666-666666666666",
         "input": { "number": 3 }
       }
@@ -73,9 +73,9 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "process-number", "input": { "number": 1 } },
-    { "type": "ScheduleTask", "taskType": "process-number", "input": { "number": 2 } },
-    { "type": "ScheduleTask", "taskType": "process-number", "input": { "number": 3 } },
+    { "type": "ScheduleTask", "kind": "process-number", "input": { "number": 1 } },
+    { "type": "ScheduleTask", "kind": "process-number", "input": { "number": 2 } },
+    { "type": "ScheduleTask", "kind": "process-number", "input": { "number": 3 } },
     { "type": "FailWorkflow", "error": "Task failed: Number 2 is unlucky" }
   ],
   "determinism_test": {

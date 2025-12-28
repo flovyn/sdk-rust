@@ -40,9 +40,9 @@ fn arb_command() -> impl Strategy<Value = WorkflowCommand> {
             "[a-z]{3,10}",
             any::<i64>().prop_map(|n| serde_json::json!(n))
         )
-            .prop_map(|(task_type, input)| WorkflowCommand::ScheduleTask {
+            .prop_map(|(kind, input)| WorkflowCommand::ScheduleTask {
                 sequence_number: 1,
-                task_type,
+                kind,
                 task_execution_id: Uuid::new_v4(),
                 input,
                 priority_seconds: None,
@@ -105,8 +105,8 @@ fn command_to_matching_event(cmd: &WorkflowCommand) -> ReplayEvent {
         WorkflowCommand::ClearState { key, .. } => {
             event = event.with_state_key(key.clone());
         }
-        WorkflowCommand::ScheduleTask { task_type, .. } => {
-            event = event.with_task_type(task_type.clone());
+        WorkflowCommand::ScheduleTask { kind, .. } => {
+            event = event.with_task_kind(kind.clone());
         }
         WorkflowCommand::CreatePromise { promise_id, .. } => {
             event = event.with_promise_name(promise_id.clone());
@@ -206,7 +206,7 @@ proptest! {
 
         let original_cmd = WorkflowCommand::ScheduleTask {
             sequence_number: 1,
-            task_type: original_type.clone(),
+            kind: original_type.clone(),
             task_execution_id: Uuid::new_v4(),
             input: serde_json::json!({}),
             priority_seconds: None,
@@ -217,7 +217,7 @@ proptest! {
 
         let modified_cmd = WorkflowCommand::ScheduleTask {
             sequence_number: 1,
-            task_type: modified_type.clone(),
+            kind: modified_type.clone(),
             task_execution_id: Uuid::new_v4(),
             input: serde_json::json!({}),
             priority_seconds: None,

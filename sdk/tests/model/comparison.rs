@@ -87,7 +87,7 @@ fn execute_command_with_mutation_tracked(
                 Mutation::InvertedTaskComparison => {
                     // BUG: Inverted comparison
                     if let Some(event) = engine.get_task_event(lookup_seq) {
-                        let expected = event.get_string("taskType").unwrap_or("");
+                        let expected = event.get_string("kind").unwrap_or("");
                         if expected == task_type {
                             // WRONG: fail when they match
                             return CommandOutcome::Violation(format!(
@@ -103,7 +103,7 @@ fn execute_command_with_mutation_tracked(
 
             // Normal validation with potentially wrong seq
             if let Some(event) = engine.get_task_event(lookup_seq) {
-                let expected = event.get_string("taskType").unwrap_or("");
+                let expected = event.get_string("kind").unwrap_or("");
                 if expected != task_type {
                     return CommandOutcome::Violation(format!(
                         "TaskTypeMismatch at Task({}): expected '{}', got '{}'",

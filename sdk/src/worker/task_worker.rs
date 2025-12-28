@@ -597,6 +597,7 @@ mod tests {
             enable_telemetry: true,
             lifecycle_hooks: HookChain::new(),
             reconnection_strategy: ReconnectionStrategy::fixed(Duration::from_secs(5)),
+            server_worker_id: None,
         };
 
         assert_eq!(config.worker_id, "task-worker-1");

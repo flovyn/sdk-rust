@@ -19,7 +19,7 @@
       "sequence_number": 2,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "process-item",
+        "kind": "process-item",
         "taskExecutionId": "11111111-1111-1111-1111-000000000001",
         "input": { "item": "item-1" }
       }
@@ -36,7 +36,7 @@
       "sequence_number": 4,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "process-item",
+        "kind": "process-item",
         "taskExecutionId": "11111111-1111-1111-1111-000000000002",
         "input": { "item": "item-2" }
       }
@@ -53,7 +53,7 @@
       "sequence_number": 6,
       "event_type": "TaskScheduled",
       "data": {
-        "taskType": "process-item",
+        "kind": "process-item",
         "taskExecutionId": "11111111-1111-1111-1111-000000000003",
         "input": { "item": "item-3" }
       }
@@ -75,9 +75,9 @@
     }
   ],
   "expected_commands": [
-    { "type": "ScheduleTask", "taskType": "process-item" },
-    { "type": "ScheduleTask", "taskType": "process-item" },
-    { "type": "ScheduleTask", "taskType": "process-item" },
+    { "type": "ScheduleTask", "kind": "process-item" },
+    { "type": "ScheduleTask", "kind": "process-item" },
+    { "type": "ScheduleTask", "kind": "process-item" },
     { "type": "CompleteWorkflow" }
   ],
   "determinism_test": {

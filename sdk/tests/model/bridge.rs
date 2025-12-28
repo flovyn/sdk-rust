@@ -53,7 +53,7 @@ pub fn build_engine_from_model(model: &SequenceMatchingModel) -> ReplayEngine {
             seq,
             EventType::TaskScheduled,
             json!({
-                "taskType": task_type,
+                "kind": task_type,
                 "taskExecutionId": format!("task-exec-{}", seq),
             }),
             Utc::now(),
@@ -104,7 +104,7 @@ pub fn execute_command(engine: &ReplayEngine, cmd: &Command) -> CommandOutcome {
 
             // Check if we're replaying (seq < event count)
             if let Some(event) = engine.get_task_event(seq) {
-                let expected = event.get_string("taskType").unwrap_or("");
+                let expected = event.get_string("kind").unwrap_or("");
                 if expected != task_type {
                     return CommandOutcome::Violation(format!(
                         "TaskTypeMismatch at Task({}): expected '{}', got '{}'",
@@ -211,11 +211,11 @@ mod tests {
 
         // Verify event content
         assert_eq!(
-            engine.get_task_event(0).unwrap().get_string("taskType"),
+            engine.get_task_event(0).unwrap().get_string("kind"),
             Some("task-A")
         );
         assert_eq!(
-            engine.get_task_event(1).unwrap().get_string("taskType"),
+            engine.get_task_event(1).unwrap().get_string("kind"),
             Some("task-B")
         );
         assert_eq!(

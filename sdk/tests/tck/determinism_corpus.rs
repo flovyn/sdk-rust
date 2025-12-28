@@ -170,7 +170,7 @@ async fn execute_replay_command(
         "ScheduleTask" => {
             let task_type = command
                 .fields
-                .get("taskType")
+                .get("kind")
                 .and_then(|v| v.as_str())
                 .expect("ScheduleTask requires taskType");
             let input = command.fields.get("input").cloned().unwrap_or(Value::Null);
