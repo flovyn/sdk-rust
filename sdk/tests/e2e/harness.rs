@@ -1,7 +1,7 @@
 //! Test harness for E2E tests using Testcontainers
 //!
 //! Provides container orchestration for PostgreSQL, NATS, and Flovyn server,
-//! plus JWT generation and REST API client for test setup.
+//! using static API key authentication.
 //!
 //! All containers are started by the harness - no external dependencies required.
 //!
@@ -11,13 +11,13 @@
 //!   Containers will remain running. Use `./bin/dev/cleanup-test-containers.sh`
 //!   to clean up manually.
 
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use testcontainers::{
-    core::{ContainerPort, WaitFor},
+    core::{ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
     ContainerAsync, GenericImage, ImageExt,
 };
@@ -97,10 +97,16 @@ pub struct TestHarness {
     nats: ContainerAsync<GenericImage>,
     #[allow(dead_code)]
     server: ContainerAsync<GenericImage>,
+    /// Config file (kept alive for server to read)
+    #[allow(dead_code)]
+    _config_file: tempfile::NamedTempFile,
     server_grpc_port: u16,
     server_http_port: u16,
     tenant_id: Uuid,
     tenant_slug: String,
+    /// Static API key for HTTP requests (User principal)
+    api_key: String,
+    /// Static API key for gRPC/SDK connections (Worker principal)
     worker_token: String,
 }
 
@@ -142,6 +148,21 @@ impl TestHarness {
         let nats_host_port = nats.get_host_port_ipv4(4222).await.unwrap();
         println!("NATS started on port {}", nats_host_port);
 
+        // Generate test tenant and API keys
+        let tenant_id = Uuid::new_v4();
+        let tenant_slug = format!("test-{}", &Uuid::new_v4().to_string()[..8]);
+        let api_key = format!("flovyn_sk_test_{}", &Uuid::new_v4().to_string()[..16]);
+        // Worker API key must start with 'fwt_' to satisfy SDK validation
+        let worker_token = format!("fwt_test_{}", &Uuid::new_v4().to_string()[..16]);
+
+        // Create config file with tenant and static API keys
+        let config_file = create_config_file(&tenant_id, &tenant_slug, &api_key, &worker_token);
+        let config_path = config_file.path().to_string_lossy().to_string();
+        println!(
+            "[HARNESS] Created config file with pre-configured tenant and API keys at: {}",
+            config_path
+        );
+
         // Start the Flovyn server container with labels
         // Image name can be overridden via FLOVYN_SERVER_IMAGE env var
         let image_name = std::env::var("FLOVYN_SERVER_IMAGE")
@@ -154,24 +175,22 @@ impl TestHarness {
 
         let server: ContainerAsync<GenericImage> = server_image
             .with_env_var(
-                "SPRING_DATASOURCE_URL",
+                "DATABASE_URL",
                 format!(
-                    "jdbc:postgresql://host.docker.internal:{}/flovyn",
+                    "postgres://flovyn:flovyn@host.docker.internal:{}/flovyn",
                     pg_host_port
                 ),
             )
-            .with_env_var("SPRING_DATASOURCE_USERNAME", "flovyn")
-            .with_env_var("SPRING_DATASOURCE_PASSWORD", "flovyn")
-            .with_env_var("NATS_ENABLED", "true")
+            .with_env_var("NATS__ENABLED", "true")
             .with_env_var(
-                "NATS_SERVERS_0",
+                "NATS__URL",
                 format!("nats://host.docker.internal:{}", nats_host_port),
             )
             .with_env_var("SERVER_PORT", "8000")
             .with_env_var("GRPC_SERVER_PORT", "9090")
-            // Enable security with signature verification skipped (for self-signed JWTs)
-            .with_env_var("FLOVYN_SECURITY_ENABLED", "true")
-            .with_env_var("FLOVYN_SECURITY_JWT_SKIP_SIGNATURE_VERIFICATION", "true")
+            // Mount config file and point to it
+            .with_mount(Mount::bind_mount(&config_path, "/app/config.toml"))
+            .with_env_var("CONFIG_FILE", "/app/config.toml")
             .with_startup_timeout(Duration::from_secs(120))
             .start()
             .await
@@ -201,18 +220,16 @@ impl TestHarness {
         // Wait for server to be ready (30s timeout, logs on failure)
         Self::wait_for_health(&server, server_http_port).await;
 
-        // Create test tenant and worker token via REST API
-        let (tenant_id, tenant_slug, worker_token) =
-            Self::setup_test_tenant(server_http_port).await;
-
         Self {
             postgres,
             nats,
             server,
+            _config_file: config_file,
             server_grpc_port,
             server_http_port,
             tenant_id,
             tenant_slug,
+            api_key,
             worker_token,
         }
     }
@@ -246,70 +263,6 @@ impl TestHarness {
         );
     }
 
-    /// Setup test tenant and worker token via REST API.
-    /// Uses a self-signed JWT for authentication.
-    async fn setup_test_tenant(http_port: u16) -> (Uuid, String, String) {
-        let base_url = format!("http://localhost:{}", http_port);
-        let client = reqwest::Client::new();
-
-        // Generate JWT with userId claim
-        let jwt = Self::generate_test_jwt();
-
-        // Create tenant via REST API
-        let tenant_slug = format!("test-{}", &Uuid::new_v4().to_string()[..8]);
-        let tenant_response = client
-            .post(format!("{}/api/tenants", base_url))
-            .header("Authorization", format!("Bearer {}", jwt))
-            .json(&serde_json::json!({
-                "name": "Test Tenant",
-                "slug": tenant_slug,
-                "tier": "FREE",
-                "region": "us-west-2",
-            }))
-            .send()
-            .await
-            .expect("Failed to create tenant");
-
-        if !tenant_response.status().is_success() {
-            let status = tenant_response.status();
-            let body = tenant_response.text().await.unwrap_or_default();
-            panic!("Failed to create tenant: {} - {}", status, body);
-        }
-
-        let tenant: TenantResponse = tenant_response
-            .json()
-            .await
-            .expect("Failed to parse tenant response");
-
-        // Create worker token via trusted plugin endpoint
-        // Path: /api/tenants/{tenant_slug}/worker-token/tokens
-        let token_response = client
-            .post(format!(
-                "{}/api/tenants/{}/worker-token/tokens",
-                base_url, tenant_slug
-            ))
-            .header("Authorization", format!("Bearer {}", jwt))
-            .json(&serde_json::json!({
-                "displayName": "e2e-test-worker",
-            }))
-            .send()
-            .await
-            .expect("Failed to create worker token");
-
-        if !token_response.status().is_success() {
-            let status = token_response.status();
-            let body = token_response.text().await.unwrap_or_default();
-            panic!("Failed to create worker token: {} - {}", status, body);
-        }
-
-        let token: WorkerTokenResponse = token_response
-            .json()
-            .await
-            .expect("Failed to parse worker token response");
-
-        (tenant.id, tenant.slug, token.token)
-    }
-
     pub fn grpc_host(&self) -> &str {
         "localhost"
     }
@@ -334,6 +287,10 @@ impl TestHarness {
         &self.worker_token
     }
 
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     /// Get workflow events from the server for a given workflow execution.
     /// Returns the events as JSON value for replay testing.
     pub async fn get_workflow_events(
@@ -342,7 +299,6 @@ impl TestHarness {
     ) -> Vec<WorkflowEventResponse> {
         let base_url = format!("http://localhost:{}", self.server_http_port);
         let client = reqwest::Client::new();
-        let jwt = Self::generate_test_jwt();
 
         let url = format!(
             "{}/api/tenants/{}/workflow-executions/{}/events",
@@ -351,7 +307,7 @@ impl TestHarness {
 
         let response = client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", jwt))
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await
             .expect("Failed to get workflow events");
@@ -375,7 +331,6 @@ impl TestHarness {
     ) -> WorkflowExecutionResponse {
         let base_url = format!("http://localhost:{}", self.server_http_port);
         let client = reqwest::Client::new();
-        let jwt = Self::generate_test_jwt();
 
         let url = format!(
             "{}/api/tenants/{}/workflow-executions/{}",
@@ -384,7 +339,7 @@ impl TestHarness {
 
         let response = client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", jwt))
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await
             .expect("Failed to get workflow execution");
@@ -400,57 +355,6 @@ impl TestHarness {
             .await
             .expect("Failed to parse workflow execution response")
     }
-
-    /// Generate a self-signed JWT for REST API authentication.
-    /// The server with security disabled accepts any JWT with valid structure.
-    fn generate_test_jwt() -> String {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        // Use a random string ID like Better Auth does
-        let user_id = format!("test-user-{}", &Uuid::new_v4().to_string()[..8]);
-
-        let claims = JwtClaims {
-            sub: user_id.clone(),
-            id: user_id,
-            name: "E2E Test User".to_string(),
-            email: "e2e-test@example.com".to_string(),
-            iss: "http://localhost:3000".to_string(),
-            aud: "flovyn-server".to_string(),
-            exp: now + 3600, // 1 hour from now
-            iat: now,
-        };
-
-        let key = EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY.as_bytes())
-            .expect("Failed to create encoding key");
-
-        encode(&Header::new(Algorithm::RS256), &claims, &key).expect("Failed to encode JWT")
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct JwtClaims {
-    sub: String,
-    id: String,
-    name: String,
-    email: String,
-    iss: String,
-    aud: String,
-    exp: i64,
-    iat: i64,
-}
-
-#[derive(Debug, Deserialize)]
-struct TenantResponse {
-    id: Uuid,
-    slug: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct WorkerTokenResponse {
-    token: String,
 }
 
 /// Workflow event response from the server API.
@@ -481,31 +385,52 @@ pub struct WorkflowExecutionResponse {
     pub completed_at: Option<String>,
 }
 
-/// Pre-generated RSA private key for JWT signing (test purposes only).
-const RSA_PRIVATE_KEY: &str = r#"-----BEGIN RSA PRIVATE KEY-----
-MIIEpQIBAAKCAQEA4eT5a8zavPvqpUDELVYEDrT2AYkl/3/PvHSXye1DoId0bszP
-NzMEDzJzN6+DybKajRkvyGe8yvBsWTGVajLbFGF/qDkSqWyu3IDqv4C2tOGcQumd
-q8eAYCmfAEieuh6MPtuotPnFy0qG6/14nYM9ZZofCxNk1sHMoIZem9EDJIUCsnga
-zp58Gp9YHLK/L5T5/03up5WRZeFzwaIb9rQ9jt7ILkbYFKQGS81EJjj9YBEAYfJs
-NjnpH79kPQDh1Juo31DeTpF/+mRH8BzRIv8+GB0NZ5t/2YVn+ndPDQPYP4O6K/Gu
-3XaUG4VwTI8lPTTgnx203Znjd+kZTFNqljAfkQIDAQABAoIBADokihB1q22ON+Cu
-EXCL3cJ9UH6nsuiXGLysk+8tC0WT5+OnAsT19BsHRMG2AulU99POgk6GaQEhLfot
-OYSar2oJCGcfvY5vQ3jNE98TvbNECMjuQZ+X25Kk0+CqUHSebUG2ny9pxL/lIGI4
-nSWJxLFUoJ3ksYVXX5iHzW00uKbau5Woh9vLD8FehbNleCH5nj/ASX+pwaOh5Kg8
-z7WUIaF1FKwGLKZZuwjxHGTL2Vk6anlOuV6LTjbUlU5hiQB8ccySV1VsNb9/Kfss
-adCRf50NwwSPGOzdIy303UW8Nvzf86BFoJypU/M9VuUwYwk1XiKBmseIiZ8Ni3Qa
-EgxJaSsCgYEA/ZN5/cTi5kzqaIN022RpzAxcg4SR1TZEhL7hsDZWi+ti2mGX545x
-AXpa5AIoRzVWJdcYrGDhn2ABN2f2EWo3lqf5NqD7Toobfyt5rkANk7m6pvz+wtom
-LqXT1tE1v9YVru8YQs1JT4m25szlkPrkPYW7hFcLtZZCLcnSM54mMEMCgYEA5A3C
-HyCepLUnsJiEr7mRaxK8lhgD+x2ouJ4BO1NnNruQx3CoOK/OhB0XJW7fbLSMduor
-XUZjzYt2wPfArhoSU+YKkZ9+sp99w8cRKf0/SgGqzA/XcKtbARnvsFDY2hbfRgy6
-sSnotSVMzwsTDtnfrOHTzz50ufLvaqlXHwfUjZsCgYEAltVNgDTIHuNrn6VqMkJF
-aDmGIjkOIfw4v5lnV9DKpEnssCfTGsqwz4c/X1clLE4+ox2SMJ8kNg/+ST3Osccz
-r6rU47jYI3ylJHzw0USKju+wZjohNDhc8+xx2NrzFNw8Y6UXEk1YKTaqlBkXCKkk
-cLAGvY6liWsKjH/7R/bvkk8CgYEAx2JIABLy4KoJg1o1V7V0MBr3inqAsIIjyxVJ
-mma27KFcWSJj0PvUIKmWXQHskQvhau4c77Xk+AYg02FIsm7U60lKoDrD+MN8nzhi
-B0YEmV2PyE1pXHZUYEgeyRZGIZaxqnrilpY/gHCWEMZr6SYPawUdvCmswA5nx+c5
-5kVgTlUCgYEAzUgbAafuJTV3vr2SbeJkJbiKEPGU0JwsKfcPkiGWJ7uB6gcDsiOT
-OlbEUYIHsdfF8sfJ0EinuNJAjSV90RzKuCh8hebW05+GeZgnEnihq9OzDkbiWK3Y
-bjfaFh9uJuX8lyyLafs0BfdftZEgygIOvUJ0YUYw//t55Ilwk5vVQ9Q=
------END RSA PRIVATE KEY-----"#;
+/// Create a temporary config file with tenant and static API key configuration
+fn create_config_file(
+    tenant_id: &Uuid,
+    tenant_slug: &str,
+    api_key: &str,
+    worker_api_key: &str,
+) -> tempfile::NamedTempFile {
+    let config_content = format!(
+        r#"
+# Pre-configured tenants
+[[tenants]]
+id = "{tenant_id}"
+name = "Test Tenant"
+slug = "{tenant_slug}"
+tier = "FREE"
+
+# Authentication configuration
+[auth]
+enabled = true
+
+# Static API keys
+[auth.static_api_key]
+keys = [
+    {{ key = "{api_key}", tenant_id = "{tenant_id}", principal_type = "User", principal_id = "api:test", role = "ADMIN" }},
+    {{ key = "{worker_api_key}", tenant_id = "{tenant_id}", principal_type = "Worker", principal_id = "worker:test" }}
+]
+
+# Endpoint authentication
+[auth.endpoints.http]
+authenticators = ["static_api_key"]
+authorizer = "cedar"
+
+[auth.endpoints.grpc]
+authenticators = ["static_api_key"]
+authorizer = "cedar"
+"#
+    );
+
+    let mut file = tempfile::Builder::new()
+        .prefix("flovyn-test-config-")
+        .suffix(".toml")
+        .tempfile()
+        .expect("Failed to create temp config file");
+
+    file.write_all(config_content.as_bytes())
+        .expect("Failed to write config file");
+
+    file
+}
