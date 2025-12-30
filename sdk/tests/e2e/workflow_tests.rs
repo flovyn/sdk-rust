@@ -18,7 +18,7 @@ async fn test_harness_setup() {
 
         assert!(!harness.tenant_id().is_nil());
         assert!(!harness.tenant_slug().is_empty());
-        assert!(harness.worker_token().starts_with("fwt_"));
+        assert!(!harness.worker_token().is_empty());
         assert!(harness.grpc_port() > 0);
         assert!(harness.http_port() > 0);
     })

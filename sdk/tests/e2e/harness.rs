@@ -152,8 +152,7 @@ impl TestHarness {
         let tenant_id = Uuid::new_v4();
         let tenant_slug = format!("test-{}", &Uuid::new_v4().to_string()[..8]);
         let api_key = format!("flovyn_sk_test_{}", &Uuid::new_v4().to_string()[..16]);
-        // Worker API key must start with 'fwt_' to satisfy SDK validation
-        let worker_token = format!("fwt_test_{}", &Uuid::new_v4().to_string()[..16]);
+        let worker_token = format!("flovyn_wk_test_{}", &Uuid::new_v4().to_string()[..16]);
 
         // Create config file with tenant and static API keys
         let config_file = create_config_file(&tenant_id, &tenant_slug, &api_key, &worker_token);

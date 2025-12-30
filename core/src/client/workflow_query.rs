@@ -21,7 +21,7 @@ pub struct WorkflowQueryClient {
 impl WorkflowQueryClient {
     /// Create from a channel with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = AuthInterceptor::api_key(token);
+        let interceptor = AuthInterceptor::worker_token(token);
         Self {
             inner: GrpcWorkflowQueryClient::with_interceptor(channel, interceptor),
         }

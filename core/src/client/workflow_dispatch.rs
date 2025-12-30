@@ -22,7 +22,7 @@ pub struct WorkflowDispatch {
 impl WorkflowDispatch {
     /// Create from a channel with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = AuthInterceptor::api_key(token);
+        let interceptor = AuthInterceptor::worker_token(token);
         Self {
             inner: WorkflowDispatchClient::with_interceptor(channel, interceptor),
         }

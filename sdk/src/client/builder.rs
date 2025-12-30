@@ -191,38 +191,9 @@ impl FlovynClientBuilder {
     /// The worker token is passed in the Authorization header for all gRPC requests.
     /// This is required when the server has security enabled.
     ///
-    /// Worker tokens must start with "fwt_" or "fct_" prefix.
-    /// For static API keys (any format), use `.api_key()` instead.
+    /// This is an alias for `.api_key()` - both methods accept any token format.
     pub fn worker_token(mut self, token: impl Into<String>) -> Self {
-        let token = token.into();
-        // Validate worker token prefix for early error detection
-        assert!(
-            token.starts_with("fwt_") || token.starts_with("fct_"),
-            "Worker token must start with 'fwt_' or 'fct_' prefix. For static API keys, use .api_key() instead."
-        );
-        self.worker_token = Some(token);
-        self
-    }
-
-    /// Set a static API key for gRPC authentication
-    ///
-    /// The API key is passed in the Authorization header for all gRPC requests.
-    /// Use this when the server is configured with static API keys.
-    ///
-    /// Unlike `.worker_token()`, this method accepts any key format without prefix validation.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let client = FlovynClient::builder()
-    ///     .server_address("localhost", 9090)
-    ///     .tenant_id(tenant_id)
-    ///     .api_key("flovyn_wk_live_xyz789...")
-    ///     .build()
-    ///     .await?;
-    /// ```
-    pub fn api_key(mut self, key: impl Into<String>) -> Self {
-        self.worker_token = Some(key.into());
+        self.worker_token = Some(token.into());
         self
     }
 
@@ -476,14 +447,14 @@ impl FlovynClientBuilder {
             token
         } else {
             return Err(FlovynError::InvalidConfiguration(
-                "Authentication required. Use .worker_token(\"fwt_...\"), .api_key(\"...\"), or .oauth2_client_credentials(...).".to_string(),
+                "Authentication required. Use .worker_token(...) or .oauth2_client_credentials(...).".to_string(),
             ));
         };
 
         #[cfg(not(feature = "oauth2"))]
         let worker_token = self.worker_token.ok_or_else(|| {
             FlovynError::InvalidConfiguration(
-                "Authentication required. Use .worker_token(\"fwt_...\") for worker tokens or .api_key(\"...\") for static API keys.".to_string(),
+                "Authentication required. Use .worker_token(...).".to_string(),
             )
         })?;
 
@@ -689,44 +660,20 @@ mod tests {
 
     #[test]
     fn test_builder_worker_token() {
-        let builder = FlovynClientBuilder::new().worker_token("fwt_test123");
-        assert_eq!(builder.worker_token, Some("fwt_test123".to_string()));
+        let builder = FlovynClientBuilder::new().worker_token("test_token_123");
+        assert_eq!(builder.worker_token, Some("test_token_123".to_string()));
     }
 
     #[test]
-    fn test_builder_worker_token_client() {
-        let builder = FlovynClientBuilder::new().worker_token("fct_client123");
-        assert_eq!(builder.worker_token, Some("fct_client123".to_string()));
-    }
-
-    #[test]
-    #[should_panic(expected = "Worker token must start with 'fwt_' or 'fct_' prefix")]
-    fn test_builder_worker_token_invalid_prefix() {
-        FlovynClientBuilder::new().worker_token("invalid_token");
-    }
-
-    #[test]
-    fn test_builder_api_key() {
-        let builder = FlovynClientBuilder::new().api_key("my-static-api-key");
-        assert_eq!(builder.worker_token, Some("my-static-api-key".to_string()));
-    }
-
-    #[test]
-    fn test_builder_api_key_accepts_any_format() {
-        // API key accepts any format without validation
-        let builder = FlovynClientBuilder::new().api_key("flovyn_wk_live_xyz123");
+    fn test_builder_worker_token_accepts_any_format() {
+        // worker_token accepts any format without validation
+        let builder = FlovynClientBuilder::new().worker_token("flovyn_wk_live_xyz123");
         assert_eq!(
             builder.worker_token,
             Some("flovyn_wk_live_xyz123".to_string())
         );
 
-        let builder = FlovynClientBuilder::new().api_key("simple-key");
+        let builder = FlovynClientBuilder::new().worker_token("simple-key");
         assert_eq!(builder.worker_token, Some("simple-key".to_string()));
-
-        let builder = FlovynClientBuilder::new().api_key("uuid-like-550e8400-e29b-41d4");
-        assert_eq!(
-            builder.worker_token,
-            Some("uuid-like-550e8400-e29b-41d4".to_string())
-        );
     }
 }

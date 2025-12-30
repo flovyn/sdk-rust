@@ -412,7 +412,7 @@ impl FlovynClient {
             value: value_bytes,
         };
 
-        let interceptor = AuthInterceptor::api_key(&self.worker_token);
+        let interceptor = AuthInterceptor::worker_token(&self.worker_token);
         let mut client =
             flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
                 self.channel.clone(),
@@ -441,7 +441,7 @@ impl FlovynClient {
             error: error.to_string(),
         };
 
-        let interceptor = AuthInterceptor::api_key(&self.worker_token);
+        let interceptor = AuthInterceptor::worker_token(&self.worker_token);
         let mut client =
             flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient::with_interceptor(
                 self.channel.clone(),

@@ -74,7 +74,7 @@ pub struct WorkerLifecycleClient {
 impl WorkerLifecycleClient {
     /// Create a new WorkerLifecycleClient with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = AuthInterceptor::api_key(token);
+        let interceptor = AuthInterceptor::worker_token(token);
         Self {
             stub: flovyn_v1::worker_lifecycle_client::WorkerLifecycleClient::with_interceptor(
                 channel,
