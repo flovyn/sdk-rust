@@ -5,6 +5,7 @@
 //! future type that can be scheduled and awaited independently.
 
 use crate::error::{FlovynError, Result};
+use crate::workflow::outcome::WorkflowOutcome;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::future::Future;
@@ -34,6 +35,23 @@ pub trait CancellableFuture: Future {
 
     /// Check if this future has been cancelled.
     fn is_cancelled(&self) -> bool;
+}
+
+/// Internal trait for workflow futures that return `WorkflowOutcome`.
+///
+/// This trait is used internally to separate control flow (suspension) and
+/// system errors (determinism violations) from application errors.
+pub(crate) trait WorkflowFuturePoll {
+    type Output;
+
+    /// Poll this future, returning a `WorkflowOutcome`.
+    ///
+    /// Unlike `Future::poll`, this method returns `WorkflowOutcome` which
+    /// separates suspension and system errors from application errors.
+    fn poll_outcome(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<WorkflowOutcome<Self::Output>>;
 }
 
 /// State shared between the future and the context for completion tracking
@@ -165,42 +183,65 @@ impl TaskFutureContext for DummyTaskFutureContext {
     fn record_cancel_task(&self, _: &Uuid) {}
 }
 
-impl<T: DeserializeOwned> Future for TaskFuture<T> {
-    type Output = Result<T>;
+impl<T: DeserializeOwned> WorkflowFuturePoll for TaskFuture<T> {
+    type Output = T;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Check for pre-computed error
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<T>> {
+        // Check for pre-computed error (e.g., determinism violation)
         if let Some(error) = self.state.error.lock().take() {
-            return Poll::Ready(Err(error));
+            // Check if it's a determinism violation - if so, return as system error
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
         }
 
         // Check for pre-computed result (replay case)
         if let Some(result) = self.state.result.lock().take() {
             return Poll::Ready(match result {
-                Ok(value) => serde_json::from_value(value).map_err(FlovynError::Serialization),
-                Err(e) => Err(e),
+                Ok(value) => match serde_json::from_value(value) {
+                    Ok(v) => WorkflowOutcome::ok(v),
+                    Err(e) => WorkflowOutcome::err(FlovynError::Serialization(e)),
+                },
+                Err(e) => WorkflowOutcome::err(e),
             });
         }
 
         // Check if cancelled
         if self.state.cancelled.load(Ordering::SeqCst) {
-            return Poll::Ready(Err(FlovynError::TaskCancelled));
+            return Poll::Ready(WorkflowOutcome::err(FlovynError::TaskCancelled));
         }
 
         // Check context for completion
         if let Some(ctx) = self.context.upgrade() {
             if let Some(result) = ctx.find_task_result(&self.task_execution_id) {
                 return Poll::Ready(match result {
-                    Ok(value) => serde_json::from_value(value).map_err(FlovynError::Serialization),
-                    Err(e) => Err(e),
+                    Ok(value) => match serde_json::from_value(value) {
+                        Ok(v) => WorkflowOutcome::ok(v),
+                        Err(e) => WorkflowOutcome::err(FlovynError::Serialization(e)),
+                    },
+                    Err(e) => WorkflowOutcome::err(e),
                 });
             }
         }
 
         // Not ready yet - signal workflow suspension
-        Poll::Ready(Err(FlovynError::Suspended {
-            reason: format!("Waiting for task {} to complete", self.task_execution_id),
-        }))
+        Poll::Ready(WorkflowOutcome::suspended(format!(
+            "Waiting for task {} to complete",
+            self.task_execution_id
+        )))
+    }
+}
+
+impl<T: DeserializeOwned> Future for TaskFuture<T> {
+    type Output = Result<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Delegate to poll_outcome and convert to Result for backward compatibility
+        match self.poll_outcome(cx) {
+            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -309,36 +350,60 @@ impl TimerFutureContext for DummyTimerFutureContext {
     fn record_cancel_timer(&self, _: &str) {}
 }
 
-impl Future for TimerFuture {
-    type Output = Result<()>;
+impl WorkflowFuturePoll for TimerFuture {
+    type Output = ();
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Check for pre-computed error
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<()>> {
+        // Check for pre-computed error (e.g., determinism violation)
         if let Some(error) = self.state.error.lock().take() {
-            return Poll::Ready(Err(error));
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
         }
 
         // Check for pre-computed result (replay or cancelled)
         if let Some(result) = self.state.result.lock().take() {
-            return Poll::Ready(result.map(|_| ()));
+            return Poll::Ready(match result {
+                Ok(_) => WorkflowOutcome::ok(()),
+                Err(e) => WorkflowOutcome::err(e),
+            });
         }
 
         // Check if cancelled (synchronous cancellation)
         if self.state.cancelled.load(Ordering::SeqCst) {
-            return Poll::Ready(Err(FlovynError::TimerError("Timer cancelled".to_string())));
+            return Poll::Ready(WorkflowOutcome::err(FlovynError::TimerError(
+                "Timer cancelled".to_string(),
+            )));
         }
 
         // Check context for completion
         if let Some(ctx) = self.context.upgrade() {
             if let Some(result) = ctx.find_timer_result(&self.timer_id) {
-                return Poll::Ready(result);
+                return Poll::Ready(match result {
+                    Ok(()) => WorkflowOutcome::ok(()),
+                    Err(e) => WorkflowOutcome::err(e),
+                });
             }
         }
 
         // Not ready yet - signal workflow suspension
-        Poll::Ready(Err(FlovynError::Suspended {
-            reason: format!("Waiting for timer {} to fire", self.timer_id),
-        }))
+        Poll::Ready(WorkflowOutcome::suspended(format!(
+            "Waiting for timer {} to fire",
+            self.timer_id
+        )))
+    }
+}
+
+impl Future for TimerFuture {
+    type Output = Result<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Delegate to poll_outcome and convert to Result for backward compatibility
+        match self.poll_outcome(cx) {
+            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -456,26 +521,32 @@ impl ChildWorkflowFutureContext for DummyChildWorkflowFutureContext {
     fn record_cancel_child_workflow(&self, _: &Uuid) {}
 }
 
-impl<T: DeserializeOwned> Future for ChildWorkflowFuture<T> {
-    type Output = Result<T>;
+impl<T: DeserializeOwned> WorkflowFuturePoll for ChildWorkflowFuture<T> {
+    type Output = T;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Check for pre-computed error
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<T>> {
+        // Check for pre-computed error (e.g., determinism violation)
         if let Some(error) = self.state.error.lock().take() {
-            return Poll::Ready(Err(error));
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
         }
 
         // Check for pre-computed result
         if let Some(result) = self.state.result.lock().take() {
             return Poll::Ready(match result {
-                Ok(value) => serde_json::from_value(value).map_err(FlovynError::Serialization),
-                Err(e) => Err(e),
+                Ok(value) => match serde_json::from_value(value) {
+                    Ok(v) => WorkflowOutcome::ok(v),
+                    Err(e) => WorkflowOutcome::err(FlovynError::Serialization(e)),
+                },
+                Err(e) => WorkflowOutcome::err(e),
             });
         }
 
         // Check if cancelled
         if self.state.cancelled.load(Ordering::SeqCst) {
-            return Poll::Ready(Err(FlovynError::WorkflowCancelled(
+            return Poll::Ready(WorkflowOutcome::err(FlovynError::WorkflowCancelled(
                 "Child workflow cancelled".to_string(),
             )));
         }
@@ -484,19 +555,32 @@ impl<T: DeserializeOwned> Future for ChildWorkflowFuture<T> {
         if let Some(ctx) = self.context.upgrade() {
             if let Some(result) = ctx.find_child_workflow_result(&self.child_execution_name) {
                 return Poll::Ready(match result {
-                    Ok(value) => serde_json::from_value(value).map_err(FlovynError::Serialization),
-                    Err(e) => Err(e),
+                    Ok(value) => match serde_json::from_value(value) {
+                        Ok(v) => WorkflowOutcome::ok(v),
+                        Err(e) => WorkflowOutcome::err(FlovynError::Serialization(e)),
+                    },
+                    Err(e) => WorkflowOutcome::err(e),
                 });
             }
         }
 
         // Not ready yet - signal workflow suspension
-        Poll::Ready(Err(FlovynError::Suspended {
-            reason: format!(
-                "Waiting for child workflow {} to complete",
-                self.child_execution_name
-            ),
-        }))
+        Poll::Ready(WorkflowOutcome::suspended(format!(
+            "Waiting for child workflow {} to complete",
+            self.child_execution_name
+        )))
+    }
+}
+
+impl<T: DeserializeOwned> Future for ChildWorkflowFuture<T> {
+    type Output = Result<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Delegate to poll_outcome and convert to Result for backward compatibility
+        match self.poll_outcome(cx) {
+            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -599,20 +683,26 @@ impl PromiseFutureContext for DummyPromiseFutureContext {
     }
 }
 
-impl<T: DeserializeOwned> Future for PromiseFuture<T> {
-    type Output = Result<T>;
+impl<T: DeserializeOwned> WorkflowFuturePoll for PromiseFuture<T> {
+    type Output = T;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Check for pre-computed error
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<T>> {
+        // Check for pre-computed error (e.g., determinism violation)
         if let Some(error) = self.state.error.lock().take() {
-            return Poll::Ready(Err(error));
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
         }
 
         // Check for pre-computed result
         if let Some(result) = self.state.result.lock().take() {
             return Poll::Ready(match result {
-                Ok(value) => serde_json::from_value(value).map_err(FlovynError::Serialization),
-                Err(e) => Err(e),
+                Ok(value) => match serde_json::from_value(value) {
+                    Ok(v) => WorkflowOutcome::ok(v),
+                    Err(e) => WorkflowOutcome::err(FlovynError::Serialization(e)),
+                },
+                Err(e) => WorkflowOutcome::err(e),
             });
         }
 
@@ -620,16 +710,32 @@ impl<T: DeserializeOwned> Future for PromiseFuture<T> {
         if let Some(ctx) = self.context.upgrade() {
             if let Some(result) = ctx.find_promise_result(&self.promise_id) {
                 return Poll::Ready(match result {
-                    Ok(value) => serde_json::from_value(value).map_err(FlovynError::Serialization),
-                    Err(e) => Err(e),
+                    Ok(value) => match serde_json::from_value(value) {
+                        Ok(v) => WorkflowOutcome::ok(v),
+                        Err(e) => WorkflowOutcome::err(FlovynError::Serialization(e)),
+                    },
+                    Err(e) => WorkflowOutcome::err(e),
                 });
             }
         }
 
         // Not ready yet - signal workflow suspension
-        Poll::Ready(Err(FlovynError::Suspended {
-            reason: format!("Waiting for promise {} to be resolved", self.promise_id),
-        }))
+        Poll::Ready(WorkflowOutcome::suspended(format!(
+            "Waiting for promise {} to be resolved",
+            self.promise_id
+        )))
+    }
+}
+
+impl<T: DeserializeOwned> Future for PromiseFuture<T> {
+    type Output = Result<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Delegate to poll_outcome and convert to Result for backward compatibility
+        match self.poll_outcome(cx) {
+            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -691,27 +797,45 @@ impl<T: DeserializeOwned> OperationFuture<T> {
     }
 }
 
-impl<T: DeserializeOwned> Future for OperationFuture<T> {
-    type Output = Result<T>;
+impl<T: DeserializeOwned> WorkflowFuturePoll for OperationFuture<T> {
+    type Output = T;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Check for pre-computed error
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<T>> {
+        // Check for pre-computed error (e.g., determinism violation)
         if let Some(error) = self.state.error.lock().take() {
-            return Poll::Ready(Err(error));
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
         }
 
         // Operations always have their result available immediately
         if let Some(result) = self.state.result.lock().take() {
             return Poll::Ready(match result {
-                Ok(value) => serde_json::from_value(value).map_err(FlovynError::Serialization),
-                Err(e) => Err(e),
+                Ok(value) => match serde_json::from_value(value) {
+                    Ok(v) => WorkflowOutcome::ok(v),
+                    Err(e) => WorkflowOutcome::err(FlovynError::Serialization(e)),
+                },
+                Err(e) => WorkflowOutcome::err(e),
             });
         }
 
         // Should not happen for operations - they're always ready
-        Poll::Ready(Err(FlovynError::Other(
+        Poll::Ready(WorkflowOutcome::err(FlovynError::Other(
             "OperationFuture polled without result".to_string(),
         )))
+    }
+}
+
+impl<T: DeserializeOwned> Future for OperationFuture<T> {
+    type Output = Result<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Delegate to poll_outcome and convert to Result for backward compatibility
+        match self.poll_outcome(cx) {
+            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 

@@ -178,6 +178,17 @@ fn workflow_to_proto(metadata: WorkflowMetadata) -> WorkflowCapability {
         .content_hash
         .unwrap_or_else(|| compute_content_hash(&metadata.kind, &version));
 
+    // Serialize schemas to JSON bytes if present
+    let input_schema = metadata
+        .input_schema
+        .and_then(|s| serde_json::to_vec(&s).ok())
+        .unwrap_or_default();
+
+    let output_schema = metadata
+        .output_schema
+        .and_then(|s| serde_json::to_vec(&s).ok())
+        .unwrap_or_default();
+
     WorkflowCapability {
         kind: metadata.kind,
         name: metadata.name,
@@ -189,6 +200,8 @@ fn workflow_to_proto(metadata: WorkflowMetadata) -> WorkflowCapability {
         metadata: Vec::new(),
         version,
         content_hash,
+        input_schema,
+        output_schema,
     }
 }
 

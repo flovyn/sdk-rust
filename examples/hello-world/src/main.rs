@@ -9,17 +9,18 @@
 
 use async_trait::async_trait;
 use flovyn_sdk::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 /// Input for the greeting workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GreetingInput {
     pub name: String,
 }
 
 /// Output from the greeting workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GreetingOutput {
     pub message: String,
     pub timestamp: i64,

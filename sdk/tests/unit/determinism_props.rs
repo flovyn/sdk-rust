@@ -28,6 +28,7 @@ use flovyn_sdk::error::Result;
 use flovyn_sdk::testing::MockWorkflowContext;
 use flovyn_sdk::workflow::context::WorkflowContext;
 use flovyn_sdk::workflow::definition::WorkflowDefinition;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -129,12 +130,12 @@ async fn assert_deterministic<W>(
 /// Simple workflow that schedules a single task.
 struct SingleTaskWorkflow;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct SingleTaskInput {
     value: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct SingleTaskOutput {
     result: Value,
 }
@@ -160,12 +161,12 @@ impl WorkflowDefinition for SingleTaskWorkflow {
 /// Workflow that schedules multiple tasks sequentially.
 struct SequentialTasksWorkflow;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct SequentialInput {
     items: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct SequentialOutput {
     results: Vec<Value>,
 }
@@ -195,10 +196,10 @@ impl WorkflowDefinition for SequentialTasksWorkflow {
 /// Workflow that uses deterministic time.
 struct TimeBasedWorkflow;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct TimeInput {}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct TimeOutput {
     timestamp: i64,
     decision: String,
@@ -241,10 +242,10 @@ impl WorkflowDefinition for TimeBasedWorkflow {
 /// Workflow that uses deterministic random.
 struct RandomBasedWorkflow;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct RandomInput {}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct RandomOutput {
     uuid: String,
     random_value: bool,
@@ -284,12 +285,12 @@ impl WorkflowDefinition for RandomBasedWorkflow {
 /// Workflow with conditional logic.
 struct ConditionalWorkflow;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct ConditionalInput {
     amount: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct ConditionalOutput {
     approved: bool,
     path: String,
@@ -328,12 +329,12 @@ impl WorkflowDefinition for ConditionalWorkflow {
 /// Workflow using parallel execution (join_all pattern).
 struct ParallelWorkflow;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct ParallelInput {
     items: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct ParallelOutput {
     count: usize,
 }

@@ -2,6 +2,7 @@
 //!
 //! This module contains all the data types used in the e-commerce order processing workflow.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 // =============================================================================
 
 /// Input for the order processing workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OrderInput {
     pub order_id: String,
     pub customer_id: String,
@@ -19,7 +20,7 @@ pub struct OrderInput {
 }
 
 /// A single item in an order
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OrderItem {
     pub sku: String,
     pub quantity: u32,
@@ -27,7 +28,7 @@ pub struct OrderItem {
 }
 
 /// Shipping address
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Address {
     pub street: String,
     pub city: String,
@@ -36,7 +37,7 @@ pub struct Address {
 }
 
 /// Output from the order processing workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OrderOutput {
     pub order_id: String,
     pub status: OrderStatus,
@@ -63,7 +64,7 @@ impl OrderOutput {
 }
 
 /// Order processing status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OrderStatus {
     Created,
@@ -81,7 +82,7 @@ pub enum OrderStatus {
 // =============================================================================
 
 /// Input for the payment task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PaymentTaskInput {
     pub order_id: String,
     pub amount: f64,
@@ -89,7 +90,7 @@ pub struct PaymentTaskInput {
 }
 
 /// Response from the payment task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PaymentResponse {
     pub status: PaymentStatus,
     pub transaction_id: Option<String>,
@@ -97,7 +98,7 @@ pub struct PaymentResponse {
 }
 
 /// Payment processing status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum PaymentStatus {
     Succeeded,
     Failed,
@@ -109,14 +110,14 @@ pub enum PaymentStatus {
 // =============================================================================
 
 /// Input for the inventory task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InventoryTaskInput {
     pub order_id: String,
     pub items: Vec<OrderItem>,
 }
 
 /// Response from the inventory task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InventoryResponse {
     pub status: InventoryStatus,
     pub reservation_id: String,
@@ -124,7 +125,7 @@ pub struct InventoryResponse {
 }
 
 /// Inventory reservation status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum InventoryStatus {
     Reserved,
     OutOfStock,
@@ -136,7 +137,7 @@ pub enum InventoryStatus {
 // =============================================================================
 
 /// Input for the shipment task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ShipmentTaskInput {
     pub order_id: String,
     pub items: Vec<OrderItem>,
@@ -144,7 +145,7 @@ pub struct ShipmentTaskInput {
 }
 
 /// Response from the shipment task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ShipmentResponse {
     pub status: ShipmentStatus,
     pub shipment_id: String,
@@ -154,7 +155,7 @@ pub struct ShipmentResponse {
 }
 
 /// Shipment creation status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ShipmentStatus {
     Created,
     Failed,
@@ -165,7 +166,7 @@ pub enum ShipmentStatus {
 // =============================================================================
 
 /// Input for refund task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RefundTaskInput {
     pub order_id: String,
     pub payment_id: String,
@@ -174,7 +175,7 @@ pub struct RefundTaskInput {
 }
 
 /// Response from refund task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RefundResponse {
     pub status: RefundStatus,
     pub refund_id: Option<String>,
@@ -182,27 +183,27 @@ pub struct RefundResponse {
 }
 
 /// Refund status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum RefundStatus {
     Succeeded,
     Failed,
 }
 
 /// Input for inventory release task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReleaseInventoryInput {
     pub order_id: String,
     pub reservation_id: String,
 }
 
 /// Response from inventory release task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReleaseInventoryResponse {
     pub status: ReleaseStatus,
 }
 
 /// Inventory release status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ReleaseStatus {
     Released,
     Failed,

@@ -29,6 +29,10 @@ pub struct WorkflowMetadata {
     pub timeout_seconds: Option<u64>,
     /// SHA-256 hash of workflow content for version validation
     pub content_hash: Option<String>,
+    /// JSON Schema for workflow input validation
+    pub input_schema: Option<serde_json::Value>,
+    /// JSON Schema for workflow output validation
+    pub output_schema: Option<serde_json::Value>,
 }
 
 impl WorkflowMetadata {
@@ -44,6 +48,8 @@ impl WorkflowMetadata {
             cancellable: true,
             timeout_seconds: None,
             content_hash: None,
+            input_schema: None,
+            output_schema: None,
         }
     }
 
@@ -86,6 +92,18 @@ impl WorkflowMetadata {
     /// Set the content hash
     pub fn with_content_hash(mut self, hash: impl Into<String>) -> Self {
         self.content_hash = Some(hash.into());
+        self
+    }
+
+    /// Set the input schema (JSON Schema for input validation)
+    pub fn with_input_schema(mut self, schema: serde_json::Value) -> Self {
+        self.input_schema = Some(schema);
+        self
+    }
+
+    /// Set the output schema (JSON Schema for output validation)
+    pub fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+        self.output_schema = Some(schema);
         self
     }
 }

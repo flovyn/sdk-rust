@@ -8,18 +8,19 @@
 
 use async_trait::async_trait;
 use flovyn_sdk::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 /// Input for batch processing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BatchInput {
     pub batch_id: String,
     pub items: Vec<String>,
 }
 
 /// Output from batch processing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BatchOutput {
     pub batch_id: String,
     pub total_items: usize,
@@ -29,13 +30,13 @@ pub struct BatchOutput {
 }
 
 /// Input for processing a single item
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ItemInput {
     pub item: String,
 }
 
 /// Result from processing a single item
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ItemResult {
     pub item: String,
     pub success: bool,
@@ -221,7 +222,7 @@ impl WorkflowDefinition for ItemProcessorWorkflow {
 }
 
 /// Input for parallel child workflow execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ParallelBatchInput {
     pub batch_id: String,
     pub items: Vec<String>,

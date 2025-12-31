@@ -418,7 +418,7 @@ impl FfiWorkflowContext {
     /// - `Pending` if task is new or not yet completed
     pub fn schedule_task(
         &self,
-        task_type: String,
+        kind: String,
         input: Vec<u8>,
         queue: Option<String>,
         timeout_ms: Option<i64>,
@@ -429,11 +429,11 @@ impl FfiWorkflowContext {
             // Replay: validate task kind matches
             let event_kind = event.get_string("kind").unwrap_or_default();
 
-            if event_kind != task_type {
+            if event_kind != kind {
                 return Err(FfiError::DeterminismViolation {
                     msg: format!(
                         "Task kind mismatch at Task({}): expected '{}', got '{}'",
-                        task_seq, task_type, event_kind
+                        task_seq, kind, event_kind
                     ),
                 });
             }
@@ -464,7 +464,7 @@ impl FfiWorkflowContext {
 
             self.commands.lock().push(FfiWorkflowCommand::ScheduleTask {
                 task_execution_id: task_execution_id.clone(),
-                kind: task_type,
+                kind: kind,
                 input,
                 priority_seconds: None,
                 max_retries: None,

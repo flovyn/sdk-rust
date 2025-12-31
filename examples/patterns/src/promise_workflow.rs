@@ -8,12 +8,13 @@
 
 use async_trait::async_trait;
 use flovyn_sdk::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::info;
 
 /// Request for approval
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalRequest {
     pub request_id: String,
     pub requester: String,
@@ -22,7 +23,7 @@ pub struct ApprovalRequest {
 }
 
 /// Decision made by approver
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalDecision {
     pub approved: bool,
     pub approver: String,
@@ -30,7 +31,7 @@ pub struct ApprovalDecision {
 }
 
 /// Result of the approval workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalResult {
     pub request_id: String,
     pub approved: bool,
@@ -181,7 +182,7 @@ impl WorkflowDefinition for ApprovalWorkflow {
 }
 
 /// Input for multi-approval workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MultiApprovalRequest {
     pub request_id: String,
     pub required_approvers: Vec<String>,
@@ -189,7 +190,7 @@ pub struct MultiApprovalRequest {
 }
 
 /// Output from multi-approval workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MultiApprovalResult {
     pub request_id: String,
     pub all_approved: bool,

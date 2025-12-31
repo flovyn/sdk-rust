@@ -32,6 +32,10 @@ pub struct WorkflowMetadata {
     pub timeout_seconds: Option<u64>,
     /// SHA-256 hash of workflow content for version validation
     pub content_hash: Option<String>,
+    /// JSON Schema for input validation (auto-generated or manual)
+    pub input_schema: Option<Value>,
+    /// JSON Schema for output validation (auto-generated or manual)
+    pub output_schema: Option<Value>,
 }
 
 impl From<WorkflowMetadata> for flovyn_sdk_core::WorkflowMetadata {
@@ -45,6 +49,8 @@ impl From<WorkflowMetadata> for flovyn_sdk_core::WorkflowMetadata {
             cancellable: m.cancellable,
             timeout_seconds: m.timeout_seconds,
             content_hash: m.content_hash,
+            input_schema: m.input_schema,
+            output_schema: m.output_schema,
         }
     }
 }
@@ -131,6 +137,8 @@ impl WorkflowRegistry {
     /// This is the primary way to register workflows. The workflow's metadata
     /// is extracted from the trait implementation.
     ///
+    /// Schemas are auto-generated from Input/Output types using schemars (like Kotlin's JsonSchemaGenerator).
+    ///
     /// # Example
     ///
     /// ```ignore
@@ -139,9 +147,13 @@ impl WorkflowRegistry {
     pub fn register<W, I, O>(&self, workflow: W) -> Result<()>
     where
         W: WorkflowDefinition<Input = I, Output = O> + 'static,
-        I: Serialize + DeserializeOwned + Send + 'static,
-        O: Serialize + DeserializeOwned + Send + 'static,
+        I: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        O: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
     {
+        // Get schemas from the workflow (auto-generated or manual depending on impl)
+        let input_schema = workflow.input_schema();
+        let output_schema = workflow.output_schema();
+
         let metadata = WorkflowMetadata {
             kind: workflow.kind().to_string(),
             name: workflow.name().to_string(),
@@ -151,6 +163,8 @@ impl WorkflowRegistry {
             cancellable: workflow.cancellable(),
             timeout_seconds: workflow.timeout_seconds().map(|s| s as u64),
             content_hash: None, // Will be computed during registration
+            input_schema,
+            output_schema,
         };
 
         let workflow = Arc::new(workflow);
@@ -168,7 +182,8 @@ impl WorkflowRegistry {
         self.register_raw(RegisteredWorkflow::new(metadata, execute_fn))
     }
 
-    /// Register a simple workflow with just a kind and execution function
+    /// Register a simple workflow with just a kind and execution function.
+    /// Note: No schema is generated for simple workflows since there's no type information.
     pub fn register_simple<F, Fut>(&self, kind: &str, execute_fn: F) -> Result<()>
     where
         F: Fn(Arc<dyn WorkflowContext + Send + Sync>, Value) -> Fut + Send + Sync + 'static,
@@ -183,6 +198,8 @@ impl WorkflowRegistry {
             cancellable: true,
             timeout_seconds: None,
             content_hash: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         let boxed_fn: BoxedWorkflowFn = Box::new(move |ctx, input| {
@@ -258,6 +275,8 @@ mod tests {
             cancellable: true,
             timeout_seconds: Some(300),
             content_hash: None,
+            input_schema: Some(json!({"type": "object"})),
+            output_schema: None,
         };
 
         assert_eq!(metadata.kind, "payment-workflow");
@@ -267,6 +286,7 @@ mod tests {
         assert_eq!(metadata.tags.len(), 2);
         assert!(metadata.cancellable);
         assert_eq!(metadata.timeout_seconds, Some(300));
+        assert!(metadata.input_schema.is_some());
     }
 
     #[test]
@@ -396,6 +416,8 @@ mod tests {
             cancellable: false,
             timeout_seconds: Some(600),
             content_hash: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         let execute_fn: BoxedWorkflowFn =
@@ -429,6 +451,8 @@ mod tests {
             cancellable: true,
             timeout_seconds: None,
             content_hash: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         let execute_fn: BoxedWorkflowFn = Box::new(|_ctx, input| {
@@ -485,6 +509,8 @@ mod tests {
             cancellable: true,
             timeout_seconds: None,
             content_hash: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         let execute_fn: BoxedWorkflowFn =

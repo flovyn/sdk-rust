@@ -7,13 +7,72 @@ pub use flovyn_sdk_core::{CoreError, DeterminismViolationError};
 #[cfg(test)]
 use flovyn_sdk_core::EventType;
 
-/// Main error type for the Flovyn SDK
+/// Main error type for the Flovyn SDK.
+///
+/// ## Error Categories
+///
+/// **Application Errors** (you should handle these):
+/// - [`TaskFailed`](Self::TaskFailed), [`TaskCancelled`](Self::TaskCancelled) - Task execution issues
+/// - [`ChildWorkflowFailed`](Self::ChildWorkflowFailed), [`WorkflowCancelled`](Self::WorkflowCancelled) - Workflow issues
+/// - [`PromiseTimeout`](Self::PromiseTimeout), [`PromiseRejected`](Self::PromiseRejected) - Promise issues
+/// - [`Timeout`](Self::Timeout), [`InvalidInput`](Self::InvalidInput) - Operation issues
+///
+/// **Infrastructure Errors** (handle for retry/fallback logic):
+/// - [`Grpc`](Self::Grpc), [`NetworkError`](Self::NetworkError), [`Io`](Self::Io) - Connection issues
+/// - [`Serialization`](Self::Serialization) - Data format issues
+/// - [`AuthenticationError`](Self::AuthenticationError) - Auth issues
+///
+/// ## Important
+///
+/// This enum is marked `#[non_exhaustive]`, so you must always include a wildcard
+/// arm (`_ =>`) when matching. This allows the SDK to add new error variants in
+/// future versions without breaking your code.
+///
+/// ```ignore
+/// match error {
+///     FlovynError::TaskFailed(msg) => handle_task_failure(msg),
+///     FlovynError::Timeout(_) => retry_operation(),
+///     _ => log_and_fail(error),  // Required catch-all
+/// }
+/// ```
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FlovynError {
-    /// Workflow is suspended waiting for external event (task completion, promise, timer)
+    // =========================================================================
+    // INTERNAL ERRORS - Do not match on these!
+    // These are handled automatically by the SDK. Matching on them will cause
+    // incorrect workflow behavior.
+    // =========================================================================
+    /// Internal: Workflow suspension signal. **Do not match on this variant.**
+    ///
+    /// This is an internal control flow mechanism used by the SDK to signal
+    /// that a workflow needs to suspend and wait for an external event
+    /// (task completion, timer, promise resolution).
+    ///
+    /// Catching this error will cause incorrect workflow behavior - the workflow
+    /// will appear to complete when it should still be waiting.
+    #[doc(hidden)]
     #[error("Workflow suspended: {reason}")]
-    Suspended { reason: String },
+    Suspended {
+        /// The reason for suspension (for debugging)
+        reason: String,
+    },
 
+    /// Internal: Determinism violation during replay. **Do not match on this variant.**
+    ///
+    /// This error indicates that the workflow's behavior during replay differs
+    /// from its original execution, violating the determinism requirement.
+    /// The SDK automatically fails the workflow when this occurs.
+    ///
+    /// Catching this error will hide bugs and allow the workflow to continue
+    /// with corrupted replay state.
+    #[doc(hidden)]
+    #[error("Determinism violation: {0}")]
+    DeterminismViolation(DeterminismViolationError),
+
+    // =========================================================================
+    // APPLICATION ERRORS - Safe to match on these
+    // =========================================================================
     /// Task was cancelled
     #[error("Task cancelled")]
     TaskCancelled,
@@ -29,10 +88,6 @@ pub enum FlovynError {
     /// Workflow execution failed
     #[error("Workflow failed: {0}")]
     WorkflowFailed(String),
-
-    /// Determinism violation detected during replay
-    #[error("Determinism violation: {0}")]
-    DeterminismViolation(DeterminismViolationError),
 
     /// Child workflow failed
     #[error("Child workflow failed: {name} ({execution_id}): {error}")]

@@ -2,7 +2,7 @@
 //!
 //! This module contains all the data types used in the ETL pipeline workflow.
 
-use serde::{Deserialize, Serialize};
+use flovyn_sdk::prelude::*;
 use std::fmt;
 
 // =============================================================================
@@ -10,20 +10,31 @@ use std::fmt;
 // =============================================================================
 
 /// Input for the data pipeline workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DataPipelineInput {
     pub pipeline_id: String,
     pub data_source_url: String,
+    #[serde(default, deserialize_with = "deserialize_data_format")]
     pub data_format: DataFormat,
     pub transformations: Vec<TransformationType>,
     pub output_destination: String,
 }
 
-/// Supported data formats
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Deserialize DataFormat, treating null as the default (Json)
+fn deserialize_data_format<'de, D>(deserializer: D) -> std::result::Result<DataFormat, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Option::<DataFormat>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
+}
+
+/// Supported data formats (defaults to JSON)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum DataFormat {
     Csv,
+    #[default]
     Json,
     Parquet,
     Avro,
@@ -41,7 +52,7 @@ impl fmt::Display for DataFormat {
 }
 
 /// Available transformation types
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransformationType {
     Normalize,
@@ -64,7 +75,7 @@ impl fmt::Display for TransformationType {
 }
 
 /// Output from the data pipeline workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DataPipelineOutput {
     pub pipeline_id: String,
     pub status: PipelineStatus,
@@ -95,7 +106,7 @@ impl DataPipelineOutput {
 }
 
 /// Pipeline processing status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PipelineStatus {
     Created,
@@ -111,7 +122,7 @@ pub enum PipelineStatus {
 }
 
 /// Generic task completion status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TaskStatus {
     Completed,
     Failed,
@@ -122,15 +133,16 @@ pub enum TaskStatus {
 // =============================================================================
 
 /// Input for the ingestion task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IngestionTaskInput {
     pub pipeline_id: String,
     pub data_source_url: String,
+    #[serde(default, deserialize_with = "deserialize_data_format")]
     pub data_format: DataFormat,
 }
 
 /// Result from the ingestion task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IngestionResult {
     pub task_id: String,
     pub status: TaskStatus,
@@ -145,14 +157,14 @@ pub struct IngestionResult {
 // =============================================================================
 
 /// Input for the validation task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ValidationTaskInput {
     pub pipeline_id: String,
     pub record_count: u64,
 }
 
 /// Result from the validation task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ValidationResult {
     pub task_id: String,
     pub status: TaskStatus,
@@ -167,7 +179,7 @@ pub struct ValidationResult {
 // =============================================================================
 
 /// Input for the transformation task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TransformationTaskInput {
     pub pipeline_id: String,
     pub transformation_type: TransformationType,
@@ -175,7 +187,7 @@ pub struct TransformationTaskInput {
 }
 
 /// Result from the transformation task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TransformationResult {
     pub task_id: String,
     pub status: TaskStatus,
@@ -190,7 +202,7 @@ pub struct TransformationResult {
 // =============================================================================
 
 /// Input for the aggregation task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AggregationTaskInput {
     pub pipeline_id: String,
     pub transformation_task_ids: Vec<String>,
@@ -198,7 +210,7 @@ pub struct AggregationTaskInput {
 }
 
 /// Result from the aggregation task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AggregationResult {
     pub task_id: String,
     pub status: TaskStatus,

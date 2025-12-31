@@ -174,6 +174,7 @@ pub mod prelude {
         CommandCollector, CommandRecorder, ValidatingCommandRecorder,
     };
     pub use async_trait::async_trait;
+    pub use schemars::JsonSchema;
     pub use serde::{Deserialize, Serialize};
     pub use serde_json::{json, Map, Value};
     pub use uuid::Uuid;

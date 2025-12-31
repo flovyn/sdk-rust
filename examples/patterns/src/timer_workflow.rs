@@ -8,19 +8,20 @@
 
 use async_trait::async_trait;
 use flovyn_sdk::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::info;
 
 /// Input for the reminder workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReminderInput {
     pub message: String,
     pub delay_seconds: u64,
 }
 
 /// Output from the reminder workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReminderOutput {
     pub delivered: bool,
     pub delivered_at: i64,
@@ -111,14 +112,14 @@ impl WorkflowDefinition for ReminderWorkflow {
 }
 
 /// Input for the multi-step timer workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MultiStepTimerInput {
     pub total_duration_seconds: u64,
     pub checkpoint_interval_seconds: u64,
 }
 
 /// Output from the multi-step timer workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MultiStepTimerOutput {
     pub checkpoints: Vec<i64>,
     pub completed_at: i64,

@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use flovyn_sdk::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -20,14 +21,14 @@ use serde_json::{json, Value};
 // ============================================================================
 
 /// Input for processing a single item
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProcessItemInput {
     /// The item to process
     pub item: String,
 }
 
 /// Output from processing a single item
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProcessItemOutput {
     /// The processed item result
     pub processed: String,
@@ -75,14 +76,14 @@ impl TaskDefinition for ProcessItemTask {
 // ============================================================================
 
 /// Input for fetching data from a URL
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FetchDataInput {
     /// The URL to fetch from
     pub url: String,
 }
 
 /// Output from fetching data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FetchDataOutput {
     /// The fetched data
     pub data: Value,
@@ -131,14 +132,14 @@ impl TaskDefinition for FetchDataTask {
 // ============================================================================
 
 /// Input for a slow operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SlowOperationInput {
     /// The operation to perform
     pub op: String,
 }
 
 /// Output from a slow operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SlowOperationOutput {
     /// The result of the operation
     pub result: Value,
@@ -184,14 +185,14 @@ impl TaskDefinition for SlowOperationTask {
 // ============================================================================
 
 /// Input for running a named operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RunOperationInput {
     /// The operation name
     pub operation: String,
 }
 
 /// Output from running an operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RunOperationOutput {
     /// The operation result
     pub result: Value,
@@ -239,14 +240,14 @@ impl TaskDefinition for RunOperationTask {
 // ============================================================================
 
 /// Input for fetching a list of items
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FetchItemsInput {
     /// The source to fetch items from
     pub source: String,
 }
 
 /// Output containing a dynamic list of items
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FetchItemsOutput {
     /// The list of items to process (count determined at runtime)
     pub items: Vec<String>,

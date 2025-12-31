@@ -11,6 +11,7 @@
 use async_trait::async_trait;
 use flovyn_sdk::prelude::*;
 use flovyn_sdk::workflow::combinators::{join_all, join_n, select, with_timeout};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -20,14 +21,14 @@ use std::time::Duration;
 // ============================================================================
 
 /// Input for the fan-out/fan-in workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FanOutFanInInput {
     /// Items to process in parallel
     pub items: Vec<String>,
 }
 
 /// Output from the fan-out/fan-in workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FanOutFanInOutput {
     /// Aggregated results
     pub results: Vec<String>,
@@ -118,7 +119,7 @@ impl WorkflowDefinition for FanOutFanInWorkflow {
 // ============================================================================
 
 /// Input for the racing workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RacingInput {
     /// Primary service URL
     pub primary_url: String,
@@ -127,7 +128,7 @@ pub struct RacingInput {
 }
 
 /// Output from the racing workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RacingOutput {
     /// Which service responded first (0 = primary, 1 = fallback)
     pub winner_index: usize,
@@ -199,7 +200,7 @@ impl WorkflowDefinition for RacingWorkflow {
 // ============================================================================
 
 /// Input for the timeout workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TimeoutInput {
     /// The operation to perform
     pub operation: String,
@@ -208,7 +209,7 @@ pub struct TimeoutInput {
 }
 
 /// Output from the timeout workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TimeoutOutput {
     /// Whether the operation completed in time
     pub completed: bool,
@@ -284,7 +285,7 @@ impl WorkflowDefinition for TimeoutWorkflow {
 // ============================================================================
 
 /// Input for the batch processing workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BatchInput {
     /// Items to process
     pub items: Vec<String>,
@@ -293,7 +294,7 @@ pub struct BatchInput {
 }
 
 /// Output from the batch processing workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BatchOutput {
     /// Number of successful items
     pub successful: usize,
@@ -304,7 +305,7 @@ pub struct BatchOutput {
 }
 
 /// Result for a single batch item
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BatchItemResult {
     pub item: String,
     pub success: bool,
@@ -410,7 +411,7 @@ impl WorkflowDefinition for BatchWithConcurrencyWorkflow {
 // ============================================================================
 
 /// Input for the partial completion workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PartialCompletionInput {
     /// Operations to run
     pub operations: Vec<String>,
@@ -419,7 +420,7 @@ pub struct PartialCompletionInput {
 }
 
 /// Output from the partial completion workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PartialCompletionOutput {
     /// Results from the completed operations
     pub results: Vec<(usize, Value)>,
@@ -492,14 +493,14 @@ impl WorkflowDefinition for PartialCompletionWorkflow {
 // ============================================================================
 
 /// Input for the dynamic parallelism workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DynamicParallelismInput {
     /// Data source to fetch items from
     pub source: String,
 }
 
 /// Output from the dynamic parallelism workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DynamicParallelismOutput {
     /// Number of items processed
     pub items_processed: usize,

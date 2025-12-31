@@ -699,6 +699,10 @@ message WorkflowCapability {
   // Code-first workflow versioning (added in workflow-versioning-implementation)
   string version = 9;  // Semantic version (e.g., "1.0.0", "1.2.3")
   string content_hash = 10;  // SHA-256 hash of workflow bytecode
+
+  // Input/output schema (JSON Schema format, same as TaskCapability)
+  bytes input_schema = 11;
+  bytes output_schema = 12;
 }
 
 message TaskCapability {

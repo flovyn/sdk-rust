@@ -815,6 +815,11 @@ pub struct WorkflowCapability {
     /// SHA-256 hash of workflow bytecode
     #[prost(string, tag = "10")]
     pub content_hash: ::prost::alloc::string::String,
+    /// Input/output schema (JSON Schema format, same as TaskCapability)
+    #[prost(bytes = "vec", tag = "11")]
+    pub input_schema: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "12")]
+    pub output_schema: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

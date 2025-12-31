@@ -18,6 +18,69 @@ pub struct OAuth2Credentials {
     pub scopes: Option<String>,
 }
 
+/// Workflow metadata passed from Kotlin/Swift to Rust FFI.
+/// Contains full metadata including optional schemas.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct WorkflowMetadataFfi {
+    /// Unique workflow kind identifier (required).
+    pub kind: String,
+
+    /// Human-readable name (defaults to kind if empty).
+    pub name: String,
+
+    /// Optional description.
+    pub description: Option<String>,
+
+    /// Version string (e.g., "1.0.0").
+    pub version: Option<String>,
+
+    /// Tags for categorization.
+    pub tags: Vec<String>,
+
+    /// Whether the workflow can be cancelled.
+    pub cancellable: bool,
+
+    /// Timeout in seconds.
+    pub timeout_seconds: Option<u32>,
+
+    /// JSON Schema for input validation (JSON string).
+    pub input_schema: Option<String>,
+
+    /// JSON Schema for output validation (JSON string).
+    pub output_schema: Option<String>,
+}
+
+/// Task metadata passed from Kotlin/Swift to Rust FFI.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TaskMetadataFfi {
+    /// Unique task kind identifier (required).
+    pub kind: String,
+
+    /// Human-readable name (defaults to kind if empty).
+    pub name: String,
+
+    /// Optional description.
+    pub description: Option<String>,
+
+    /// Version string (e.g., "1.0.0").
+    pub version: Option<String>,
+
+    /// Tags for categorization.
+    pub tags: Vec<String>,
+
+    /// Whether the task can be cancelled.
+    pub cancellable: bool,
+
+    /// Timeout in seconds.
+    pub timeout_seconds: Option<u32>,
+
+    /// JSON Schema for input validation (JSON string).
+    pub input_schema: Option<String>,
+
+    /// JSON Schema for output validation (JSON string).
+    pub output_schema: Option<String>,
+}
+
 /// Configuration for creating a CoreWorker.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct WorkerConfig {
@@ -48,11 +111,11 @@ pub struct WorkerConfig {
     /// Maximum concurrent activity tasks (default: 100).
     pub max_concurrent_tasks: Option<u32>,
 
-    /// Workflow kinds this worker handles.
-    pub workflow_kinds: Vec<String>,
+    /// Workflow metadata for this worker (replaces workflow_kinds).
+    pub workflow_metadata: Vec<WorkflowMetadataFfi>,
 
-    /// Task kinds this worker handles.
-    pub task_kinds: Vec<String>,
+    /// Task metadata for this worker (replaces task_kinds).
+    pub task_metadata: Vec<TaskMetadataFfi>,
 }
 
 impl Default for WorkerConfig {
@@ -66,8 +129,8 @@ impl Default for WorkerConfig {
             worker_identity: None,
             max_concurrent_workflow_tasks: Some(100),
             max_concurrent_tasks: Some(100),
-            workflow_kinds: vec![],
-            task_kinds: vec![],
+            workflow_metadata: vec![],
+            task_metadata: vec![],
         }
     }
 }

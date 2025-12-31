@@ -123,18 +123,47 @@ impl CoreWorker {
     /// This registers all workflow and task kinds specified in the configuration.
     /// Returns the server-assigned worker ID.
     pub fn register(&self) -> Result<String, FfiError> {
+        // Convert FFI metadata to core WorkflowMetadata with schemas
         let workflows: Vec<WorkflowMetadata> = self
             .config
-            .workflow_kinds
+            .workflow_metadata
             .iter()
-            .map(WorkflowMetadata::new)
+            .map(|m| {
+                let mut metadata = WorkflowMetadata::new(&m.kind)
+                    .with_name(&m.name)
+                    .with_cancellable(m.cancellable)
+                    .with_tags(m.tags.clone());
+
+                if let Some(desc) = &m.description {
+                    metadata = metadata.with_description(desc);
+                }
+                if let Some(version) = &m.version {
+                    metadata = metadata.with_version(version);
+                }
+                if let Some(timeout) = m.timeout_seconds {
+                    metadata = metadata.with_timeout_seconds(timeout as u64);
+                }
+                // Parse and set schemas from JSON strings
+                if let Some(schema_str) = &m.input_schema {
+                    if let Ok(schema) = serde_json::from_str(schema_str) {
+                        metadata = metadata.with_input_schema(schema);
+                    }
+                }
+                if let Some(schema_str) = &m.output_schema {
+                    if let Ok(schema) = serde_json::from_str(schema_str) {
+                        metadata = metadata.with_output_schema(schema);
+                    }
+                }
+                metadata
+            })
             .collect();
 
+        // Convert FFI metadata to core TaskMetadata
         let tasks: Vec<TaskMetadata> = self
             .config
-            .task_kinds
+            .task_metadata
             .iter()
-            .map(TaskMetadata::new)
+            .map(|m| TaskMetadata::new(&m.kind))
             .collect();
 
         let mut lifecycle_client =

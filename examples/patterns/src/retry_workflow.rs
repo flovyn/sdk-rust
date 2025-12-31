@@ -8,12 +8,13 @@
 
 use async_trait::async_trait;
 use flovyn_sdk::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{info, warn};
 
 /// Input for retry workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RetryInput {
     pub operation_name: String,
     pub max_attempts: u32,
@@ -22,7 +23,7 @@ pub struct RetryInput {
 }
 
 /// Output from retry workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RetryOutput {
     pub operation_name: String,
     pub success: bool,
@@ -31,7 +32,7 @@ pub struct RetryOutput {
 }
 
 /// Retry result from a single attempt
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct AttemptResult {
     success: bool,
     message: String,
@@ -179,7 +180,7 @@ impl WorkflowDefinition for RetryWorkflow {
 }
 
 /// Input for circuit breaker workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CircuitBreakerInput {
     pub service_name: String,
     pub failure_threshold: u32,
@@ -188,7 +189,7 @@ pub struct CircuitBreakerInput {
 }
 
 /// Output from circuit breaker workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CircuitBreakerOutput {
     pub service_name: String,
     pub successful_operations: u32,
@@ -198,7 +199,7 @@ pub struct CircuitBreakerOutput {
 }
 
 /// Circuit breaker states
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 enum CircuitState {
     Closed,
     Open,
