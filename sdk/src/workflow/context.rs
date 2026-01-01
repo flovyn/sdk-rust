@@ -254,6 +254,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             task_seq: raw_future.task_seq,
             task_execution_id: raw_future.task_execution_id,
             context: raw_future.context,
+            suspension_cell: raw_future.suspension_cell,
             state: raw_future.state,
             _marker: PhantomData,
         }
@@ -283,6 +284,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             task_seq: raw_future.task_seq,
             task_execution_id: raw_future.task_execution_id,
             context: raw_future.context,
+            suspension_cell: raw_future.suspension_cell,
             state: raw_future.state,
             _marker: PhantomData,
         }
@@ -313,6 +315,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             child_execution_id: raw_future.child_execution_id,
             child_execution_name: raw_future.child_execution_name,
             context: raw_future.context,
+            suspension_cell: raw_future.suspension_cell,
             state: raw_future.state,
             _marker: PhantomData,
         }
@@ -326,6 +329,7 @@ pub trait WorkflowContextExt: WorkflowContext {
             promise_seq: raw_future.promise_seq,
             promise_id: raw_future.promise_id,
             context: raw_future.context,
+            suspension_cell: raw_future.suspension_cell,
             state: raw_future.state,
             _marker: PhantomData,
         }
@@ -416,13 +420,13 @@ mod typed_tests {
     // Test Workflow Definition
     // ========================================================================
 
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
     struct PaymentRequest {
         amount: i64,
         currency: String,
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
     struct PaymentResult {
         success: bool,
         transaction_id: String,

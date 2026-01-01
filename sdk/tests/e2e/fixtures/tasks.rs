@@ -143,14 +143,42 @@ impl DynamicTask for ProgressTask {
 // Parallel Execution Task Fixtures
 // ============================================================================
 
+/// Helper to add prefix to a kind name
+fn prefixed(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}:{}", prefix, name)
+    }
+}
+
 /// Task that processes a single item.
-/// Used by parallel workflows for fan-out/fan-in patterns.
-pub struct ProcessItemTask;
+pub struct ProcessItemTask {
+    kind: String,
+}
+
+impl ProcessItemTask {
+    pub fn new() -> Self {
+        Self::with_prefix("")
+    }
+
+    pub fn with_prefix(prefix: &str) -> Self {
+        Self {
+            kind: prefixed(prefix, "process-item"),
+        }
+    }
+}
+
+impl Default for ProcessItemTask {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl DynamicTask for ProcessItemTask {
     fn kind(&self) -> &str {
-        "process-item"
+        &self.kind
     }
 
     async fn execute(
@@ -162,8 +190,6 @@ impl DynamicTask for ProcessItemTask {
             .get("item")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-
-        // Simulate some processing
         let processed = format!("processed:{}", item);
 
         let mut output = DynamicTaskOutput::new();
@@ -180,13 +206,32 @@ impl DynamicTask for ProcessItemTask {
 }
 
 /// Task that fetches data from a URL.
-/// Used by racing workflow tests.
-pub struct FetchDataTask;
+pub struct FetchDataTask {
+    kind: String,
+}
+
+impl FetchDataTask {
+    pub fn new() -> Self {
+        Self::with_prefix("")
+    }
+
+    pub fn with_prefix(prefix: &str) -> Self {
+        Self {
+            kind: prefixed(prefix, "fetch-data"),
+        }
+    }
+}
+
+impl Default for FetchDataTask {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl DynamicTask for FetchDataTask {
     fn kind(&self) -> &str {
-        "fetch-data"
+        &self.kind
     }
 
     async fn execute(
@@ -203,7 +248,6 @@ impl DynamicTask for FetchDataTask {
             .and_then(|v| v.as_str())
             .unwrap_or("default");
 
-        // Simulate fetch (in reality, would make HTTP request)
         let mut output = DynamicTaskOutput::new();
         output.insert(
             "source".to_string(),
@@ -219,13 +263,32 @@ impl DynamicTask for FetchDataTask {
 }
 
 /// Task that simulates a slow operation.
-/// Used by timeout workflow tests.
-pub struct SlowOperationTask;
+pub struct SlowOperationTask {
+    kind: String,
+}
+
+impl SlowOperationTask {
+    pub fn new() -> Self {
+        Self::with_prefix("")
+    }
+
+    pub fn with_prefix(prefix: &str) -> Self {
+        Self {
+            kind: prefixed(prefix, "slow-operation"),
+        }
+    }
+}
+
+impl Default for SlowOperationTask {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl DynamicTask for SlowOperationTask {
     fn kind(&self) -> &str {
-        "slow-operation"
+        &self.kind
     }
 
     async fn execute(

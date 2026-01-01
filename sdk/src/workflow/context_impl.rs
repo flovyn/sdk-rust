@@ -6,8 +6,8 @@ use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, Workflo
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
-    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, TaskFuture,
-    TaskFutureContext, TaskFutureRaw, TimerFuture, TimerFutureContext,
+    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SuspensionContext,
+    TaskFuture, TaskFutureContext, TaskFutureRaw, TimerFuture, TimerFutureContext,
 };
 use crate::workflow::recorder::CommandRecorder;
 use async_trait::async_trait;
@@ -18,7 +18,6 @@ use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
-use std::sync::Weak;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -77,6 +76,47 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
 
     /// Recorded execution spans (collected by worker after execution)
     recorded_spans: RwLock<Vec<ExecutionSpan>>,
+
+    /// Shared suspension cell for this workflow execution.
+    /// Used to signal suspension without relying on thread-local storage,
+    /// which is not safe when multiple workflows execute concurrently on the same thread.
+    /// This Arc is shared with all futures created by this context.
+    suspension_cell: SuspensionCell,
+}
+
+/// Shared suspension cell that can be passed to futures.
+/// This allows futures to signal suspension to the workflow context
+/// without needing a direct reference to the context.
+#[derive(Clone)]
+pub struct SuspensionCell(std::sync::Arc<parking_lot::Mutex<Option<String>>>);
+
+impl SuspensionCell {
+    /// Create a new suspension cell.
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(parking_lot::Mutex::new(None)))
+    }
+
+    /// Signal suspension with the given reason.
+    pub fn signal(&self, reason: String) {
+        tracing::trace!(reason = %reason, "Signaling suspension via cell");
+        *self.0.lock() = Some(reason);
+    }
+
+    /// Take the suspension reason if set.
+    pub fn take(&self) -> Option<String> {
+        self.0.lock().take()
+    }
+
+    /// Clear any pending suspension reason.
+    pub fn clear(&self) {
+        *self.0.lock() = None;
+    }
+}
+
+impl Default for SuspensionCell {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<R: CommandRecorder> WorkflowContextImpl<R> {
@@ -143,6 +183,7 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
             sleep_call_counter: AtomicI32::new(0),
             enable_telemetry,
             recorded_spans: RwLock::new(Vec::new()),
+            suspension_cell: SuspensionCell::new(),
         }
     }
 
@@ -209,6 +250,45 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
     pub fn take_recorded_spans(&self) -> Vec<ExecutionSpan> {
         std::mem::take(&mut self.recorded_spans.write())
     }
+
+    /// Signal workflow suspension with the given reason.
+    ///
+    /// This is called by futures when they need to suspend (e.g., waiting for a task).
+    /// Unlike thread-local suspension, this is scoped to the workflow context and is
+    /// safe when multiple workflows execute concurrently on the same thread.
+    pub fn signal_suspension(&self, reason: String) {
+        self.suspension_cell.signal(reason);
+    }
+
+    /// Take the suspension reason if set.
+    ///
+    /// Called by the executor after polling a workflow future that returned `Pending`.
+    /// Returns `Some(reason)` if the workflow is suspended, `None` otherwise.
+    pub fn take_suspension(&self) -> Option<String> {
+        self.suspension_cell.take()
+    }
+
+    /// Clear any pending suspension reason.
+    ///
+    /// Called before polling a workflow to ensure clean state.
+    pub fn clear_suspension(&self) {
+        self.suspension_cell.clear();
+    }
+
+    /// Get a clone of the suspension cell to pass to futures.
+    ///
+    /// Futures use this cell to signal suspension back to the workflow context.
+    pub fn suspension_cell(&self) -> SuspensionCell {
+        self.suspension_cell.clone()
+    }
+}
+
+// Implement SuspensionContext for WorkflowContextImpl
+impl<R: CommandRecorder + Send + Sync> SuspensionContext for WorkflowContextImpl<R> {
+    fn signal_suspension(&self, reason: String) {
+        // Delegate to the public method
+        WorkflowContextImpl::signal_suspension(self, reason);
+    }
 }
 
 #[async_trait]
@@ -256,13 +336,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         if let Some(state_event) = self.replay_engine.get_state_event(state_seq) {
             // Validate event type is StateSet
             if state_event.event_type() != EventType::StateSet {
-                return Err(FlovynError::DeterminismViolation(
+                panic!(
+                    "Determinism violation: {}",
                     DeterminismViolationError::TypeMismatch {
                         sequence: state_seq as i32,
                         expected: EventType::StateSet,
                         actual: state_event.event_type(),
-                    },
-                ));
+                    }
+                );
             }
 
             // Validate key matches
@@ -272,13 +353,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .to_string();
 
             if event_key != key {
-                return Err(FlovynError::DeterminismViolation(
+                panic!(
+                    "Determinism violation: {}",
                     DeterminismViolationError::StateKeyMismatch {
                         sequence: state_seq as i32,
                         expected: event_key,
                         actual: key.to_string(),
-                    },
-                ));
+                    }
+                );
             }
 
             // State was already set - update replay engine state
@@ -308,13 +390,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         if let Some(state_event) = self.replay_engine.get_state_event(state_seq) {
             // Validate event type is StateCleared
             if state_event.event_type() != EventType::StateCleared {
-                return Err(FlovynError::DeterminismViolation(
+                panic!(
+                    "Determinism violation: {}",
                     DeterminismViolationError::TypeMismatch {
                         sequence: state_seq as i32,
                         expected: EventType::StateCleared,
                         actual: state_event.event_type(),
-                    },
-                ));
+                    }
+                );
             }
 
             // Validate key matches
@@ -324,13 +407,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .to_string();
 
             if event_key != key {
-                return Err(FlovynError::DeterminismViolation(
+                panic!(
+                    "Determinism violation: {}",
                     DeterminismViolationError::StateKeyMismatch {
                         sequence: state_seq as i32,
                         expected: event_key,
                         actual: key.to_string(),
-                    },
-                ));
+                    }
+                );
             }
 
             // State was already cleared - update replay engine state
@@ -436,10 +520,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                         .or_else(|| terminal_event.get("output"))
                         .cloned()
                         .unwrap_or(Value::Null);
-                    return TaskFuture::from_replay(
+                    return TaskFuture::from_replay_with_cell(
                         task_seq,
                         task_execution_id,
-                        Weak::<DummyTaskFutureContext>::new(),
+                        self.suspension_cell(),
                         Ok(result),
                     );
                 } else {
@@ -447,21 +531,17 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                         .get_string("error")
                         .unwrap_or("Task failed")
                         .to_string();
-                    return TaskFuture::from_replay(
+                    return TaskFuture::from_replay_with_cell(
                         task_seq,
                         task_execution_id,
-                        Weak::<DummyTaskFutureContext>::new(),
+                        self.suspension_cell(),
                         Err(FlovynError::TaskFailed(error)),
                     );
                 }
             }
 
             // Task scheduled but not completed yet - return pending future
-            return TaskFuture::new(
-                task_seq,
-                task_execution_id,
-                Weak::<DummyTaskFutureContext>::new(),
-            );
+            return TaskFuture::new_with_cell(task_seq, task_execution_id, self.suspension_cell());
         }
 
         // No event at this per-type index → new command with client-generated ID
@@ -484,11 +564,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
         // Return pending future - when polled, it will return Err(Suspended)
         // The workflow will suspend and be replayed when the task completes
-        TaskFuture::new(
-            task_seq,
-            task_execution_id,
-            Weak::<DummyTaskFutureContext>::new(),
-        )
+        TaskFuture::new_with_cell(task_seq, task_execution_id, self.suspension_cell())
     }
 
     fn sleep(&self, duration: Duration) -> TimerFuture {
@@ -524,28 +600,24 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .find_terminal_timer_event(&event_timer_id)
             {
                 if terminal_event.event_type() == EventType::TimerFired {
-                    return TimerFuture::from_replay(
+                    return TimerFuture::from_replay_with_cell(
                         timer_seq,
                         event_timer_id,
-                        Weak::<DummyTimerFutureContext>::new(),
+                        self.suspension_cell(),
                         true,
                     );
                 } else {
-                    return TimerFuture::from_replay(
+                    return TimerFuture::from_replay_with_cell(
                         timer_seq,
                         event_timer_id,
-                        Weak::<DummyTimerFutureContext>::new(),
+                        self.suspension_cell(),
                         false,
                     );
                 }
             }
 
             // Timer started but not fired yet - return pending future
-            return TimerFuture::new(
-                timer_seq,
-                event_timer_id,
-                Weak::<DummyTimerFutureContext>::new(),
-            );
+            return TimerFuture::new_with_cell(timer_seq, event_timer_id, self.suspension_cell());
         }
 
         // No event at this per-type index → new command
@@ -559,7 +631,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         }
 
         // Return pending future
-        TimerFuture::new(timer_seq, timer_id, Weak::<DummyTimerFutureContext>::new())
+        TimerFuture::new_with_cell(timer_seq, timer_id, self.suspension_cell())
     }
 
     fn schedule_workflow_raw(
@@ -620,11 +692,11 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             {
                 if terminal_event.event_type() == EventType::ChildWorkflowCompleted {
                     let result = terminal_event.get("output").cloned().unwrap_or(Value::Null);
-                    return ChildWorkflowFuture::from_replay(
+                    return ChildWorkflowFuture::from_replay_with_cell(
                         cw_seq,
                         child_execution_id,
                         event_name,
-                        Weak::<DummyChildWorkflowFutureContext>::new(),
+                        self.suspension_cell.clone(),
                         Ok(result),
                     );
                 } else {
@@ -636,11 +708,11 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                         .get_string("childworkflowExecutionId")
                         .unwrap_or("unknown")
                         .to_string();
-                    return ChildWorkflowFuture::from_replay(
+                    return ChildWorkflowFuture::from_replay_with_cell(
                         cw_seq,
                         child_execution_id,
                         name.to_string(),
-                        Weak::<DummyChildWorkflowFutureContext>::new(),
+                        self.suspension_cell.clone(),
                         Err(FlovynError::ChildWorkflowFailed {
                             execution_id: exec_id,
                             name: name.to_string(),
@@ -651,11 +723,11 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             }
 
             // Child workflow initiated but not completed yet - return pending future
-            return ChildWorkflowFuture::new(
+            return ChildWorkflowFuture::new_with_cell(
                 cw_seq,
                 child_execution_id,
                 event_name,
-                Weak::<DummyChildWorkflowFutureContext>::new(),
+                self.suspension_cell.clone(),
             );
         }
 
@@ -676,11 +748,11 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         }
 
         // Return pending future
-        ChildWorkflowFuture::new(
+        ChildWorkflowFuture::new_with_cell(
             cw_seq,
             child_execution_id,
             name.to_string(),
-            Weak::<DummyChildWorkflowFutureContext>::new(),
+            self.suspension_cell.clone(),
         )
     }
 
@@ -715,10 +787,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 match terminal_event.event_type() {
                     EventType::PromiseResolved => {
                         let value = terminal_event.get("value").cloned().unwrap_or(Value::Null);
-                        return PromiseFuture::from_replay(
+                        return PromiseFuture::from_replay_with_cell(
                             promise_seq,
                             event_promise_id,
-                            Weak::<DummyPromiseFutureContext>::new(),
+                            self.suspension_cell.clone(),
                             Ok(value),
                         );
                     }
@@ -727,10 +799,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                             .get_string("error")
                             .unwrap_or("Promise rejected")
                             .to_string();
-                        return PromiseFuture::from_replay(
+                        return PromiseFuture::from_replay_with_cell(
                             promise_seq,
                             event_promise_id,
-                            Weak::<DummyPromiseFutureContext>::new(),
+                            self.suspension_cell.clone(),
                             Err(FlovynError::PromiseRejected {
                                 name: name.to_string(),
                                 error,
@@ -738,10 +810,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                         );
                     }
                     EventType::PromiseTimeout => {
-                        return PromiseFuture::from_replay(
+                        return PromiseFuture::from_replay_with_cell(
                             promise_seq,
                             event_promise_id,
-                            Weak::<DummyPromiseFutureContext>::new(),
+                            self.suspension_cell.clone(),
                             Err(FlovynError::PromiseTimeout {
                                 name: name.to_string(),
                             }),
@@ -752,10 +824,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             }
 
             // Promise created but not resolved yet - return pending future
-            return PromiseFuture::new(
+            return PromiseFuture::new_with_cell(
                 promise_seq,
                 event_promise_id,
-                Weak::<DummyPromiseFutureContext>::new(),
+                self.suspension_cell.clone(),
             );
         }
 
@@ -770,11 +842,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         }
 
         // Return pending future
-        PromiseFuture::new(
-            promise_seq,
-            name.to_string(),
-            Weak::<DummyPromiseFutureContext>::new(),
-        )
+        PromiseFuture::new_with_cell(promise_seq, name.to_string(), self.suspension_cell.clone())
     }
 
     fn promise_with_timeout_raw(&self, name: &str, _timeout: Duration) -> PromiseFutureRaw {
@@ -832,7 +900,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 }
 
 // Dummy context types for futures that don't need context reference
+// These are used as type parameters for Weak::new() to create empty weak references
+#[allow(dead_code)]
 struct DummyTaskFutureContext;
+impl SuspensionContext for DummyTaskFutureContext {
+    fn signal_suspension(&self, _reason: String) {
+        // No-op for dummy context - futures will fall back to thread-local
+    }
+}
 impl TaskFutureContext for DummyTaskFutureContext {
     fn find_task_result(&self, _: &Uuid) -> Option<Result<Value>> {
         None
@@ -840,7 +915,11 @@ impl TaskFutureContext for DummyTaskFutureContext {
     fn record_cancel_task(&self, _: &Uuid) {}
 }
 
+#[allow(dead_code)]
 struct DummyTimerFutureContext;
+impl SuspensionContext for DummyTimerFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl TimerFutureContext for DummyTimerFutureContext {
     fn find_timer_result(&self, _: &str) -> Option<Result<()>> {
         None
@@ -848,7 +927,11 @@ impl TimerFutureContext for DummyTimerFutureContext {
     fn record_cancel_timer(&self, _: &str) {}
 }
 
+#[allow(dead_code)]
 struct DummyChildWorkflowFutureContext;
+impl SuspensionContext for DummyChildWorkflowFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl ChildWorkflowFutureContext for DummyChildWorkflowFutureContext {
     fn find_child_workflow_result(&self, _: &str) -> Option<Result<Value>> {
         None
@@ -856,7 +939,11 @@ impl ChildWorkflowFutureContext for DummyChildWorkflowFutureContext {
     fn record_cancel_child_workflow(&self, _: &Uuid) {}
 }
 
+#[allow(dead_code)]
 struct DummyPromiseFutureContext;
+impl SuspensionContext for DummyPromiseFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl PromiseFutureContext for DummyPromiseFutureContext {
     fn find_promise_result(&self, _: &str) -> Option<Result<Value>> {
         None
@@ -1747,6 +1834,7 @@ mod tests {
     // Tests for the per-type cursor matching behavior
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_task_type_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different task type
@@ -1769,20 +1857,14 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule a different task type - should get determinism violation
-        let result = ctx
+        // Try to schedule a different task type - should panic with determinism violation
+        let _ = ctx
             .schedule_raw("process-payment", serde_json::json!({}))
             .await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::TaskTypeMismatch { .. }
-            ))
-        ));
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_operation_name_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different operation name
@@ -1805,18 +1887,12 @@ mod tests {
             1700000000000,
         );
 
-        // Try to run a different operation - should get determinism violation
-        let result = ctx.run_raw("calculate-total", serde_json::json!(100)).await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::OperationNameMismatch { .. }
-            ))
-        ));
+        // Try to run a different operation - should panic with determinism violation
+        let _ = ctx.run_raw("calculate-total", serde_json::json!(100)).await;
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_timer_id_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a timer with different ID
@@ -1840,18 +1916,12 @@ mod tests {
             1700000000000,
         );
 
-        // Try to sleep - should get determinism violation because timer ID doesn't match
-        let result = ctx.sleep(Duration::from_secs(5)).await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::TimerIdMismatch { .. }
-            ))
-        ));
+        // Try to sleep - should panic with determinism violation because timer ID doesn't match
+        let _ = ctx.sleep(Duration::from_secs(5)).await;
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_promise_name_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different promise name
@@ -1873,18 +1943,12 @@ mod tests {
             1700000000000,
         );
 
-        // Try to create a different promise - should get determinism violation
-        let result = ctx.promise_raw("payment-confirmation").await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::PromiseNameMismatch { .. }
-            ))
-        ));
+        // Try to create a different promise - should panic with determinism violation
+        let _ = ctx.promise_raw("payment-confirmation").await;
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_child_workflow_name_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different child workflow name
@@ -1907,17 +1971,10 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule a different child workflow - should get determinism violation
-        let result = ctx
+        // Try to schedule a different child workflow - should panic with determinism violation
+        let _ = ctx
             .schedule_workflow_raw("payment-processor", "payment-wf", serde_json::json!({}))
             .await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::ChildWorkflowMismatch { .. }
-            ))
-        ));
     }
 
     #[tokio::test]
@@ -2036,6 +2093,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_state_key_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different state key
@@ -2058,15 +2116,8 @@ mod tests {
             1700000000000,
         );
 
-        // Try to set a different key - should get determinism violation
-        let result = ctx.set_raw("order-id", serde_json::json!(456)).await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::StateKeyMismatch { .. }
-            ))
-        ));
+        // Try to set a different key - should panic with determinism violation
+        let _ = ctx.set_raw("order-id", serde_json::json!(456)).await;
     }
 
     #[tokio::test]
@@ -2267,6 +2318,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_mixed_task_types_wrong_order_raises_violation() {
         use chrono::Utc;
         // History: task-A first
@@ -2300,18 +2352,12 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule task-B first (wrong order) - should fail
-        let result = ctx.schedule_raw("task-B", serde_json::json!({})).await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::TaskTypeMismatch { .. }
-            ))
-        ));
+        // Try to schedule task-B first (wrong order) - should panic with determinism violation
+        let _ = ctx.schedule_raw("task-B", serde_json::json!({})).await;
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_child_workflow_kind_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different child workflow kind
@@ -2335,21 +2381,14 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule with different kind - should get determinism violation
-        let result = ctx
+        // Try to schedule with different kind - should panic with determinism violation
+        let _ = ctx
             .schedule_workflow_raw(
                 "payment-child",
                 "payment-workflow-v2",
                 serde_json::json!({}),
             )
             .await;
-
-        assert!(matches!(
-            result,
-            Err(FlovynError::DeterminismViolation(
-                crate::error::DeterminismViolationError::ChildWorkflowMismatch { field, .. }
-            )) if field == "kind"
-        ));
     }
 
     #[tokio::test]

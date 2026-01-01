@@ -566,10 +566,14 @@ impl WorkflowContext for MockWorkflowContext {
 
 // Dummy context types for mock futures
 use crate::workflow::future::{
-    ChildWorkflowFutureContext, PromiseFutureContext, TaskFutureContext, TimerFutureContext,
+    ChildWorkflowFutureContext, PromiseFutureContext, SuspensionContext, TaskFutureContext,
+    TimerFutureContext,
 };
 
 struct DummyMockTaskContext;
+impl SuspensionContext for DummyMockTaskContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl TaskFutureContext for DummyMockTaskContext {
     fn find_task_result(&self, _: &Uuid) -> Option<Result<Value>> {
         None
@@ -578,6 +582,9 @@ impl TaskFutureContext for DummyMockTaskContext {
 }
 
 struct DummyMockTimerContext;
+impl SuspensionContext for DummyMockTimerContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl TimerFutureContext for DummyMockTimerContext {
     fn find_timer_result(&self, _: &str) -> Option<Result<()>> {
         None
@@ -586,6 +593,9 @@ impl TimerFutureContext for DummyMockTimerContext {
 }
 
 struct DummyMockChildWorkflowContext;
+impl SuspensionContext for DummyMockChildWorkflowContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl ChildWorkflowFutureContext for DummyMockChildWorkflowContext {
     fn find_child_workflow_result(&self, _: &str) -> Option<Result<Value>> {
         None
@@ -594,6 +604,9 @@ impl ChildWorkflowFutureContext for DummyMockChildWorkflowContext {
 }
 
 struct DummyMockPromiseFutureContext;
+impl SuspensionContext for DummyMockPromiseFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl PromiseFutureContext for DummyMockPromiseFutureContext {
     fn find_promise_result(&self, _: &str) -> Option<Result<Value>> {
         None

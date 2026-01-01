@@ -327,6 +327,8 @@ pub struct E2ETestEnvBuilder {
     harness: &'static TestHarness,
     builder: FlovynClientBuilder,
     queue: String,
+    /// Test prefix for generating unique kinds
+    test_prefix: String,
 }
 
 impl E2ETestEnvBuilder {
@@ -349,6 +351,55 @@ impl E2ETestEnvBuilder {
             harness,
             builder,
             queue: queue.to_string(),
+            test_prefix: String::new(),
+        }
+    }
+
+    /// Create a new builder with auto-generated unique queue and test prefix.
+    /// This ensures test isolation when running tests in parallel.
+    pub async fn unique(test_name: &str) -> Self {
+        let harness = get_harness().await;
+        let test_id = uuid::Uuid::new_v4();
+        let test_prefix = format!("{}:{}", test_name, test_id);
+        let queue = format!("q:{}", test_prefix);
+        let worker_id = format!("worker:{}", test_prefix);
+
+        let builder = FlovynClient::builder()
+            .server_address(harness.grpc_host(), harness.grpc_port())
+            .tenant_id(harness.tenant_id())
+            .worker_token(harness.worker_token())
+            .worker_id(&worker_id)
+            .queue(&queue);
+
+        Self {
+            harness,
+            builder,
+            queue,
+            test_prefix,
+        }
+    }
+
+    /// Get the test prefix for generating unique kinds.
+    /// Use this with workflow/task input to coordinate kinds.
+    pub fn test_prefix(&self) -> &str {
+        &self.test_prefix
+    }
+
+    /// Generate a unique workflow kind using the test prefix.
+    pub fn workflow_kind(&self, base_kind: &str) -> String {
+        if self.test_prefix.is_empty() {
+            base_kind.to_string()
+        } else {
+            format!("{}:{}", base_kind, self.test_prefix)
+        }
+    }
+
+    /// Generate a unique task kind using the test prefix.
+    pub fn task_kind(&self, base_kind: &str) -> String {
+        if self.test_prefix.is_empty() {
+            base_kind.to_string()
+        } else {
+            format!("{}:{}", base_kind, self.test_prefix)
         }
     }
 
@@ -356,8 +407,8 @@ impl E2ETestEnvBuilder {
     pub fn register_workflow<W, I, O>(mut self, workflow: W) -> Self
     where
         W: WorkflowDefinition<Input = I, Output = O> + 'static,
-        I: Serialize + DeserializeOwned + Send + 'static,
-        O: Serialize + DeserializeOwned + Send + 'static,
+        I: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        O: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
     {
         self.builder = self.builder.register_workflow(workflow);
         self

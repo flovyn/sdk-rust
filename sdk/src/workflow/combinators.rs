@@ -70,8 +70,6 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         let mut all_done = true;
-        let mut has_suspended = false;
-        let mut first_suspension_reason: Option<String> = None;
 
         for i in 0..this.futures.len() {
             if this.results[i].is_some() {
@@ -84,19 +82,12 @@ where
                         this.results[i] = Some(result);
                         this.futures[i] = None;
                     }
-                    Poll::Ready(Err(FlovynError::Suspended { reason })) => {
-                        // Suspended is special - treat like Pending but track it
-                        has_suspended = true;
-                        if first_suspension_reason.is_none() {
-                            first_suspension_reason = Some(reason);
-                        }
-                        all_done = false;
-                    }
                     Poll::Ready(Err(e)) => {
-                        // Non-Suspended errors are returned immediately
+                        // Errors are returned immediately
                         return Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
+                        // Inner future pending (suspension signaled via thread-local)
                         all_done = false;
                     }
                 }
@@ -110,11 +101,6 @@ where
                 .map(|r| r.take().expect("All results should be present"))
                 .collect();
             Poll::Ready(Ok(results))
-        } else if has_suspended {
-            // If any future is suspended, propagate suspension
-            Poll::Ready(Err(FlovynError::Suspended {
-                reason: first_suspension_reason.unwrap_or_else(|| "Waiting for tasks".to_string()),
-            }))
         } else {
             Poll::Pending
         }
@@ -178,8 +164,6 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut has_suspended = false;
-        let mut first_suspension_reason: Option<String> = None;
 
         for i in 0..this.futures.len() {
             if let Some(ref mut future) = this.futures[i] {
@@ -188,31 +172,20 @@ where
                         this.futures[i] = None;
                         return Poll::Ready(Ok((i, result)));
                     }
-                    Poll::Ready(Err(FlovynError::Suspended { reason })) => {
-                        // Suspended is special - treat like Pending but track it
-                        has_suspended = true;
-                        if first_suspension_reason.is_none() {
-                            first_suspension_reason = Some(reason);
-                        }
-                    }
                     Poll::Ready(Err(e)) => {
-                        // Non-Suspended errors are returned immediately
+                        // Errors are returned immediately
                         this.futures[i] = None;
                         return Poll::Ready(Err(e));
                     }
-                    Poll::Pending => {}
+                    Poll::Pending => {
+                        // Inner future pending (suspension signaled via thread-local)
+                    }
                 }
             }
         }
 
-        // If any future is suspended, propagate suspension
-        if has_suspended {
-            Poll::Ready(Err(FlovynError::Suspended {
-                reason: first_suspension_reason.unwrap_or_else(|| "Waiting for tasks".to_string()),
-            }))
-        } else {
-            Poll::Pending
-        }
+        // No future is ready yet
+        Poll::Pending
     }
 }
 
@@ -281,8 +254,6 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut has_suspended = false;
-        let mut first_suspension_reason: Option<String> = None;
 
         if this.results.len() >= this.n {
             let results = std::mem::take(&mut this.results);
@@ -300,19 +271,14 @@ where
                         this.futures[i] = None;
                         this.results.push((i, result));
                     }
-                    Poll::Ready(Err(FlovynError::Suspended { reason })) => {
-                        // Suspended is special - treat like Pending but track it
-                        has_suspended = true;
-                        if first_suspension_reason.is_none() {
-                            first_suspension_reason = Some(reason);
-                        }
-                    }
                     Poll::Ready(Err(e)) => {
-                        // Non-Suspended errors are returned immediately
+                        // Errors are returned immediately
                         this.futures[i] = None;
                         return Poll::Ready(Err(e));
                     }
-                    Poll::Pending => {}
+                    Poll::Pending => {
+                        // Inner future pending (suspension signaled via thread-local)
+                    }
                 }
             }
         }
@@ -320,11 +286,6 @@ where
         if this.results.len() >= this.n {
             let results = std::mem::take(&mut this.results);
             Poll::Ready(Ok(results))
-        } else if has_suspended {
-            // If any future is suspended, propagate suspension
-            Poll::Ready(Err(FlovynError::Suspended {
-                reason: first_suspension_reason.unwrap_or_else(|| "Waiting for tasks".to_string()),
-            }))
         } else {
             Poll::Pending
         }
@@ -401,8 +362,6 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut has_suspended = false;
-        let mut first_suspension_reason: Option<String> = None;
 
         // Check if already timed out
         if this.timed_out {
@@ -418,19 +377,16 @@ where
                 }
                 return Poll::Ready(Ok(result));
             }
-            Poll::Ready(Err(FlovynError::Suspended { reason })) => {
-                // Inner is suspended - track it but continue to poll timer
-                has_suspended = true;
-                first_suspension_reason = Some(reason);
-            }
             Poll::Ready(Err(e)) => {
-                // Non-Suspended error from inner
+                // Error from inner
                 if let Some(ref timer) = this.timer {
                     timer.cancel();
                 }
                 return Poll::Ready(Err(e));
             }
-            Poll::Pending => {}
+            Poll::Pending => {
+                // Inner is pending (suspension signaled via thread-local)
+            }
         }
 
         // Poll the timer
@@ -444,30 +400,17 @@ where
                         "Operation timed out".to_string(),
                     )));
                 }
-                Poll::Ready(Err(FlovynError::Suspended { reason })) => {
-                    // Timer is suspended too
-                    has_suspended = true;
-                    if first_suspension_reason.is_none() {
-                        first_suspension_reason = Some(reason);
-                    }
-                }
                 Poll::Ready(Err(_)) => {
                     // Timer was cancelled - this shouldn't happen normally
                     this.timer = None;
                 }
-                Poll::Pending => {}
+                Poll::Pending => {
+                    // Timer pending (suspension signaled via thread-local)
+                }
             }
         }
 
-        // If any future is suspended, propagate suspension
-        if has_suspended {
-            Poll::Ready(Err(FlovynError::Suspended {
-                reason: first_suspension_reason
-                    .unwrap_or_else(|| "Waiting for operation".to_string()),
-            }))
-        } else {
-            Poll::Pending
-        }
+        Poll::Pending
     }
 }
 
@@ -716,6 +659,9 @@ mod tests {
 
     // Dummy timer context for tests
     struct DummyTimerCtx;
+    impl crate::workflow::future::SuspensionContext for DummyTimerCtx {
+        fn signal_suspension(&self, _reason: String) {}
+    }
     impl crate::workflow::future::TimerFutureContext for DummyTimerCtx {
         fn find_timer_result(&self, _: &str) -> Option<crate::Result<()>> {
             None

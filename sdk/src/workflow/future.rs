@@ -5,6 +5,7 @@
 //! future type that can be scheduled and awaited independently.
 
 use crate::error::{FlovynError, Result};
+use crate::workflow::context_impl::SuspensionCell;
 use crate::workflow::outcome::WorkflowOutcome;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -117,22 +118,51 @@ pub struct TaskFuture<T> {
     pub(crate) task_seq: u32,
     /// Unique task execution ID
     pub(crate) task_execution_id: Uuid,
-    /// Weak reference to the context
+    /// Weak reference to the context (legacy, used for cancellation)
     pub(crate) context: Weak<dyn TaskFutureContext + Send + Sync>,
+    /// Suspension cell for signaling suspension to the workflow context
+    pub(crate) suspension_cell: Option<SuspensionCell>,
     /// Shared state
     pub(crate) state: Arc<FutureState>,
     /// Phantom marker for output type
     pub(crate) _marker: PhantomData<T>,
 }
 
+/// Trait for signaling workflow suspension.
+///
+/// This trait is implemented by the workflow context and used by futures
+/// to signal suspension without relying on thread-local storage.
+pub(crate) trait SuspensionContext {
+    /// Signal that the workflow should suspend with the given reason.
+    fn signal_suspension(&self, reason: String);
+}
+
 /// Trait for context operations needed by TaskFuture
-pub(crate) trait TaskFutureContext {
+pub(crate) trait TaskFutureContext: SuspensionContext {
     fn find_task_result(&self, task_execution_id: &Uuid) -> Option<Result<Value>>;
     fn record_cancel_task(&self, task_execution_id: &Uuid);
 }
 
 impl<T: DeserializeOwned> TaskFuture<T> {
-    /// Create a new TaskFuture
+    /// Create a new TaskFuture with a suspension cell
+    pub(crate) fn new_with_cell(
+        task_seq: u32,
+        task_execution_id: Uuid,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            task_seq,
+            task_execution_id,
+            context: Weak::<DummyTaskFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::new()),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Create a new TaskFuture (legacy, uses thread-local for suspension)
+    /// Used by tests and testing feature
+    #[allow(dead_code)]
     pub(crate) fn new(
         task_seq: u32,
         task_execution_id: Uuid,
@@ -142,12 +172,15 @@ impl<T: DeserializeOwned> TaskFuture<T> {
             task_seq,
             task_execution_id,
             context,
+            suspension_cell: None,
             state: Arc::new(FutureState::new()),
             _marker: PhantomData,
         }
     }
 
     /// Create a TaskFuture for replay with result already known
+    /// Used by tests and testing feature
+    #[allow(dead_code)]
     pub(crate) fn from_replay(
         task_seq: u32,
         task_execution_id: Uuid,
@@ -158,6 +191,24 @@ impl<T: DeserializeOwned> TaskFuture<T> {
             task_seq,
             task_execution_id,
             context,
+            suspension_cell: None,
+            state: Arc::new(FutureState::with_result(result)),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Create a TaskFuture for replay with suspension cell
+    pub(crate) fn from_replay_with_cell(
+        task_seq: u32,
+        task_execution_id: Uuid,
+        suspension_cell: SuspensionCell,
+        result: Result<Value>,
+    ) -> Self {
+        Self {
+            task_seq,
+            task_execution_id,
+            context: Weak::<DummyTaskFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
             state: Arc::new(FutureState::with_result(result)),
             _marker: PhantomData,
         }
@@ -169,6 +220,7 @@ impl<T: DeserializeOwned> TaskFuture<T> {
             task_seq: 0,
             task_execution_id: Uuid::nil(),
             context: Weak::<DummyTaskFutureContext>::new(),
+            suspension_cell: None,
             state: Arc::new(FutureState::with_error(error)),
             _marker: PhantomData,
         }
@@ -176,6 +228,9 @@ impl<T: DeserializeOwned> TaskFuture<T> {
 }
 
 struct DummyTaskFutureContext;
+impl SuspensionContext for DummyTaskFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl TaskFutureContext for DummyTaskFutureContext {
     fn find_task_result(&self, _: &Uuid) -> Option<Result<Value>> {
         None
@@ -236,10 +291,22 @@ impl<T: DeserializeOwned> WorkflowFuturePoll for TaskFuture<T> {
 impl<T: DeserializeOwned> Future for TaskFuture<T> {
     type Output = Result<T>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Delegate to poll_outcome and convert to Result for backward compatibility
-        match self.poll_outcome(cx) {
-            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Get suspension cell before poll_outcome moves self
+        let suspension_cell = self.suspension_cell.clone();
+
+        match self.as_mut().poll_outcome(cx) {
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { reason }) => {
+                // Signal suspension through the cell
+                suspension_cell
+                    .expect("TaskFuture must have suspension cell")
+                    .signal(reason);
+                Poll::Pending
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                panic!("Determinism violation: {}", e)
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -284,20 +351,39 @@ pub struct TimerFuture {
     pub(crate) timer_seq: u32,
     /// Timer ID
     pub(crate) timer_id: String,
-    /// Weak reference to the context
+    /// Weak reference to the context (legacy, used for cancellation)
     pub(crate) context: Weak<dyn TimerFutureContext + Send + Sync>,
+    /// Suspension cell for signaling suspension to the workflow context
+    pub(crate) suspension_cell: Option<SuspensionCell>,
     /// Shared state
     pub(crate) state: Arc<FutureState>,
 }
 
 /// Trait for context operations needed by TimerFuture
-pub(crate) trait TimerFutureContext {
+pub(crate) trait TimerFutureContext: SuspensionContext {
     fn find_timer_result(&self, timer_id: &str) -> Option<Result<()>>;
     fn record_cancel_timer(&self, timer_id: &str);
 }
 
 impl TimerFuture {
-    /// Create a new TimerFuture
+    /// Create a new TimerFuture with a suspension cell
+    pub(crate) fn new_with_cell(
+        timer_seq: u32,
+        timer_id: String,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            timer_seq,
+            timer_id,
+            context: Weak::<DummyTimerFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::new()),
+        }
+    }
+
+    /// Create a new TimerFuture (legacy)
+    /// Used by tests and testing feature
+    #[allow(dead_code)]
     pub(crate) fn new(
         timer_seq: u32,
         timer_id: String,
@@ -307,11 +393,14 @@ impl TimerFuture {
             timer_seq,
             timer_id,
             context,
+            suspension_cell: None,
             state: Arc::new(FutureState::new()),
         }
     }
 
     /// Create a TimerFuture for replay with result already known
+    /// Used by tests and testing feature
+    #[allow(dead_code)]
     pub(crate) fn from_replay(
         timer_seq: u32,
         timer_id: String,
@@ -327,6 +416,28 @@ impl TimerFuture {
             timer_seq,
             timer_id,
             context,
+            suspension_cell: None,
+            state: Arc::new(FutureState::with_result(result)),
+        }
+    }
+
+    /// Create a TimerFuture for replay with suspension cell
+    pub(crate) fn from_replay_with_cell(
+        timer_seq: u32,
+        timer_id: String,
+        suspension_cell: SuspensionCell,
+        fired: bool,
+    ) -> Self {
+        let result = if fired {
+            Ok(Value::Null)
+        } else {
+            Err(FlovynError::TimerError("Timer cancelled".to_string()))
+        };
+        Self {
+            timer_seq,
+            timer_id,
+            context: Weak::<DummyTimerFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
             state: Arc::new(FutureState::with_result(result)),
         }
     }
@@ -337,12 +448,16 @@ impl TimerFuture {
             timer_seq: 0,
             timer_id: String::new(),
             context: Weak::<DummyTimerFutureContext>::new(),
+            suspension_cell: None,
             state: Arc::new(FutureState::with_error(error)),
         }
     }
 }
 
 struct DummyTimerFutureContext;
+impl SuspensionContext for DummyTimerFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl TimerFutureContext for DummyTimerFutureContext {
     fn find_timer_result(&self, _: &str) -> Option<Result<()>> {
         None
@@ -398,10 +513,22 @@ impl WorkflowFuturePoll for TimerFuture {
 impl Future for TimerFuture {
     type Output = Result<()>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Delegate to poll_outcome and convert to Result for backward compatibility
-        match self.poll_outcome(cx) {
-            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Get suspension cell before poll_outcome moves self
+        let suspension_cell = self.suspension_cell.clone();
+
+        match self.as_mut().poll_outcome(cx) {
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { reason }) => {
+                // Signal suspension through the cell
+                suspension_cell
+                    .expect("TimerFuture must have suspension cell")
+                    .signal(reason);
+                Poll::Pending
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                panic!("Determinism violation: {}", e)
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -450,8 +577,10 @@ pub struct ChildWorkflowFuture<T> {
     pub(crate) child_execution_id: Uuid,
     /// Child workflow name (for lookup)
     pub(crate) child_execution_name: String,
-    /// Weak reference to the context
+    /// Weak reference to the context (legacy, used for cancellation)
     pub(crate) context: Weak<dyn ChildWorkflowFutureContext + Send + Sync>,
+    /// Suspension cell for signaling suspension to the workflow context
+    pub(crate) suspension_cell: Option<SuspensionCell>,
     /// Shared state
     pub(crate) state: Arc<FutureState>,
     /// Phantom marker for output type
@@ -459,13 +588,32 @@ pub struct ChildWorkflowFuture<T> {
 }
 
 /// Trait for context operations needed by ChildWorkflowFuture
-pub(crate) trait ChildWorkflowFutureContext {
+pub(crate) trait ChildWorkflowFutureContext: SuspensionContext {
     fn find_child_workflow_result(&self, name: &str) -> Option<Result<Value>>;
     fn record_cancel_child_workflow(&self, child_execution_id: &Uuid);
 }
 
 impl<T: DeserializeOwned> ChildWorkflowFuture<T> {
-    /// Create a new ChildWorkflowFuture
+    /// Create a new ChildWorkflowFuture with a suspension cell
+    pub(crate) fn new_with_cell(
+        child_workflow_seq: u32,
+        child_execution_id: Uuid,
+        child_execution_name: String,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            child_workflow_seq,
+            child_execution_id,
+            child_execution_name,
+            context: Weak::<DummyChildWorkflowFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::new()),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Create a new ChildWorkflowFuture (legacy, used by tests)
+    #[allow(dead_code)]
     pub(crate) fn new(
         child_workflow_seq: u32,
         child_execution_id: Uuid,
@@ -477,12 +625,33 @@ impl<T: DeserializeOwned> ChildWorkflowFuture<T> {
             child_execution_id,
             child_execution_name,
             context,
+            suspension_cell: None,
             state: Arc::new(FutureState::new()),
             _marker: PhantomData,
         }
     }
 
-    /// Create for replay with result already known
+    /// Create for replay with suspension cell and result already known
+    pub(crate) fn from_replay_with_cell(
+        child_workflow_seq: u32,
+        child_execution_id: Uuid,
+        child_execution_name: String,
+        suspension_cell: SuspensionCell,
+        result: Result<Value>,
+    ) -> Self {
+        Self {
+            child_workflow_seq,
+            child_execution_id,
+            child_execution_name,
+            context: Weak::<DummyChildWorkflowFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::with_result(result)),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Create for replay with result already known (legacy, used by tests)
+    #[allow(dead_code)]
     pub(crate) fn from_replay(
         child_workflow_seq: u32,
         child_execution_id: Uuid,
@@ -495,6 +664,7 @@ impl<T: DeserializeOwned> ChildWorkflowFuture<T> {
             child_execution_id,
             child_execution_name,
             context,
+            suspension_cell: None,
             state: Arc::new(FutureState::with_result(result)),
             _marker: PhantomData,
         }
@@ -507,6 +677,7 @@ impl<T: DeserializeOwned> ChildWorkflowFuture<T> {
             child_execution_id: Uuid::nil(),
             child_execution_name: String::new(),
             context: Weak::<DummyChildWorkflowFutureContext>::new(),
+            suspension_cell: None,
             state: Arc::new(FutureState::with_error(error)),
             _marker: PhantomData,
         }
@@ -514,6 +685,9 @@ impl<T: DeserializeOwned> ChildWorkflowFuture<T> {
 }
 
 struct DummyChildWorkflowFutureContext;
+impl SuspensionContext for DummyChildWorkflowFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl ChildWorkflowFutureContext for DummyChildWorkflowFutureContext {
     fn find_child_workflow_result(&self, _: &str) -> Option<Result<Value>> {
         None
@@ -575,10 +749,27 @@ impl<T: DeserializeOwned> WorkflowFuturePoll for ChildWorkflowFuture<T> {
 impl<T: DeserializeOwned> Future for ChildWorkflowFuture<T> {
     type Output = Result<T>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Delegate to poll_outcome and convert to Result for backward compatibility
-        match self.poll_outcome(cx) {
-            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Get suspension cell and context before poll_outcome moves self
+        let suspension_cell = self.suspension_cell.clone();
+        let context = self.context.clone();
+
+        match self.as_mut().poll_outcome(cx) {
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { reason }) => {
+                // Signal suspension through the cell or context
+                if let Some(cell) = suspension_cell {
+                    cell.signal(reason);
+                } else if let Some(ctx) = context.upgrade() {
+                    ctx.signal_suspension(reason);
+                } else {
+                    panic!("ChildWorkflowFuture must have suspension cell or valid context");
+                }
+                Poll::Pending
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                panic!("Determinism violation: {}", e)
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -619,8 +810,10 @@ pub struct PromiseFuture<T> {
     pub(crate) promise_seq: u32,
     /// Promise ID/name
     pub(crate) promise_id: String,
-    /// Weak reference to the context
+    /// Weak reference to the context (legacy, used by tests)
     pub(crate) context: Weak<dyn PromiseFutureContext + Send + Sync>,
+    /// Suspension cell for signaling suspension to the workflow context
+    pub(crate) suspension_cell: Option<SuspensionCell>,
     /// Shared state
     pub(crate) state: Arc<FutureState>,
     /// Phantom marker for output type
@@ -628,12 +821,29 @@ pub struct PromiseFuture<T> {
 }
 
 /// Trait for context operations needed by PromiseFuture
-pub(crate) trait PromiseFutureContext {
+pub(crate) trait PromiseFutureContext: SuspensionContext {
     fn find_promise_result(&self, promise_id: &str) -> Option<Result<Value>>;
 }
 
 impl<T: DeserializeOwned> PromiseFuture<T> {
-    /// Create a new PromiseFuture
+    /// Create a new PromiseFuture with a suspension cell
+    pub(crate) fn new_with_cell(
+        promise_seq: u32,
+        promise_id: String,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            promise_seq,
+            promise_id,
+            context: Weak::<DummyPromiseFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::new()),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Create a new PromiseFuture (legacy, used by tests)
+    #[allow(dead_code)]
     pub(crate) fn new(
         promise_seq: u32,
         promise_id: String,
@@ -643,12 +853,31 @@ impl<T: DeserializeOwned> PromiseFuture<T> {
             promise_seq,
             promise_id,
             context,
+            suspension_cell: None,
             state: Arc::new(FutureState::new()),
             _marker: PhantomData,
         }
     }
 
-    /// Create for replay with result already known
+    /// Create for replay with suspension cell and result already known
+    pub(crate) fn from_replay_with_cell(
+        promise_seq: u32,
+        promise_id: String,
+        suspension_cell: SuspensionCell,
+        result: Result<Value>,
+    ) -> Self {
+        Self {
+            promise_seq,
+            promise_id,
+            context: Weak::<DummyPromiseFutureContext>::new(),
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::with_result(result)),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Create for replay with result already known (legacy, used by tests)
+    #[allow(dead_code)]
     pub(crate) fn from_replay(
         promise_seq: u32,
         promise_id: String,
@@ -659,6 +888,7 @@ impl<T: DeserializeOwned> PromiseFuture<T> {
             promise_seq,
             promise_id,
             context,
+            suspension_cell: None,
             state: Arc::new(FutureState::with_result(result)),
             _marker: PhantomData,
         }
@@ -670,6 +900,7 @@ impl<T: DeserializeOwned> PromiseFuture<T> {
             promise_seq: 0,
             promise_id: String::new(),
             context: Weak::<DummyPromiseFutureContext>::new(),
+            suspension_cell: None,
             state: Arc::new(FutureState::with_error(error)),
             _marker: PhantomData,
         }
@@ -677,6 +908,9 @@ impl<T: DeserializeOwned> PromiseFuture<T> {
 }
 
 struct DummyPromiseFutureContext;
+impl SuspensionContext for DummyPromiseFutureContext {
+    fn signal_suspension(&self, _reason: String) {}
+}
 impl PromiseFutureContext for DummyPromiseFutureContext {
     fn find_promise_result(&self, _: &str) -> Option<Result<Value>> {
         None
@@ -730,10 +964,27 @@ impl<T: DeserializeOwned> WorkflowFuturePoll for PromiseFuture<T> {
 impl<T: DeserializeOwned> Future for PromiseFuture<T> {
     type Output = Result<T>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Delegate to poll_outcome and convert to Result for backward compatibility
-        match self.poll_outcome(cx) {
-            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Get suspension cell and context before poll_outcome moves self
+        let suspension_cell = self.suspension_cell.clone();
+        let context = self.context.clone();
+
+        match self.as_mut().poll_outcome(cx) {
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { reason }) => {
+                // Signal suspension through the cell or context
+                if let Some(cell) = suspension_cell {
+                    cell.signal(reason);
+                } else if let Some(ctx) = context.upgrade() {
+                    ctx.signal_suspension(reason);
+                } else {
+                    panic!("PromiseFuture must have suspension cell or valid context");
+                }
+                Poll::Pending
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                panic!("Determinism violation: {}", e)
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -831,9 +1082,15 @@ impl<T: DeserializeOwned> Future for OperationFuture<T> {
     type Output = Result<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Delegate to poll_outcome and convert to Result for backward compatibility
         match self.poll_outcome(cx) {
-            Poll::Ready(outcome) => Poll::Ready(outcome.into_result_legacy()),
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { .. }) => {
+                // Operations are always synchronous and ready immediately
+                unreachable!("OperationFuture should never suspend")
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                panic!("Determinism violation: {}", e)
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -910,17 +1167,23 @@ mod tests {
 
     #[test]
     fn test_task_future_returns_suspended_when_not_completed() {
-        // Create a TaskFuture with no result - it should return Suspended
+        // Create a TaskFuture with suspension cell but no result - it should signal suspension
+        let suspension_cell = SuspensionCell::new();
         let future: TaskFuture<i32> =
-            TaskFuture::new(0, Uuid::new_v4(), Weak::<DummyTaskFutureContext>::new());
+            TaskFuture::new_with_cell(0, Uuid::new_v4(), suspension_cell.clone());
         let mut future = std::pin::pin!(future);
 
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
-            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
+            Poll::Pending => {
+                // Check that suspension was signaled via the cell
+                let reason = suspension_cell.take();
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("Waiting for task"));
+            }
+            other => panic!("Expected Pending (with suspension signal), got {:?}", other),
         }
     }
 
@@ -992,6 +1255,10 @@ mod tests {
         }
     }
 
+    impl SuspensionContext for MockTaskFutureContext {
+        fn signal_suspension(&self, _reason: String) {}
+    }
+
     impl TaskFutureContext for MockTaskFutureContext {
         fn find_task_result(&self, _: &Uuid) -> Option<Result<Value>> {
             None
@@ -1052,19 +1319,22 @@ mod tests {
 
     #[test]
     fn test_timer_future_returns_suspended_when_not_fired() {
-        let future = TimerFuture::new(
-            0,
-            "timer-1".to_string(),
-            Weak::<DummyTimerFutureContext>::new(),
-        );
+        // Create a TimerFuture with suspension cell but no result - it should signal suspension
+        let suspension_cell = SuspensionCell::new();
+        let future = TimerFuture::new_with_cell(0, "timer-1".to_string(), suspension_cell.clone());
         let mut future = std::pin::pin!(future);
 
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
-            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
+            Poll::Pending => {
+                // Check that suspension was signaled via the cell
+                let reason = suspension_cell.take();
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("Waiting for timer"));
+            }
+            other => panic!("Expected Pending (with suspension signal), got {:?}", other),
         }
     }
 
@@ -1144,11 +1414,13 @@ mod tests {
 
     #[test]
     fn test_child_workflow_future_returns_suspended_when_running() {
+        // Create a mock context to capture suspension signal
+        let ctx = Arc::new(MockChildWorkflowFutureContext::new());
         let future: ChildWorkflowFuture<i32> = ChildWorkflowFuture::new(
             0,
             Uuid::new_v4(),
             "child-1".to_string(),
-            Weak::<DummyChildWorkflowFutureContext>::new(),
+            Arc::downgrade(&ctx) as Weak<dyn ChildWorkflowFutureContext + Send + Sync>,
         );
         let mut future = std::pin::pin!(future);
 
@@ -1156,8 +1428,13 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
-            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
+            Poll::Pending => {
+                // Check that suspension was signaled via the context
+                let reason = ctx.take_suspension();
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("Waiting for child workflow"));
+            }
+            other => panic!("Expected Pending (with suspension signal), got {:?}", other),
         }
     }
 
@@ -1216,16 +1493,28 @@ mod tests {
         }
     }
 
-    /// Mock context that tracks cancel calls for child workflows
+    /// Mock context that tracks cancel calls and suspension for child workflows
     struct MockChildWorkflowFutureContext {
         cancel_count: AtomicUsize,
+        suspension_reason: parking_lot::Mutex<Option<String>>,
     }
 
     impl MockChildWorkflowFutureContext {
         fn new() -> Self {
             Self {
                 cancel_count: AtomicUsize::new(0),
+                suspension_reason: parking_lot::Mutex::new(None),
             }
+        }
+
+        fn take_suspension(&self) -> Option<String> {
+            self.suspension_reason.lock().take()
+        }
+    }
+
+    impl SuspensionContext for MockChildWorkflowFutureContext {
+        fn signal_suspension(&self, reason: String) {
+            *self.suspension_reason.lock() = Some(reason);
         }
     }
 
@@ -1282,12 +1571,43 @@ mod tests {
     // PromiseFuture tests
     // ========================================================================
 
+    /// Mock context that tracks suspension for promises
+    struct MockPromiseFutureContext {
+        suspension_reason: parking_lot::Mutex<Option<String>>,
+    }
+
+    impl MockPromiseFutureContext {
+        fn new() -> Self {
+            Self {
+                suspension_reason: parking_lot::Mutex::new(None),
+            }
+        }
+
+        fn take_suspension(&self) -> Option<String> {
+            self.suspension_reason.lock().take()
+        }
+    }
+
+    impl SuspensionContext for MockPromiseFutureContext {
+        fn signal_suspension(&self, reason: String) {
+            *self.suspension_reason.lock() = Some(reason);
+        }
+    }
+
+    impl PromiseFutureContext for MockPromiseFutureContext {
+        fn find_promise_result(&self, _: &str) -> Option<Result<Value>> {
+            None
+        }
+    }
+
     #[test]
     fn test_promise_future_returns_suspended_when_not_resolved() {
+        // Create a mock context to capture suspension signal
+        let ctx = Arc::new(MockPromiseFutureContext::new());
         let future: PromiseFuture<i32> = PromiseFuture::new(
             0,
             "promise-1".to_string(),
-            Weak::<DummyPromiseFutureContext>::new(),
+            Arc::downgrade(&ctx) as Weak<dyn PromiseFutureContext + Send + Sync>,
         );
         let mut future = std::pin::pin!(future);
 
@@ -1295,8 +1615,13 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         match future.as_mut().poll(&mut cx) {
-            Poll::Ready(Err(FlovynError::Suspended { .. })) => {} // Expected
-            other => panic!("Expected Ready(Err(Suspended)), got {:?}", other),
+            Poll::Pending => {
+                // Check that suspension was signaled via the context
+                let reason = ctx.take_suspension();
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("Waiting for promise"));
+            }
+            other => panic!("Expected Pending (with suspension signal), got {:?}", other),
         }
     }
 

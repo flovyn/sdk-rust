@@ -13,7 +13,6 @@
 use super::fixtures::workflows::*;
 use super::replay_utils::to_replay_events;
 use super::{get_harness, with_timeout, TEST_TIMEOUT};
-use flovyn_sdk::error::{DeterminismViolationError, FlovynError};
 use flovyn_sdk::workflow::context::WorkflowContext;
 use flovyn_sdk::workflow::context_impl::WorkflowContextImpl;
 use flovyn_sdk::workflow::recorder::CommandCollector;
@@ -112,8 +111,10 @@ async fn test_e2e_determinism_violation_on_task_type_change() {
 }
 
 /// Test that determinism violation is detected when child workflow name changes.
+/// Determinism violations now panic instead of returning errors.
 #[tokio::test]
 #[ignore]
+#[should_panic(expected = "Determinism violation")]
 async fn test_e2e_determinism_violation_on_child_name_change() {
     with_timeout(
         TEST_TIMEOUT,
@@ -144,21 +145,10 @@ async fn test_e2e_determinism_violation_on_child_name_change() {
                 chrono::Utc::now().timestamp_millis(),
             );
 
-            // Try to schedule a child workflow with different name - should cause violation
-            let result = ctx
+            // Try to schedule a child workflow with different name - should panic with determinism violation
+            let _ = ctx
                 .schedule_workflow_raw("child-B", "process-child", serde_json::json!({}))
                 .await;
-
-            assert!(
-                matches!(
-                    &result,
-                    Err(FlovynError::DeterminismViolation(
-                        DeterminismViolationError::ChildWorkflowMismatch { field, .. }
-                    )) if field == "name"
-                ),
-                "Expected ChildWorkflowMismatch with field 'name', got {:?}",
-                result
-            );
         },
     )
     .await;
@@ -281,8 +271,10 @@ async fn test_e2e_mixed_commands_replay() {
 }
 
 /// Test that operation name mismatch is detected during replay.
+/// Determinism violations now panic instead of returning errors.
 #[tokio::test]
 #[ignore]
+#[should_panic(expected = "Determinism violation")]
 async fn test_e2e_operation_name_mismatch() {
     with_timeout(TEST_TIMEOUT, "test_e2e_operation_name_mismatch", async {
         let harness = get_harness().await;
@@ -308,19 +300,8 @@ async fn test_e2e_operation_name_mismatch() {
             chrono::Utc::now().timestamp_millis(),
         );
 
-        // Try to run with different operation name
-        let result = ctx.run_raw("changed-op", serde_json::json!({})).await;
-
-        assert!(
-            matches!(
-                result,
-                Err(FlovynError::DeterminismViolation(
-                    DeterminismViolationError::OperationNameMismatch { .. }
-                ))
-            ),
-            "Expected OperationNameMismatch, got {:?}",
-            result
-        );
+        // Try to run with different operation name - should panic with determinism violation
+        let _ = ctx.run_raw("changed-op", serde_json::json!({})).await;
     })
     .await;
 }

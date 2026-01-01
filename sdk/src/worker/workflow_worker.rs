@@ -13,6 +13,7 @@ use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::recorder::CommandCollector;
 use chrono::Utc;
 use flovyn_sdk_core::generated::flovyn_v1;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -720,10 +721,46 @@ impl WorkflowExecutorWorker {
         // Start workflow.execute span
         let execute_span = workflow_execute_span(&workflow_id_str, kind);
 
-        // Execute workflow
-        let result = registered
-            .execute(ctx.clone(), workflow_info.input.clone())
-            .await;
+        // Get the workflow future and pin it for polling
+        let mut workflow_future =
+            std::pin::pin!(registered.execute(ctx.clone(), workflow_info.input.clone()));
+
+        // Use poll_fn to intercept Poll::Pending and check for suspension signals
+        // Suspension is signaled via the context's SuspensionCell (not thread-local)
+        let ctx_for_poll = ctx.clone();
+        let result: Result<serde_json::Value> = std::future::poll_fn(|cx| {
+            // Clear any previous suspension before polling
+            ctx_for_poll.clear_suspension();
+
+            match workflow_future.as_mut().poll(cx) {
+                std::task::Poll::Ready(result) => {
+                    tracing::debug!(workflow_id = %workflow_id_str, "Workflow poll returned Ready");
+                    std::task::Poll::Ready(result)
+                }
+                std::task::Poll::Pending => {
+                    // Check for suspension signal in workflow context
+                    if let Some(reason) = ctx_for_poll.take_suspension() {
+                        tracing::debug!(
+                            workflow_id = %workflow_id_str,
+                            reason = %reason,
+                            "Workflow poll returned Pending with suspension signal"
+                        );
+                        std::task::Poll::Ready(Err(FlovynError::Suspended { reason }))
+                    } else {
+                        // No suspension signal - this shouldn't happen in deterministic workflow
+                        // Treat as generic suspension
+                        tracing::warn!(
+                            workflow_id = %workflow_id_str,
+                            "Workflow poll returned Pending WITHOUT suspension signal"
+                        );
+                        std::task::Poll::Ready(Err(FlovynError::Suspended {
+                            reason: "Workflow suspended without explicit reason".to_string(),
+                        }))
+                    }
+                }
+            }
+        })
+        .await;
 
         // Get commands and determine status
         let mut commands = ctx.get_commands();

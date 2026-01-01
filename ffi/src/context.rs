@@ -464,7 +464,7 @@ impl FfiWorkflowContext {
 
             self.commands.lock().push(FfiWorkflowCommand::ScheduleTask {
                 task_execution_id: task_execution_id.clone(),
-                kind: kind,
+                kind,
                 input,
                 priority_seconds: None,
                 max_retries: None,
