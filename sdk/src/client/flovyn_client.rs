@@ -404,7 +404,10 @@ impl FlovynClient {
         promise_name: &str,
         value: Value,
     ) -> Result<()> {
-        let promise_id = format!("{}:{}", workflow_execution_id, promise_name);
+        // Get the promise UUID from workflow events
+        let promise_id = self
+            .get_promise_id(workflow_execution_id, promise_name)
+            .await?;
         let value_bytes = serde_json::to_vec(&value)?;
 
         let request = flovyn_v1::ResolvePromiseRequest {
@@ -434,7 +437,10 @@ impl FlovynClient {
         promise_name: &str,
         error: &str,
     ) -> Result<()> {
-        let promise_id = format!("{}:{}", workflow_execution_id, promise_name);
+        // Get the promise UUID from workflow events
+        let promise_id = self
+            .get_promise_id(workflow_execution_id, promise_name)
+            .await?;
 
         let request = flovyn_v1::RejectPromiseRequest {
             promise_id,
@@ -463,6 +469,34 @@ impl FlovynClient {
     ) -> Result<Vec<crate::client::WorkflowEvent>> {
         let mut client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
         Ok(client.get_events(workflow_execution_id, None).await?)
+    }
+
+    /// Get promise UUID from workflow events
+    async fn get_promise_id(
+        &self,
+        workflow_execution_id: Uuid,
+        promise_name: &str,
+    ) -> Result<String> {
+        let events = self.get_workflow_events(workflow_execution_id).await?;
+
+        for event in events {
+            if event.event_type == "PROMISE_CREATED" {
+                // Check if this is the promise we're looking for
+                if let Some(name) = event.payload.get("promiseName").and_then(|v| v.as_str()) {
+                    if name == promise_name {
+                        // Extract the promise UUID
+                        if let Some(id) = event.payload.get("promiseId").and_then(|v| v.as_str()) {
+                            return Ok(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(FlovynError::PromiseNotFound(format!(
+            "Promise '{}' not found in workflow {}",
+            promise_name, workflow_execution_id
+        )))
     }
 
     /// Query workflow state

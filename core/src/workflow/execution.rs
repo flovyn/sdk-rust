@@ -253,18 +253,17 @@ impl EventLookup {
     /// Find terminal event (PromiseResolved, PromiseRejected, or PromiseTimeout) for a promise.
     pub fn find_terminal_promise_event<'a>(
         events: &'a [ReplayEvent],
-        promise_name: &str,
+        promise_id: &str,
     ) -> Option<&'a ReplayEvent> {
         events
             .iter()
             .filter(|e| {
-                // PromiseCreated uses promiseId, terminal events use promiseName
-                let matches_name = e
-                    .get_string("promiseName")
-                    .or_else(|| e.get_string("promiseId"))
-                    .map(|n| n == promise_name)
+                // Match by promiseId (UUID)
+                let matches_id = e
+                    .get_string("promiseId")
+                    .map(|id| id == promise_id)
                     .unwrap_or(false);
-                matches_name
+                matches_id
                     && (e.event_type() == EventType::PromiseResolved
                         || e.event_type() == EventType::PromiseRejected
                         || e.event_type() == EventType::PromiseTimeout)
@@ -471,22 +470,23 @@ mod tests {
 
     #[test]
     fn test_find_terminal_promise_event() {
+        let promise_id = "550e8400-e29b-41d4-a716-446655440000";
         let events = vec![
             ReplayEvent::new(
                 1,
                 EventType::PromiseCreated,
-                json!({"promiseId": "approval"}),
+                json!({"promiseName": "approval", "promiseId": promise_id}),
                 now(),
             ),
             ReplayEvent::new(
                 2,
                 EventType::PromiseResolved,
-                json!({"promiseName": "approval", "value": true}),
+                json!({"promiseName": "approval", "promiseId": promise_id, "value": true}),
                 now(),
             ),
         ];
 
-        let result = EventLookup::find_terminal_promise_event(&events, "approval");
+        let result = EventLookup::find_terminal_promise_event(&events, promise_id);
         assert!(result.is_some());
         assert_eq!(result.unwrap().event_type(), EventType::PromiseResolved);
     }

@@ -246,8 +246,8 @@ impl ReplayEngine {
     }
 
     /// Find terminal event (PromiseResolved, PromiseRejected, or PromiseTimeout) for a promise.
-    pub fn find_terminal_promise_event(&self, promise_name: &str) -> Option<&ReplayEvent> {
-        EventLookup::find_terminal_promise_event(&self.all_events, promise_name)
+    pub fn find_terminal_promise_event(&self, promise_id: &str) -> Option<&ReplayEvent> {
+        EventLookup::find_terminal_promise_event(&self.all_events, promise_id)
     }
 
     /// Find terminal event (ChildWorkflowCompleted or ChildWorkflowFailed) for a child workflow.
@@ -775,23 +775,24 @@ mod tests {
 
     #[test]
     fn test_find_terminal_promise_event_resolved() {
+        let promise_id = "550e8400-e29b-41d4-a716-446655440000";
         let events = vec![
             ReplayEvent::new(
                 1,
                 EventType::PromiseCreated,
-                json!({"promiseId": "approval"}),
+                json!({"promiseName": "approval", "promiseId": promise_id}),
                 now(),
             ),
             ReplayEvent::new(
                 2,
                 EventType::PromiseResolved,
-                json!({"promiseName": "approval", "value": true}),
+                json!({"promiseName": "approval", "promiseId": promise_id, "value": true}),
                 now(),
             ),
         ];
 
         let engine = ReplayEngine::new(events);
-        let terminal = engine.find_terminal_promise_event("approval");
+        let terminal = engine.find_terminal_promise_event(promise_id);
 
         assert!(terminal.is_some());
         assert_eq!(terminal.unwrap().event_type(), EventType::PromiseResolved);
@@ -799,23 +800,24 @@ mod tests {
 
     #[test]
     fn test_find_terminal_promise_event_rejected() {
+        let promise_id = "550e8400-e29b-41d4-a716-446655440001";
         let events = vec![
             ReplayEvent::new(
                 1,
                 EventType::PromiseCreated,
-                json!({"promiseId": "approval"}),
+                json!({"promiseName": "approval", "promiseId": promise_id}),
                 now(),
             ),
             ReplayEvent::new(
                 2,
                 EventType::PromiseRejected,
-                json!({"promiseName": "approval", "error": "denied"}),
+                json!({"promiseName": "approval", "promiseId": promise_id, "error": "denied"}),
                 now(),
             ),
         ];
 
         let engine = ReplayEngine::new(events);
-        let terminal = engine.find_terminal_promise_event("approval");
+        let terminal = engine.find_terminal_promise_event(promise_id);
 
         assert!(terminal.is_some());
         assert_eq!(terminal.unwrap().event_type(), EventType::PromiseRejected);
@@ -823,23 +825,24 @@ mod tests {
 
     #[test]
     fn test_find_terminal_promise_event_timeout() {
+        let promise_id = "550e8400-e29b-41d4-a716-446655440002";
         let events = vec![
             ReplayEvent::new(
                 1,
                 EventType::PromiseCreated,
-                json!({"promiseId": "approval"}),
+                json!({"promiseName": "approval", "promiseId": promise_id}),
                 now(),
             ),
             ReplayEvent::new(
                 2,
                 EventType::PromiseTimeout,
-                json!({"promiseName": "approval"}),
+                json!({"promiseName": "approval", "promiseId": promise_id}),
                 now(),
             ),
         ];
 
         let engine = ReplayEngine::new(events);
-        let terminal = engine.find_terminal_promise_event("approval");
+        let terminal = engine.find_terminal_promise_event(promise_id);
 
         assert!(terminal.is_some());
         assert_eq!(terminal.unwrap().event_type(), EventType::PromiseTimeout);

@@ -494,7 +494,7 @@ impl FfiWorkflowContext {
 
         if let Some(event) = self.replay_engine.get_promise_event(promise_seq) {
             // Replay: validate promise name matches
-            let event_name = event.get_string("promiseId").unwrap_or_default();
+            let event_name = event.get_string("promiseName").unwrap_or_default();
 
             if event_name != name {
                 return Err(FfiError::DeterminismViolation {
@@ -505,8 +505,11 @@ impl FfiWorkflowContext {
                 });
             }
 
-            // Look up terminal result from FFI-specific cache
-            if let Some(result) = self.resolved_promises.get(&name) {
+            // Get promiseId (UUID) for terminal result lookup
+            let promise_id = event.get_string("promiseId").unwrap_or_default();
+
+            // Look up terminal result from FFI-specific cache by promiseId
+            if let Some(result) = self.resolved_promises.get(promise_id) {
                 return Ok(match result {
                     PromiseResultInternal::Resolved { value } => FfiPromiseResult::Resolved {
                         value: value.clone(),
@@ -909,12 +912,14 @@ mod tests {
 
     #[test]
     fn test_create_promise_resolved() {
+        let promise_id = "550e8400-e29b-41d4-a716-446655440000";
         let events = vec![
             FfiReplayEvent {
                 sequence_number: 1,
                 event_type: FfiEventType::PromiseCreated,
                 data: serde_json::to_vec(&serde_json::json!({
-                    "promiseId": "my-promise"
+                    "promiseName": "my-promise",
+                    "promiseId": promise_id
                 }))
                 .unwrap(),
                 timestamp_ms: 1000,
@@ -923,7 +928,8 @@ mod tests {
                 sequence_number: 2,
                 event_type: FfiEventType::PromiseResolved,
                 data: serde_json::to_vec(&serde_json::json!({
-                    "promiseId": "my-promise",
+                    "promiseName": "my-promise",
+                    "promiseId": promise_id,
                     "value": {"approved": true}
                 }))
                 .unwrap(),

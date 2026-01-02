@@ -133,6 +133,10 @@ pub enum FlovynError {
     #[error("Promise rejected: {name}: {error}")]
     PromiseRejected { name: String, error: String },
 
+    /// Promise not found
+    #[error("Promise not found: {0}")]
+    PromiseNotFound(String),
+
     /// Timer error
     #[error("Timer error: {0}")]
     TimerError(String),

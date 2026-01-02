@@ -766,34 +766,38 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
         // Look for event at this per-type index (replay case)
         if let Some(created_event) = self.replay_engine.get_promise_event(promise_seq) {
-            // Validate promise name/ID matches
-            let event_promise_id = created_event
-                .get_string("promiseId")
-                .or_else(|| created_event.get_string("promiseName"))
+            // Validate promise name matches
+            let event_promise_name = created_event
+                .get_string("promiseName")
                 .unwrap_or_default()
                 .to_string();
 
-            if event_promise_id != name {
+            if event_promise_name != name {
                 return PromiseFuture::with_error(FlovynError::DeterminismViolation(
                     DeterminismViolationError::PromiseNameMismatch {
                         sequence: promise_seq as i32,
-                        expected: event_promise_id,
+                        expected: event_promise_name,
                         actual: name.to_string(),
                     },
                 ));
             }
 
-            // Look for terminal event (resolved/rejected/timeout)
-            if let Some(terminal_event) = self
-                .replay_engine
-                .find_terminal_promise_event(&event_promise_id)
+            // Get promiseId (UUID) for terminal event lookup
+            let promise_id = created_event
+                .get_string("promiseId")
+                .unwrap_or_default()
+                .to_string();
+
+            // Look for terminal event (resolved/rejected/timeout) by promiseId
+            if let Some(terminal_event) =
+                self.replay_engine.find_terminal_promise_event(&promise_id)
             {
                 match terminal_event.event_type() {
                     EventType::PromiseResolved => {
                         let value = terminal_event.get("value").cloned().unwrap_or(Value::Null);
                         return PromiseFuture::from_replay_with_cell(
                             promise_seq,
-                            event_promise_id,
+                            event_promise_name,
                             self.suspension_cell.clone(),
                             Ok(value),
                         );
@@ -805,7 +809,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                             .to_string();
                         return PromiseFuture::from_replay_with_cell(
                             promise_seq,
-                            event_promise_id,
+                            event_promise_name,
                             self.suspension_cell.clone(),
                             Err(FlovynError::PromiseRejected {
                                 name: name.to_string(),
@@ -816,7 +820,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                     EventType::PromiseTimeout => {
                         return PromiseFuture::from_replay_with_cell(
                             promise_seq,
-                            event_promise_id,
+                            event_promise_name,
                             self.suspension_cell.clone(),
                             Err(FlovynError::PromiseTimeout {
                                 name: name.to_string(),
@@ -830,7 +834,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             // Promise created but not resolved yet - return pending future
             return PromiseFuture::new_with_cell(
                 promise_seq,
-                event_promise_id,
+                event_promise_name,
                 self.suspension_cell.clone(),
             );
         }
@@ -863,34 +867,38 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
         // Look for event at this per-type index (replay case)
         if let Some(created_event) = self.replay_engine.get_promise_event(promise_seq) {
-            // Validate promise name/ID matches
-            let event_promise_id = created_event
-                .get_string("promiseId")
-                .or_else(|| created_event.get_string("promiseName"))
+            // Validate promise name matches
+            let event_promise_name = created_event
+                .get_string("promiseName")
                 .unwrap_or_default()
                 .to_string();
 
-            if event_promise_id != name {
+            if event_promise_name != name {
                 return PromiseFuture::with_error(FlovynError::DeterminismViolation(
                     DeterminismViolationError::PromiseNameMismatch {
                         sequence: promise_seq as i32,
-                        expected: event_promise_id,
+                        expected: event_promise_name,
                         actual: name.to_string(),
                     },
                 ));
             }
 
-            // Check for terminal event (resolved/rejected/timeout)
-            if let Some(terminal_event) = self
-                .replay_engine
-                .find_terminal_promise_event(&event_promise_id)
+            // Get promiseId (UUID) for terminal event lookup
+            let promise_id = created_event
+                .get_string("promiseId")
+                .unwrap_or_default()
+                .to_string();
+
+            // Check for terminal event (resolved/rejected/timeout) by promiseId
+            if let Some(terminal_event) =
+                self.replay_engine.find_terminal_promise_event(&promise_id)
             {
                 match terminal_event.event_type() {
                     EventType::PromiseResolved => {
                         let value = terminal_event.get("value").cloned().unwrap_or(Value::Null);
                         return PromiseFuture::from_replay_with_cell(
                             promise_seq,
-                            event_promise_id,
+                            event_promise_name,
                             self.suspension_cell.clone(),
                             Ok(value),
                         );
@@ -902,7 +910,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                             .to_string();
                         return PromiseFuture::from_replay_with_cell(
                             promise_seq,
-                            event_promise_id,
+                            event_promise_name,
                             self.suspension_cell.clone(),
                             Err(FlovynError::PromiseRejected {
                                 name: name.to_string(),
@@ -913,7 +921,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                     EventType::PromiseTimeout => {
                         return PromiseFuture::from_replay_with_cell(
                             promise_seq,
-                            event_promise_id,
+                            event_promise_name,
                             self.suspension_cell.clone(),
                             Err(FlovynError::PromiseTimeout {
                                 name: name.to_string(),
@@ -927,7 +935,7 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             // Promise created but not resolved yet - return pending future
             return PromiseFuture::new_with_cell(
                 promise_seq,
-                event_promise_id,
+                event_promise_name,
                 self.suspension_cell.clone(),
             );
         }
@@ -1639,13 +1647,15 @@ mod tests {
     #[tokio::test]
     async fn test_promise_returns_immediately_when_resolved_during_replay() {
         use chrono::Utc;
+        let promise_id = "550e8400-e29b-41d4-a716-446655440000";
         // Create context with replay events showing promise was already created and resolved
         let replay_events = vec![
             ReplayEvent::new(
                 1,
                 EventType::PromiseCreated,
                 serde_json::json!({
-                    "promiseId": "user-approval",
+                    "promiseName": "user-approval",
+                    "promiseId": promise_id,
                 }),
                 Utc::now(),
             ),
@@ -1654,6 +1664,7 @@ mod tests {
                 EventType::PromiseResolved,
                 serde_json::json!({
                     "promiseName": "user-approval",
+                    "promiseId": promise_id,
                     "value": {"approved": true, "approver": "admin"}
                 }),
                 Utc::now(),
@@ -1685,13 +1696,15 @@ mod tests {
     #[tokio::test]
     async fn test_promise_returns_error_when_rejected_during_replay() {
         use chrono::Utc;
+        let promise_id = "550e8400-e29b-41d4-a716-446655440001";
         // Create context with replay events showing promise was created and rejected
         let replay_events = vec![
             ReplayEvent::new(
                 1,
                 EventType::PromiseCreated,
                 serde_json::json!({
-                    "promiseId": "user-approval",
+                    "promiseName": "user-approval",
+                    "promiseId": promise_id,
                 }),
                 Utc::now(),
             ),
@@ -1700,6 +1713,7 @@ mod tests {
                 EventType::PromiseRejected,
                 serde_json::json!({
                     "promiseName": "user-approval",
+                    "promiseId": promise_id,
                     "error": "Approval denied by supervisor"
                 }),
                 Utc::now(),
@@ -1730,13 +1744,15 @@ mod tests {
     #[test]
     fn test_promise_pending_when_created_but_not_resolved_during_replay() {
         use chrono::Utc;
+        let promise_id = "550e8400-e29b-41d4-a716-446655440002";
         // Create context with replay events showing promise was created but not resolved
         let replay_events = vec![
             ReplayEvent::new(
                 1,
                 EventType::PromiseCreated,
                 serde_json::json!({
-                    "promiseId": "user-approval",
+                    "promiseName": "user-approval",
+                    "promiseId": promise_id,
                 }),
                 Utc::now(),
             ),
@@ -2022,12 +2038,14 @@ mod tests {
     #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_promise_name_mismatch_violation() {
         use chrono::Utc;
+        let promise_id = "550e8400-e29b-41d4-a716-446655440003";
         // Create context with replay event for a different promise name
         let replay_events = vec![ReplayEvent::new(
             1,
             EventType::PromiseCreated,
             serde_json::json!({
-                "promiseId": "approval-promise"
+                "promiseName": "approval-promise",
+                "promiseId": promise_id,
             }),
             Utc::now(),
         )];
