@@ -470,6 +470,8 @@ impl FfiWorkflowContext {
                 max_retries: None,
                 timeout_ms,
                 queue,
+                idempotency_key: None,
+                idempotency_key_ttl_seconds: None,
             });
 
             Ok(FfiTaskResult::Pending { task_execution_id })
@@ -525,6 +527,8 @@ impl FfiWorkflowContext {
                 .push(FfiWorkflowCommand::CreatePromise {
                     promise_id: name.clone(),
                     timeout_ms,
+                    idempotency_key: None,
+                    idempotency_key_ttl_seconds: None,
                 });
 
             Ok(FfiPromiseResult::Pending { promise_id: name })

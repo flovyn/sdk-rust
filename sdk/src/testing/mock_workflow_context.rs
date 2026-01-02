@@ -1,7 +1,9 @@
 //! Mock workflow context for unit testing workflows in isolation.
 
 use crate::error::{FlovynError, Result};
-use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, WorkflowContext};
+use crate::workflow::context::{
+    DeterministicRandom, PromiseOptions, ScheduleTaskOptions, WorkflowContext,
+};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFuture, OperationFutureRaw,
     PromiseFuture, PromiseFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
@@ -544,6 +546,11 @@ impl WorkflowContext for MockWorkflowContext {
     }
 
     fn promise_with_timeout_raw(&self, name: &str, _timeout: Duration) -> PromiseFutureRaw {
+        self.promise_raw(name)
+    }
+
+    fn promise_with_options_raw(&self, name: &str, _options: PromiseOptions) -> PromiseFutureRaw {
+        // Mock context ignores options - just delegate to promise_raw
         self.promise_raw(name)
     }
 

@@ -530,7 +530,18 @@ message ClearStateCommand {
 message ScheduleTaskCommand {
   string kind = 1;
   bytes input = 2;
-  string task_execution_id = 3;  // Unique ID for this task execution, used to match completions
+  string task_execution_id = 3;  // Client-generated UUID for this task execution
+
+  // Optional task configuration (defaults from workflow if not specified)
+  optional int32 max_retries = 4;      // Default: 3
+  optional int64 timeout_ms = 5;       // Default: none (not yet implemented)
+  optional string queue = 6;           // Default: workflow's queue
+  optional int32 priority_seconds = 7; // Default: 0 (not yet implemented for tasks)
+
+  // Idempotency key for external correlation (e.g., "job:batch_12345")
+  optional string idempotency_key = 8;
+  // TTL for idempotency key in seconds (default: 86400 = 24 hours)
+  optional int64 idempotency_key_ttl_seconds = 9;
 }
 
 message CompleteWorkflowCommand {
@@ -554,6 +565,10 @@ message CancelWorkflowCommand {
 message CreatePromiseCommand {
   string promise_id = 1;
   optional int64 timeout_ms = 2;
+  // Optional idempotency key for external webhook correlation
+  optional string idempotency_key = 3;
+  // TTL for the idempotency key in seconds (default: 86400 = 24 hours)
+  optional int64 idempotency_key_ttl_seconds = 4;
 }
 
 message ResolvePromiseCommand {

@@ -532,6 +532,8 @@ mod tests {
             max_retries: None,
             timeout_ms: None,
             queue: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
         let event = ReplayEvent::new(
             1,
@@ -587,6 +589,8 @@ mod tests {
             sequence_number: 1,
             promise_id: "new-promise".to_string(),
             timeout_ms: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
         let event = ReplayEvent::new(
             1,
@@ -697,6 +701,8 @@ mod tests {
                 max_retries: None,
                 timeout_ms: None,
                 queue: None,
+                idempotency_key: None,
+                idempotency_key_ttl_seconds: None,
             }),
             EventType::TaskScheduled
         );
@@ -754,6 +760,8 @@ mod tests {
                 sequence_number: 0,
                 promise_id: "".to_string(),
                 timeout_ms: None,
+                idempotency_key: None,
+                idempotency_key_ttl_seconds: None,
             }),
             EventType::PromiseCreated
         );
@@ -832,6 +840,8 @@ mod tests {
                 max_retries: None,
                 timeout_ms: None,
                 queue: None,
+                idempotency_key: None,
+                idempotency_key_ttl_seconds: None,
             },
             WorkflowCommand::CompleteWorkflow {
                 sequence_number: 3,

@@ -49,12 +49,16 @@ fn arb_command() -> impl Strategy<Value = WorkflowCommand> {
                 max_retries: None,
                 timeout_ms: None,
                 queue: None,
+                idempotency_key: None,
+                idempotency_key_ttl_seconds: None,
             }),
         // CreatePromise
         "[a-z]{3,10}".prop_map(|promise_id| WorkflowCommand::CreatePromise {
             sequence_number: 1,
             promise_id,
             timeout_ms: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         }),
         // StartTimer
         ("[a-z]{3,10}", any::<i64>().prop_map(|n| n.abs())).prop_map(|(timer_id, duration_ms)| {
@@ -213,6 +217,8 @@ proptest! {
             max_retries: None,
             timeout_ms: None,
             queue: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
 
         let modified_cmd = WorkflowCommand::ScheduleTask {
@@ -224,6 +230,8 @@ proptest! {
             max_retries: None,
             timeout_ms: None,
             queue: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
 
         let event = command_to_matching_event(&original_cmd);
@@ -250,12 +258,16 @@ proptest! {
             sequence_number: 1,
             promise_id: original_id.clone(),
             timeout_ms: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
 
         let modified_cmd = WorkflowCommand::CreatePromise {
             sequence_number: 1,
             promise_id: modified_id.clone(),
             timeout_ms: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
 
         let event = command_to_matching_event(&original_cmd);

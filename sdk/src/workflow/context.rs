@@ -29,6 +29,93 @@ pub struct ScheduleTaskOptions {
     pub queue: Option<String>,
     /// Maximum retry attempts
     pub max_retries: Option<u32>,
+    /// Optional idempotency key for external correlation.
+    /// This allows external systems to look up the task by key instead of ID.
+    /// Example: `job:batch_12345` for correlating with external batch jobs.
+    pub idempotency_key: Option<String>,
+    /// TTL for the idempotency key in seconds. Default: 86400 (24 hours)
+    pub idempotency_key_ttl_seconds: Option<i64>,
+}
+
+impl ScheduleTaskOptions {
+    /// Create options with an idempotency key for external correlation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ctx.schedule_raw_with_options("my-task", input, ScheduleTaskOptions::with_key("job:batch_123"))
+    /// ```
+    pub fn with_key(key: impl Into<String>) -> Self {
+        Self {
+            idempotency_key: Some(key.into()),
+            idempotency_key_ttl_seconds: Some(86400), // 24 hours default
+            ..Default::default()
+        }
+    }
+
+    /// Set the timeout for the task.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Set the maximum retries for the task.
+    pub fn max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = Some(max_retries);
+        self
+    }
+
+    /// Set the queue for the task.
+    pub fn queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = Some(queue.into());
+        self
+    }
+
+    /// Set the TTL for the idempotency key in seconds.
+    pub fn key_ttl_seconds(mut self, ttl: i64) -> Self {
+        self.idempotency_key_ttl_seconds = Some(ttl);
+        self
+    }
+}
+
+/// Options for creating a promise
+#[derive(Debug, Clone, Default)]
+pub struct PromiseOptions {
+    /// Optional timeout for the promise
+    pub timeout: Option<Duration>,
+    /// Optional idempotency key for external webhook correlation.
+    /// This allows external systems to resolve the promise by key instead of ID.
+    /// Example: `stripe:ch_abc123` for correlating with Stripe webhooks.
+    pub idempotency_key: Option<String>,
+    /// TTL for the idempotency key in seconds. Default: 86400 (24 hours)
+    pub idempotency_key_ttl_seconds: Option<i64>,
+}
+
+impl PromiseOptions {
+    /// Create options with an idempotency key for external webhook correlation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ctx.promise_with_options_raw("payment", PromiseOptions::with_key("stripe:ch_abc123")).await?
+    /// ```
+    pub fn with_key(key: impl Into<String>) -> Self {
+        Self {
+            idempotency_key: Some(key.into()),
+            idempotency_key_ttl_seconds: Some(86400), // 24 hours default
+            ..Default::default()
+        }
+    }
+
+    /// Set the timeout for the promise.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Set the TTL for the idempotency key in seconds.
+    pub fn key_ttl_seconds(mut self, ttl: i64) -> Self {
+        self.idempotency_key_ttl_seconds = Some(ttl);
+        self
+    }
 }
 
 /// Context for workflow execution providing deterministic APIs and side effect management.
@@ -121,6 +208,24 @@ pub trait WorkflowContext: Send + Sync {
 
     /// Create a durable promise with a timeout.
     fn promise_with_timeout_raw(&self, name: &str, timeout: Duration) -> PromiseFutureRaw;
+
+    /// Create a durable promise with options (timeout, idempotency key).
+    ///
+    /// # Example
+    /// ```ignore
+    /// // With idempotency key for external webhook correlation
+    /// let result = ctx.promise_with_options_raw(
+    ///     "payment",
+    ///     PromiseOptions::with_key("stripe:ch_abc123")
+    /// ).await?;
+    ///
+    /// // With timeout and key
+    /// let result = ctx.promise_with_options_raw(
+    ///     "payment",
+    ///     PromiseOptions::with_key("stripe:ch_abc123").timeout(Duration::from_secs(3600))
+    /// ).await?;
+    /// ```
+    fn promise_with_options_raw(&self, name: &str, options: PromiseOptions) -> PromiseFutureRaw;
 
     // =========================================================================
     // Child Workflows - Returns Future for parallel execution
@@ -357,11 +462,15 @@ mod tests {
             timeout: Some(Duration::from_secs(300)),
             queue: Some("custom-queue".to_string()),
             max_retries: Some(5),
+            idempotency_key: Some("job:batch_123".to_string()),
+            idempotency_key_ttl_seconds: Some(86400),
         };
         assert_eq!(options.priority_seconds, Some(60));
         assert_eq!(options.timeout, Some(Duration::from_secs(300)));
         assert_eq!(options.queue, Some("custom-queue".to_string()));
         assert_eq!(options.max_retries, Some(5));
+        assert_eq!(options.idempotency_key, Some("job:batch_123".to_string()));
+        assert_eq!(options.idempotency_key_ttl_seconds, Some(86400));
     }
 }
 

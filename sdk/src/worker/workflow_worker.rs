@@ -911,6 +911,12 @@ impl WorkflowExecutorWorker {
                 kind,
                 input,
                 task_execution_id,
+                max_retries,
+                timeout_ms,
+                queue,
+                priority_seconds,
+                idempotency_key,
+                idempotency_key_ttl_seconds,
                 ..
             } => (
                 flovyn_v1::CommandType::ScheduleTask as i32,
@@ -918,6 +924,12 @@ impl WorkflowExecutorWorker {
                     kind: kind.clone(),
                     input: serde_json::to_vec(input).unwrap_or_default(),
                     task_execution_id: task_execution_id.to_string(),
+                    max_retries: max_retries.map(|v| v as i32),
+                    timeout_ms: *timeout_ms,
+                    queue: queue.clone(),
+                    priority_seconds: *priority_seconds,
+                    idempotency_key: idempotency_key.clone(),
+                    idempotency_key_ttl_seconds: *idempotency_key_ttl_seconds,
                 })),
             ),
             WorkflowCommand::CompleteWorkflow { output, .. } => (
@@ -960,6 +972,8 @@ impl WorkflowExecutorWorker {
             WorkflowCommand::CreatePromise {
                 promise_id,
                 timeout_ms,
+                idempotency_key,
+                idempotency_key_ttl_seconds,
                 ..
             } => (
                 flovyn_v1::CommandType::CreatePromise as i32,
@@ -967,6 +981,8 @@ impl WorkflowExecutorWorker {
                     flovyn_v1::CreatePromiseCommand {
                         promise_id: promise_id.clone(),
                         timeout_ms: *timeout_ms,
+                        idempotency_key: idempotency_key.clone(),
+                        idempotency_key_ttl_seconds: *idempotency_key_ttl_seconds,
                     },
                 )),
             ),
@@ -1150,6 +1166,8 @@ mod tests {
             max_retries: None,
             timeout_ms: None,
             queue: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
 
         let proto = WorkflowExecutorWorker::convert_command_to_proto(&command);

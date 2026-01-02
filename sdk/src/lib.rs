@@ -97,7 +97,9 @@ pub use client::{LoggingHook, NoOpHook, WorkflowHook};
 
 // Re-export workflow types
 pub use workflow::command::WorkflowCommand;
-pub use workflow::context::{ScheduleTaskOptions, WorkflowContext, WorkflowContextExt};
+pub use workflow::context::{
+    PromiseOptions, ScheduleTaskOptions, WorkflowContext, WorkflowContextExt,
+};
 pub use workflow::context_impl::WorkflowContextImpl;
 pub use workflow::definition::WorkflowDefinition;
 pub use workflow::event::{EventType, ReplayEvent};
@@ -166,7 +168,9 @@ pub mod prelude {
     pub use crate::worker::task_worker::{TaskExecutorWorker, TaskWorkerConfig};
     pub use crate::worker::workflow_worker::{WorkflowExecutorWorker, WorkflowWorkerConfig};
     pub use crate::workflow::command::WorkflowCommand;
-    pub use crate::workflow::context::{ScheduleTaskOptions, WorkflowContext, WorkflowContextExt};
+    pub use crate::workflow::context::{
+        PromiseOptions, ScheduleTaskOptions, WorkflowContext, WorkflowContextExt,
+    };
     pub use crate::workflow::context_impl::WorkflowContextImpl;
     pub use crate::workflow::definition::{DynamicWorkflow, WorkflowDefinition};
     pub use crate::workflow::event::{EventType, ReplayEvent};

@@ -572,9 +572,29 @@ pub struct ScheduleTaskCommand {
     pub kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
     pub input: ::prost::alloc::vec::Vec<u8>,
-    /// Unique ID for this task execution, used to match completions
+    /// Client-generated UUID for this task execution
     #[prost(string, tag = "3")]
     pub task_execution_id: ::prost::alloc::string::String,
+    /// Optional task configuration (defaults from workflow if not specified)
+    ///
+    /// Default: 3
+    #[prost(int32, optional, tag = "4")]
+    pub max_retries: ::core::option::Option<i32>,
+    /// Default: none (not yet implemented)
+    #[prost(int64, optional, tag = "5")]
+    pub timeout_ms: ::core::option::Option<i64>,
+    /// Default: workflow's queue
+    #[prost(string, optional, tag = "6")]
+    pub queue: ::core::option::Option<::prost::alloc::string::String>,
+    /// Default: 0 (not yet implemented for tasks)
+    #[prost(int32, optional, tag = "7")]
+    pub priority_seconds: ::core::option::Option<i32>,
+    /// Idempotency key for external correlation (e.g., "job:batch_12345")
+    #[prost(string, optional, tag = "8")]
+    pub idempotency_key: ::core::option::Option<::prost::alloc::string::String>,
+    /// TTL for idempotency key in seconds (default: 86400 = 24 hours)
+    #[prost(int64, optional, tag = "9")]
+    pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -612,6 +632,12 @@ pub struct CreatePromiseCommand {
     pub promise_id: ::prost::alloc::string::String,
     #[prost(int64, optional, tag = "2")]
     pub timeout_ms: ::core::option::Option<i64>,
+    /// Optional idempotency key for external webhook correlation
+    #[prost(string, optional, tag = "3")]
+    pub idempotency_key: ::core::option::Option<::prost::alloc::string::String>,
+    /// TTL for the idempotency key in seconds (default: 86400 = 24 hours)
+    #[prost(int64, optional, tag = "4")]
+    pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

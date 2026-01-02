@@ -42,6 +42,13 @@ pub enum WorkflowCommand {
         timeout_ms: Option<i64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         queue: Option<String>,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+        #[serde(
+            rename = "idempotencyKeyTtlSeconds",
+            skip_serializing_if = "Option::is_none"
+        )]
+        idempotency_key_ttl_seconds: Option<i64>,
     },
 
     /// Schedule a child workflow
@@ -93,6 +100,13 @@ pub enum WorkflowCommand {
         promise_id: String,
         #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<i64>,
+        #[serde(rename = "idempotencyKey", skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+        #[serde(
+            rename = "idempotencyKeyTtlSeconds",
+            skip_serializing_if = "Option::is_none"
+        )]
+        idempotency_key_ttl_seconds: Option<i64>,
     },
 
     /// Resolve a durable promise
@@ -303,6 +317,8 @@ mod tests {
             max_retries: None,
             timeout_ms: None,
             queue: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         };
         assert_eq!(cmd.type_name(), "ScheduleTask");
     }
@@ -336,6 +352,8 @@ mod tests {
             max_retries: Some(3),
             timeout_ms: Some(30000),
             queue: Some("high-priority".to_string()),
+            idempotency_key: Some("job:batch_123".to_string()),
+            idempotency_key_ttl_seconds: Some(86400),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -346,6 +364,8 @@ mod tests {
         assert!(json.contains("maxRetries"));
         assert!(json.contains("timeoutMs"));
         assert!(json.contains("high-priority"));
+        assert!(json.contains("idempotencyKey"));
+        assert!(json.contains("job:batch_123"));
 
         let parsed: WorkflowCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, cmd);
@@ -443,6 +463,8 @@ mod tests {
                 max_retries: None,
                 timeout_ms: None,
                 queue: None,
+                idempotency_key: None,
+                idempotency_key_ttl_seconds: None,
             },
             WorkflowCommand::ScheduleChildWorkflow {
                 sequence_number: 5,
@@ -476,6 +498,8 @@ mod tests {
                 sequence_number: 10,
                 promise_id: "p".to_string(),
                 timeout_ms: None,
+                idempotency_key: None,
+                idempotency_key_ttl_seconds: None,
             },
             WorkflowCommand::ResolvePromise {
                 sequence_number: 11,

@@ -2,7 +2,9 @@
 
 use crate::error::{DeterminismViolationError, FlovynError, Result};
 use crate::workflow::command::WorkflowCommand;
-use crate::workflow::context::{DeterministicRandom, ScheduleTaskOptions, WorkflowContext};
+use crate::workflow::context::{
+    DeterministicRandom, PromiseOptions, ScheduleTaskOptions, WorkflowContext,
+};
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
@@ -558,6 +560,8 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             max_retries: options.max_retries,
             timeout_ms: options.timeout.map(|d| d.as_millis() as i64),
             queue: options.queue.clone(),
+            idempotency_key: options.idempotency_key.clone(),
+            idempotency_key_ttl_seconds: options.idempotency_key_ttl_seconds,
         }) {
             return TaskFuture::with_error(e);
         }
@@ -837,6 +841,8 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             sequence_number: sequence,
             promise_id: name.to_string(),
             timeout_ms: None,
+            idempotency_key: None,
+            idempotency_key_ttl_seconds: None,
         }) {
             return PromiseFuture::with_error(e);
         }
@@ -849,6 +855,98 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         // TODO: Handle timeout in the future implementation
         // For now, just delegate to promise_raw - the server handles timeout
         self.promise_raw(name)
+    }
+
+    fn promise_with_options_raw(&self, name: &str, options: PromiseOptions) -> PromiseFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let promise_seq = self.replay_engine.next_promise_seq();
+
+        // Look for event at this per-type index (replay case)
+        if let Some(created_event) = self.replay_engine.get_promise_event(promise_seq) {
+            // Validate promise name/ID matches
+            let event_promise_id = created_event
+                .get_string("promiseId")
+                .or_else(|| created_event.get_string("promiseName"))
+                .unwrap_or_default()
+                .to_string();
+
+            if event_promise_id != name {
+                return PromiseFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::PromiseNameMismatch {
+                        sequence: promise_seq as i32,
+                        expected: event_promise_id,
+                        actual: name.to_string(),
+                    },
+                ));
+            }
+
+            // Check for terminal event (resolved/rejected/timeout)
+            if let Some(terminal_event) = self
+                .replay_engine
+                .find_terminal_promise_event(&event_promise_id)
+            {
+                match terminal_event.event_type() {
+                    EventType::PromiseResolved => {
+                        let value = terminal_event.get("value").cloned().unwrap_or(Value::Null);
+                        return PromiseFuture::from_replay_with_cell(
+                            promise_seq,
+                            event_promise_id,
+                            self.suspension_cell.clone(),
+                            Ok(value),
+                        );
+                    }
+                    EventType::PromiseRejected => {
+                        let error = terminal_event
+                            .get_string("error")
+                            .unwrap_or("Promise rejected")
+                            .to_string();
+                        return PromiseFuture::from_replay_with_cell(
+                            promise_seq,
+                            event_promise_id,
+                            self.suspension_cell.clone(),
+                            Err(FlovynError::PromiseRejected {
+                                name: name.to_string(),
+                                error,
+                            }),
+                        );
+                    }
+                    EventType::PromiseTimeout => {
+                        return PromiseFuture::from_replay_with_cell(
+                            promise_seq,
+                            event_promise_id,
+                            self.suspension_cell.clone(),
+                            Err(FlovynError::PromiseTimeout {
+                                name: name.to_string(),
+                            }),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
+            // Promise created but not resolved yet - return pending future
+            return PromiseFuture::new_with_cell(
+                promise_seq,
+                event_promise_id,
+                self.suspension_cell.clone(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        let sequence = self.next_sequence();
+        let timeout_ms = options.timeout.map(|d| d.as_millis() as i64);
+        if let Err(e) = self.record_command(WorkflowCommand::CreatePromise {
+            sequence_number: sequence,
+            promise_id: name.to_string(),
+            timeout_ms,
+            idempotency_key: options.idempotency_key,
+            idempotency_key_ttl_seconds: options.idempotency_key_ttl_seconds,
+        }) {
+            return PromiseFuture::with_error(e);
+        }
+
+        // Return pending future
+        PromiseFuture::new_with_cell(promise_seq, name.to_string(), self.suspension_cell.clone())
     }
 
     fn run_raw(&self, name: &str, result: Value) -> OperationFutureRaw {

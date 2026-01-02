@@ -49,6 +49,10 @@ pub enum FfiWorkflowCommand {
         timeout_ms: Option<i64>,
         /// Optional queue name.
         queue: Option<String>,
+        /// Optional idempotency key for external correlation.
+        idempotency_key: Option<String>,
+        /// Optional TTL for idempotency key in seconds.
+        idempotency_key_ttl_seconds: Option<i64>,
     },
 
     /// Schedule a child workflow.
@@ -101,6 +105,10 @@ pub enum FfiWorkflowCommand {
         promise_id: String,
         /// Optional timeout in milliseconds.
         timeout_ms: Option<i64>,
+        /// Optional idempotency key for external webhook correlation.
+        idempotency_key: Option<String>,
+        /// TTL for the idempotency key in seconds.
+        idempotency_key_ttl_seconds: Option<i64>,
     },
 
     /// Resolve a durable promise.
@@ -176,13 +184,24 @@ impl FfiWorkflowCommand {
                 task_execution_id,
                 kind,
                 input,
-                ..
+                max_retries,
+                timeout_ms,
+                queue,
+                priority_seconds,
+                idempotency_key,
+                idempotency_key_ttl_seconds,
             } => (
                 flovyn_v1::CommandType::ScheduleTask as i32,
                 Some(CommandData::ScheduleTask(flovyn_v1::ScheduleTaskCommand {
                     kind: kind.clone(),
                     input: input.clone(),
                     task_execution_id: task_execution_id.clone(),
+                    max_retries: max_retries.map(|v| v as i32),
+                    timeout_ms: *timeout_ms,
+                    queue: queue.clone(),
+                    priority_seconds: *priority_seconds,
+                    idempotency_key: idempotency_key.clone(),
+                    idempotency_key_ttl_seconds: *idempotency_key_ttl_seconds,
                 })),
             ),
             FfiWorkflowCommand::ScheduleChildWorkflow {
@@ -245,12 +264,16 @@ impl FfiWorkflowCommand {
             FfiWorkflowCommand::CreatePromise {
                 promise_id,
                 timeout_ms,
+                idempotency_key,
+                idempotency_key_ttl_seconds,
             } => (
                 flovyn_v1::CommandType::CreatePromise as i32,
                 Some(CommandData::CreatePromise(
                     flovyn_v1::CreatePromiseCommand {
                         promise_id: promise_id.clone(),
                         timeout_ms: *timeout_ms,
+                        idempotency_key: idempotency_key.clone(),
+                        idempotency_key_ttl_seconds: *idempotency_key_ttl_seconds,
                     },
                 )),
             ),
@@ -334,6 +357,8 @@ impl FfiWorkflowCommand {
                 max_retries,
                 timeout_ms,
                 queue,
+                idempotency_key,
+                idempotency_key_ttl_seconds,
             } => WorkflowCommand::ScheduleTask {
                 sequence_number,
                 kind: kind.clone(),
@@ -344,6 +369,8 @@ impl FfiWorkflowCommand {
                 max_retries: *max_retries,
                 timeout_ms: *timeout_ms,
                 queue: queue.clone(),
+                idempotency_key: idempotency_key.clone(),
+                idempotency_key_ttl_seconds: *idempotency_key_ttl_seconds,
             },
             FfiWorkflowCommand::ScheduleChildWorkflow {
                 name,
@@ -388,10 +415,14 @@ impl FfiWorkflowCommand {
             FfiWorkflowCommand::CreatePromise {
                 promise_id,
                 timeout_ms,
+                idempotency_key,
+                idempotency_key_ttl_seconds,
             } => WorkflowCommand::CreatePromise {
                 sequence_number,
                 promise_id: promise_id.clone(),
                 timeout_ms: *timeout_ms,
+                idempotency_key: idempotency_key.clone(),
+                idempotency_key_ttl_seconds: *idempotency_key_ttl_seconds,
             },
             FfiWorkflowCommand::ResolvePromise { promise_id, value } => {
                 WorkflowCommand::ResolvePromise {
@@ -475,6 +506,8 @@ mod tests {
             max_retries: Some(3),
             timeout_ms: Some(60000),
             queue: Some("high-priority".to_string()),
+            idempotency_key: Some("job:batch_123".to_string()),
+            idempotency_key_ttl_seconds: Some(86400),
         };
         let core_cmd = cmd.to_core_command(5);
         assert!(matches!(
