@@ -421,8 +421,8 @@ impl FlovynClientBuilder {
     pub fn register_task<T, I, O>(self, task: T) -> Self
     where
         T: TaskDefinition<Input = I, Output = O> + 'static,
-        I: Serialize + DeserializeOwned + Send + 'static,
-        O: Serialize + DeserializeOwned + Send + 'static,
+        I: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        O: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
     {
         // Ignore registration errors during build - they'll be caught at build() time
         let _ = self.task_registry.register(task);

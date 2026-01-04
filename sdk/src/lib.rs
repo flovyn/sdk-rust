@@ -108,7 +108,7 @@ pub use workflow::recorder::{CommandCollector, CommandRecorder, ValidatingComman
 // Re-export task types
 pub use task::context::{LogLevel, TaskContext};
 pub use task::context_impl::TaskContextImpl;
-pub use task::definition::{DynamicTask, RetryConfig, TaskDefinition};
+pub use task::definition::{generate_schema, DynamicTask, RetryConfig, TaskDefinition};
 pub use task::executor::{
     TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
 };
@@ -148,7 +148,7 @@ pub mod prelude {
     pub use crate::error::{DeterminismViolationError, FlovynError, Result};
     pub use crate::task::context::{LogLevel, TaskContext};
     pub use crate::task::context_impl::TaskContextImpl;
-    pub use crate::task::definition::{DynamicTask, RetryConfig, TaskDefinition};
+    pub use crate::task::definition::{generate_schema, DynamicTask, RetryConfig, TaskDefinition};
     pub use crate::task::executor::{
         TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
     };

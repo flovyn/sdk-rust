@@ -217,6 +217,17 @@ fn compute_content_hash(kind: &str, version: &str) -> String {
 
 /// Convert TaskMetadata to protobuf TaskCapability
 fn task_to_proto(metadata: TaskMetadata) -> TaskCapability {
+    // Serialize schemas to JSON bytes if present
+    let input_schema = metadata
+        .input_schema
+        .and_then(|s| serde_json::to_vec(&s).ok())
+        .unwrap_or_default();
+
+    let output_schema = metadata
+        .output_schema
+        .and_then(|s| serde_json::to_vec(&s).ok())
+        .unwrap_or_default();
+
     TaskCapability {
         kind: metadata.kind,
         name: metadata.name,
@@ -225,8 +236,8 @@ fn task_to_proto(metadata: TaskMetadata) -> TaskCapability {
         cancellable: metadata.cancellable,
         tags: metadata.tags,
         retry_policy: Vec::new(),
-        input_schema: Vec::new(),
-        output_schema: Vec::new(),
+        input_schema,
+        output_schema,
         metadata: Vec::new(),
     }
 }
@@ -320,13 +331,21 @@ mod tests {
 
     #[test]
     fn test_task_to_proto() {
-        let metadata = TaskMetadata::new("process-image")
+        use serde_json::json;
+
+        let mut metadata = TaskMetadata::new("process-image")
             .with_name("Process Image")
             .with_description("Processes images")
             .with_version("2.0.1")
             .with_tags(vec!["image".to_string(), "ml".to_string()])
             .with_timeout_seconds(600)
             .with_cancellable(true);
+
+        // Add schemas
+        metadata.input_schema =
+            Some(json!({"type": "object", "properties": {"url": {"type": "string"}}}));
+        metadata.output_schema =
+            Some(json!({"type": "object", "properties": {"result": {"type": "boolean"}}}));
 
         let proto = task_to_proto(metadata);
 
@@ -336,6 +355,15 @@ mod tests {
         assert!(proto.cancellable);
         assert_eq!(proto.timeout_seconds, Some(600));
         assert_eq!(proto.tags, vec!["image", "ml"]);
+
+        // Verify schemas are serialized
+        assert!(!proto.input_schema.is_empty());
+        assert!(!proto.output_schema.is_empty());
+
+        // Verify schemas can be deserialized back
+        let input_schema: serde_json::Value = serde_json::from_slice(&proto.input_schema).unwrap();
+        assert_eq!(input_schema["type"], "object");
+        assert!(input_schema["properties"]["url"].is_object());
     }
 
     #[test]

@@ -32,6 +32,10 @@ pub struct TaskMetadata {
     pub cancellable: bool,
     /// Heartbeat timeout in seconds
     pub heartbeat_timeout_seconds: Option<u32>,
+    /// JSON Schema for input validation (auto-generated from Input type)
+    pub input_schema: Option<Value>,
+    /// JSON Schema for output validation (auto-generated from Output type)
+    pub output_schema: Option<Value>,
 }
 
 impl From<TaskMetadata> for flovyn_sdk_core::TaskMetadata {
@@ -45,6 +49,8 @@ impl From<TaskMetadata> for flovyn_sdk_core::TaskMetadata {
             timeout_seconds: m.timeout_seconds,
             cancellable: m.cancellable,
             heartbeat_timeout_seconds: m.heartbeat_timeout_seconds,
+            input_schema: m.input_schema,
+            output_schema: m.output_schema,
         }
     }
 }
@@ -131,6 +137,8 @@ impl TaskRegistry {
     /// This is the primary way to register tasks. The task's metadata
     /// is extracted from the trait implementation.
     ///
+    /// Schemas are auto-generated from Input/Output types using schemars (like Kotlin's JsonSchemaGenerator).
+    ///
     /// # Example
     ///
     /// ```ignore
@@ -139,9 +147,13 @@ impl TaskRegistry {
     pub fn register<T, I, O>(&self, task: T) -> Result<()>
     where
         T: TaskDefinition<Input = I, Output = O> + 'static,
-        I: Serialize + DeserializeOwned + Send + 'static,
-        O: Serialize + DeserializeOwned + Send + 'static,
+        I: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        O: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
     {
+        // Get schemas from the task (auto-generated or manual depending on impl)
+        let input_schema = task.input_schema();
+        let output_schema = task.output_schema();
+
         let metadata = TaskMetadata {
             kind: task.kind().to_string(),
             name: task.name().to_string(),
@@ -151,6 +163,8 @@ impl TaskRegistry {
             timeout_seconds: task.timeout_seconds(),
             cancellable: task.cancellable(),
             heartbeat_timeout_seconds: task.heartbeat_timeout_seconds(),
+            input_schema,
+            output_schema,
         };
 
         let task = Arc::new(task);
@@ -168,7 +182,8 @@ impl TaskRegistry {
         self.register_raw(RegisteredTask::new(metadata, execute_fn))
     }
 
-    /// Register a simple task with just a kind and execution function
+    /// Register a simple task with just a kind and execution function.
+    /// Note: No schema is generated for simple tasks since there's no type information.
     pub fn register_simple<F, Fut>(&self, kind: &str, execute_fn: F) -> Result<()>
     where
         F: Fn(Arc<dyn TaskContext + Send + Sync>, Value) -> Fut + Send + Sync + 'static,
@@ -183,6 +198,8 @@ impl TaskRegistry {
             timeout_seconds: None,
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         let boxed_fn: BoxedTaskFn = Box::new(move |ctx, input| {
@@ -260,6 +277,8 @@ mod tests {
             timeout_seconds: Some(300),
             cancellable: true,
             heartbeat_timeout_seconds: Some(60),
+            input_schema: Some(json!({"type": "object"})),
+            output_schema: None,
         };
 
         assert_eq!(metadata.kind, "process-image");
@@ -270,6 +289,7 @@ mod tests {
         assert_eq!(metadata.timeout_seconds, Some(300));
         assert!(metadata.cancellable);
         assert_eq!(metadata.heartbeat_timeout_seconds, Some(60));
+        assert!(metadata.input_schema.is_some());
     }
 
     #[test]
@@ -399,6 +419,8 @@ mod tests {
             timeout_seconds: Some(600),
             cancellable: false,
             heartbeat_timeout_seconds: Some(120),
+            input_schema: None,
+            output_schema: None,
         };
 
         let execute_fn: BoxedTaskFn =
@@ -428,6 +450,8 @@ mod tests {
             timeout_seconds: None,
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         let execute_fn: BoxedTaskFn = Box::new(|_ctx, input| {
@@ -477,6 +501,8 @@ mod tests {
             timeout_seconds: None,
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         let execute_fn: BoxedTaskFn = Box::new(|_ctx, _input| Box::pin(async { Ok(json!({})) }));

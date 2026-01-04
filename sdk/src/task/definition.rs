@@ -4,9 +4,17 @@ use crate::common::version::SemanticVersion;
 use crate::error::Result;
 use crate::task::context::TaskContext;
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Map, Value};
 use std::time::Duration;
+
+/// Generate JSON Schema from a type that implements JsonSchema.
+/// This is the Rust equivalent of Kotlin's JsonSchemaGenerator.generateSchema<T>().
+pub fn generate_schema<T: JsonSchema>() -> Value {
+    let schema = schemars::schema_for!(T);
+    serde_json::to_value(schema).unwrap_or(Value::Null)
+}
 
 /// Retry configuration for task execution
 #[derive(Debug, Clone, PartialEq)]
@@ -32,13 +40,16 @@ impl Default for RetryConfig {
     }
 }
 
-/// Definition of a task with typed input and output
+/// Definition of a task with typed input and output.
+///
+/// Input and output types must implement `JsonSchema` to enable automatic
+/// schema generation (like Kotlin's JsonSchemaGenerator).
 #[async_trait]
 pub trait TaskDefinition: Send + Sync {
-    /// Input type for the task
-    type Input: Serialize + DeserializeOwned + Send;
-    /// Output type for the task
-    type Output: Serialize + DeserializeOwned + Send;
+    /// Input type for the task (must derive JsonSchema for auto-generation)
+    type Input: Serialize + DeserializeOwned + JsonSchema + Send;
+    /// Output type for the task (must derive JsonSchema for auto-generation)
+    type Output: Serialize + DeserializeOwned + JsonSchema + Send;
 
     /// Unique identifier for this task type
     fn kind(&self) -> &str;
@@ -95,13 +106,29 @@ pub trait TaskDefinition: Send + Sync {
     fn uses_streaming(&self) -> bool {
         false
     }
+
+    /// JSON Schema for task input validation.
+    /// Default: auto-generated from Input type using schemars.
+    fn input_schema(&self) -> Option<Value> {
+        Some(generate_schema::<Self::Input>())
+    }
+
+    /// JSON Schema for task output validation.
+    /// Default: auto-generated from Output type using schemars.
+    fn output_schema(&self) -> Option<Value> {
+        Some(generate_schema::<Self::Output>())
+    }
 }
 
 /// Type alias for dynamic task input/output
 pub type DynamicTaskInput = Map<String, Value>;
 pub type DynamicTaskOutput = Map<String, Value>;
 
-/// Helper trait for implementing dynamic tasks
+/// Helper trait for implementing dynamic (untyped) tasks.
+///
+/// Since DynamicTask uses `Map<String, Value>` for input/output,
+/// you must manually provide schemas via `input_schema()` and `output_schema()`.
+/// For typed tasks, use `TaskDefinition` directly to get auto-generated schemas.
 #[async_trait]
 pub trait DynamicTask: Send + Sync {
     /// Unique identifier for this task type
@@ -160,9 +187,22 @@ pub trait DynamicTask: Send + Sync {
     fn uses_streaming(&self) -> bool {
         false
     }
+
+    /// JSON Schema for task input validation.
+    /// Must be provided manually for DynamicTask since input is untyped.
+    fn input_schema(&self) -> Option<Value> {
+        None
+    }
+
+    /// JSON Schema for task output validation.
+    /// Must be provided manually for DynamicTask since output is untyped.
+    fn output_schema(&self) -> Option<Value> {
+        None
+    }
 }
 
 // Implement TaskDefinition for any DynamicTask
+// Schemas are delegated to DynamicTask's manual methods (not auto-generated)
 #[async_trait]
 impl<T: DynamicTask> TaskDefinition for T {
     type Input = DynamicTaskInput;
@@ -210,6 +250,15 @@ impl<T: DynamicTask> TaskDefinition for T {
 
     fn uses_streaming(&self) -> bool {
         DynamicTask::uses_streaming(self)
+    }
+
+    // Override to use manual schemas from DynamicTask instead of auto-generating
+    fn input_schema(&self) -> Option<Value> {
+        DynamicTask::input_schema(self)
+    }
+
+    fn output_schema(&self) -> Option<Value> {
+        DynamicTask::output_schema(self)
     }
 }
 

@@ -29,6 +29,12 @@ pub struct TaskMetadata {
     pub cancellable: bool,
     /// Heartbeat timeout in seconds (None means use executor default)
     pub heartbeat_timeout_seconds: Option<u32>,
+    /// JSON Schema for input validation (auto-generated from Input type)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<Value>,
+    /// JSON Schema for output validation (auto-generated from Output type)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
 }
 
 impl TaskMetadata {
@@ -44,6 +50,8 @@ impl TaskMetadata {
             timeout_seconds: None,
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         }
     }
 

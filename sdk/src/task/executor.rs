@@ -511,6 +511,8 @@ mod tests {
             timeout_seconds: Some(10),
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         registry
@@ -550,6 +552,8 @@ mod tests {
             timeout_seconds: Some(10),
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         registry
@@ -599,6 +603,8 @@ mod tests {
             timeout_seconds: Some(1), // 1 second timeout
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         registry
@@ -635,6 +641,8 @@ mod tests {
             timeout_seconds: Some(10),
             cancellable: true,
             heartbeat_timeout_seconds: None,
+            input_schema: None,
+            output_schema: None,
         };
 
         registry
