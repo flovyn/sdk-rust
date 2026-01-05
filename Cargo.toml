@@ -8,6 +8,7 @@ members = [
     "examples/ecommerce",
     "examples/data-pipeline",
     "examples/patterns",
+    "examples/standalone-tasks",
 ]
 
 [workspace.package]

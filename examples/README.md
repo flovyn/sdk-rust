@@ -31,6 +31,7 @@ curl -X POST http://localhost:8080/api/workflows/greeting-workflow \
 | [ecommerce](ecommerce/) | Order processing saga | Saga, compensation, cancellation |
 | [data-pipeline](data-pipeline/) | ETL pipeline with DAG | DAG, parallel tasks, state management |
 | [patterns](patterns/) | Pattern showcase | Timers, promises, child workflows, retry |
+| [standalone-tasks](standalone-tasks/) | Long-running tasks | Logging, progress reporting, cancellation |
 
 ## Sample Details
 
@@ -86,6 +87,51 @@ An ETL pipeline demonstrating the DAG (Directed Acyclic Graph) pattern:
 
 ```bash
 cargo run -p data-pipeline-sample
+```
+
+### Standalone Tasks
+
+Long-running task examples demonstrating logging and progress reporting:
+
+**Tasks Included:**
+- `data-export-task`: Exports data in batches with progress tracking
+- `report-generation-task`: Multi-phase report generation (data collection, analysis, rendering)
+- `backup-task`: Creates backups with checkpoints and compression
+- `indexing-task`: Indexes documents with batch progress
+
+**Features:**
+- Logging at all levels (debug, info, warn, error) using `ctx.log()`
+- Progress reporting with `ctx.report_progress()`
+- Random duration between 2-5 minutes per task
+- Cancellation support with `ctx.check_cancellation()`
+- Detailed progress messages throughout execution
+
+```bash
+cargo run -p standalone-tasks-sample
+```
+
+**Example curl commands:**
+
+```bash
+# Data Export
+curl -X POST http://localhost:8000/api/tasks/data-export-task \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name":"users","format":"csv","record_count":10000}'
+
+# Report Generation
+curl -X POST http://localhost:8000/api/tasks/report-generation-task \
+  -H "Content-Type: application/json" \
+  -d '{"report_name":"monthly-sales","report_type":"monthly","include_charts":true}'
+
+# Backup
+curl -X POST http://localhost:8000/api/tasks/backup-task \
+  -H "Content-Type: application/json" \
+  -d '{"source_path":"/data/app","backup_type":"full","compress":true}'
+
+# Indexing
+curl -X POST http://localhost:8000/api/tasks/indexing-task \
+  -H "Content-Type: application/json" \
+  -d '{"collection_name":"products","index_type":"full-text","document_count":50000}'
 ```
 
 ### Pattern Showcase
@@ -172,15 +218,19 @@ examples/
 │           ├── validation_task.rs
 │           ├── transformation_task.rs
 │           └── aggregation_task.rs
-└── patterns/                     # Pattern showcase
+├── patterns/                     # Pattern showcase
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs
+│       ├── timer_workflow.rs
+│       ├── promise_workflow.rs
+│       ├── child_workflow.rs
+│       ├── retry_workflow.rs
+│       └── parallel_workflow.rs
+└── standalone-tasks/             # Long-running task examples
     ├── Cargo.toml
     └── src/
-        ├── main.rs
-        ├── timer_workflow.rs
-        ├── promise_workflow.rs
-        ├── child_workflow.rs
-        ├── retry_workflow.rs
-        └── parallel_workflow.rs
+        └── main.rs               # All task definitions
 ```
 
 ## Key Concepts

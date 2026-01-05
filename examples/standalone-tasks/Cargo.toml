@@ -1,0 +1,23 @@
+[package]
+name = "standalone-tasks-sample"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standalone task examples demonstrating logging and progress reporting"
+
+[dependencies]
+flovyn-sdk.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+dotenvy.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+flovyn-sdk = { path = "../../sdk", features = ["testing"] }

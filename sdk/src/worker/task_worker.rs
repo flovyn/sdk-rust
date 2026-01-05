@@ -2,7 +2,9 @@
 
 use crate::client::{TaskExecutionClient, WorkerLifecycleClient, WorkflowDispatch};
 use crate::error::{FlovynError, Result};
-use crate::task::executor::{TaskExecutionResult, TaskExecutor, TaskExecutorConfig};
+use crate::task::executor::{
+    TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
+};
 use crate::task::registry::TaskRegistry;
 use crate::telemetry::{task_execute_span, SpanCollector};
 use crate::worker::lifecycle::{HookChain, ReconnectionStrategy, StopReason, WorkerInternals};
@@ -439,14 +441,21 @@ impl TaskExecutorWorker {
             None
         };
 
-        // Execute the task using TaskExecutor
+        // Create callbacks for progress/log reporting via gRPC
+        let callbacks = self.create_task_callbacks(task_execution_id, workflow_id);
+
+        // Reset stream sequence for this task execution
+        self.client.reset_stream_sequence();
+
+        // Execute the task using TaskExecutor with callbacks
         let result = self
             .executor
-            .execute(
+            .execute_with_callbacks(
                 task_execution_id,
                 task_type,
                 task_info.input,
                 task_info.execution_count,
+                callbacks,
             )
             .await;
 
@@ -557,6 +566,116 @@ impl TaskExecutorWorker {
     pub fn registry(&self) -> &TaskRegistry {
         &self.registry
     }
+
+    /// Create callbacks for reporting progress and logs to the server via gRPC.
+    ///
+    /// Uses a single background task with a channel to batch and forward events,
+    /// rather than spawning a task per callback call.
+    fn create_task_callbacks(
+        &self,
+        task_execution_id: Uuid,
+        _workflow_execution_id: Option<Uuid>,
+    ) -> TaskExecutorCallbacks {
+        // Create a channel for sending events to a single background forwarder task
+        let (tx, mut rx) = mpsc::channel::<TaskEvent>(100);
+
+        // Clone channel and token for the forwarder task
+        let channel = self.channel.clone();
+        let worker_token = self.config.worker_token.clone();
+
+        // Spawn a single background task to forward events to the server
+        tokio::spawn(async move {
+            let mut client = TaskExecutionClient::new(channel, &worker_token);
+            debug!(task_id = %task_execution_id, "Progress forwarder task started");
+
+            while let Some(event) = rx.recv().await {
+                match event {
+                    TaskEvent::Progress { progress, message } => {
+                        debug!(
+                            task_id = %task_execution_id,
+                            progress = %progress,
+                            message = ?message,
+                            "Forwarding progress to server via gRPC"
+                        );
+                        match client
+                            .report_progress(task_execution_id, progress, message.as_deref())
+                            .await
+                        {
+                            Ok(_) => {
+                                debug!(
+                                    task_id = %task_execution_id,
+                                    progress = %progress,
+                                    "Progress reported successfully"
+                                );
+                            }
+                            Err(e) => {
+                                debug!(error = %e, "Failed to report progress (non-critical)");
+                            }
+                        }
+                    }
+                    TaskEvent::Log { level, message } => {
+                        if let Err(e) = client
+                            .log_message(task_execution_id, &level, &message)
+                            .await
+                        {
+                            debug!(error = %e, "Failed to send log message (non-critical)");
+                        }
+                    }
+                }
+            }
+            debug!(task_id = %task_execution_id, "Progress forwarder task ended");
+        });
+
+        // Create progress callback that sends to channel
+        let progress_tx = tx.clone();
+        let on_progress: Box<dyn Fn(f64, Option<String>) + Send + Sync> =
+            Box::new(move |progress, message| {
+                match progress_tx.try_send(TaskEvent::Progress {
+                    progress,
+                    message: message.clone(),
+                }) {
+                    Ok(_) => {
+                        tracing::debug!(
+                            progress = %progress,
+                            message = ?message,
+                            "Progress event sent to channel"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            progress = %progress,
+                            "Failed to send progress to channel"
+                        );
+                    }
+                }
+            });
+
+        // Create log callback that sends to channel
+        let log_tx = tx;
+        let on_log: Box<dyn Fn(String, String) + Send + Sync> = Box::new(move |level, message| {
+            let _ = log_tx.try_send(TaskEvent::Log { level, message });
+        });
+
+        TaskExecutorCallbacks {
+            on_progress: Some(on_progress),
+            on_log: Some(on_log),
+            on_heartbeat: None, // Heartbeats are handled by the separate heartbeat loop
+            on_stream: None,    // Stream events can be added if needed
+        }
+    }
+}
+
+/// Events sent from task callbacks to the forwarder task
+enum TaskEvent {
+    Progress {
+        progress: f64,
+        message: Option<String>,
+    },
+    Log {
+        level: String,
+        message: String,
+    },
 }
 
 #[cfg(test)]

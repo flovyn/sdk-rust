@@ -152,10 +152,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (server_host, server_port) = parse_server_url(&server_url);
     let worker_token = std::env::var("FLOVYN_WORKER_TOKEN")
         .expect("FLOVYN_WORKER_TOKEN environment variable is required");
+    let queue = std::env::var("FLOVYN_QUEUE").unwrap_or_else(|_| "default".to_string());
 
     info!(
         tenant_id = %tenant_id,
         server = %format!("{}:{}", server_host, server_port),
+        queue = %queue,
         "Connecting to Flovyn server"
     );
 
@@ -164,7 +166,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .server_address(&server_host, server_port)
         .tenant_id(tenant_id)
         .worker_token(worker_token)
-        .queue("hello-world")
+        .queue(&queue)
         .register_workflow(GreetingWorkflow)
         .register_task(EchoTask)
         .build()
