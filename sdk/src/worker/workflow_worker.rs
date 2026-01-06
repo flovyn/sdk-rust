@@ -33,6 +33,8 @@ pub struct WorkflowWorkerConfig {
     pub queue: String,
     /// Long polling timeout
     pub poll_timeout: Duration,
+    /// Interval to wait before polling again when no workflow is available
+    pub no_work_backoff: Duration,
     /// Maximum concurrent workflow executions
     pub max_concurrent: usize,
     /// Heartbeat interval
@@ -67,6 +69,7 @@ impl Default for WorkflowWorkerConfig {
             tenant_id: Uuid::nil(),
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
+            no_work_backoff: Duration::from_millis(100),
             max_concurrent: 1,
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
@@ -616,7 +619,7 @@ impl WorkflowExecutorWorker {
                     _ = work_available_notify.notified() => {
                         debug!("Work available notification received, polling immediately");
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    _ = tokio::time::sleep(config.no_work_backoff) => {
                         // Regular poll interval
                     }
                 }
@@ -1064,6 +1067,7 @@ mod tests {
         let config = WorkflowWorkerConfig::default();
         assert_eq!(config.queue, "default");
         assert_eq!(config.poll_timeout, Duration::from_secs(60));
+        assert_eq!(config.no_work_backoff, Duration::from_millis(100));
         assert_eq!(config.max_concurrent, 1);
         assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
         assert_eq!(config.worker_version, "1.0.0");
@@ -1080,6 +1084,7 @@ mod tests {
             tenant_id: Uuid::new_v4(),
             queue: "high-priority".to_string(),
             poll_timeout: Duration::from_secs(30),
+            no_work_backoff: Duration::from_millis(100),
             max_concurrent: 10,
             heartbeat_interval: Duration::from_secs(15),
             worker_name: Some("My Worker".to_string()),

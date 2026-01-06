@@ -27,6 +27,8 @@ pub struct TaskWorkerConfig {
     pub queue: String,
     /// Long polling timeout
     pub poll_timeout: Duration,
+    /// Interval to wait before polling again when no task is available
+    pub no_work_backoff: Duration,
     /// Worker labels for task routing
     pub worker_labels: std::collections::HashMap<String, String>,
     /// Heartbeat interval
@@ -59,6 +61,7 @@ impl Default for TaskWorkerConfig {
             tenant_id: Uuid::nil(),
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
+            no_work_backoff: Duration::from_millis(100),
             worker_labels: std::collections::HashMap::new(),
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
@@ -407,7 +410,11 @@ impl TaskExecutorWorker {
 
         let task_info = match task_info {
             Some(info) => info,
-            None => return Ok(()), // No task available
+            None => {
+                // No task available - wait before next poll to avoid tight loop
+                tokio::time::sleep(self.config.no_work_backoff).await;
+                return Ok(());
+            }
         };
 
         let task_execution_id = task_info.id;
@@ -706,6 +713,7 @@ mod tests {
             tenant_id: Uuid::new_v4(),
             queue: "gpu-tasks".to_string(),
             poll_timeout: Duration::from_secs(30),
+            no_work_backoff: Duration::from_millis(100),
             worker_labels: labels,
             heartbeat_interval: Duration::from_secs(15),
             worker_name: Some("GPU Task Worker".to_string()),
