@@ -112,6 +112,7 @@ impl CoreClient {
                     queue.as_deref(),
                     workflow_version.as_deref(),
                     idempotency_key.as_deref(),
+                    None, // metadata - not yet exposed via FFI
                 )
                 .await
         })?;

@@ -689,6 +689,12 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .map(|s| Uuid::parse_str(s).unwrap_or(Uuid::nil()))
                 .unwrap_or(Uuid::nil());
 
+            // IMPORTANT: Increment uuid_counter to stay in sync with UUIDs generated
+            // in the original execution. Without this, subsequent schedule_workflow_raw
+            // calls after replay would generate the same UUID as the first child.
+            // See bug report: .dev/docs/bugs/20260107_uuid_counter_not_incremented_during_replay.md
+            let _ = self.uuid_counter.fetch_add(1, Ordering::SeqCst);
+
             // Look for terminal event (completed/failed) for this child workflow
             if let Some(terminal_event) = self
                 .replay_engine
@@ -1942,6 +1948,98 @@ mod tests {
         // No command should be recorded (child workflow was already initiated in replay)
         let commands = ctx.get_commands();
         assert!(commands.is_empty());
+    }
+
+    /// Test that multiple child workflows after replay get unique UUIDs.
+    ///
+    /// This is a regression test for the bug where uuid_counter wasn't incremented
+    /// during replay, causing subsequent child workflows to get the same UUID.
+    /// See: .dev/docs/bugs/20260107_uuid_counter_not_incremented_during_replay.md
+    #[test]
+    fn test_multiple_child_workflows_after_replay_get_unique_uuids() {
+        use chrono::Utc;
+        let workflow_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+
+        // Create context with replay events showing first child workflow completed
+        let replay_events = vec![
+            ReplayEvent::new(
+                1,
+                EventType::ChildWorkflowInitiated,
+                serde_json::json!({
+                    "childExecutionName": "process-item-0",
+                    "childExecutionId": "11111111-1111-1111-1111-111111111111",
+                    "childWorkflowKind": "item-processor"
+                }),
+                Utc::now(),
+            ),
+            ReplayEvent::new(
+                2,
+                EventType::ChildWorkflowCompleted,
+                serde_json::json!({
+                    "childExecutionName": "process-item-0",
+                    "output": {"result": "done"}
+                }),
+                Utc::now(),
+            ),
+        ];
+
+        let ctx = WorkflowContextImpl::new(
+            workflow_id,
+            Uuid::new_v4(),
+            serde_json::json!({}),
+            CommandCollector::new(),
+            replay_events,
+            1700000000000,
+        );
+
+        // First call: replays the completed child workflow (shouldn't generate new command)
+        let child1 =
+            ctx.schedule_workflow_raw("process-item-0", "item-processor", serde_json::json!({}));
+        assert_eq!(child1.child_workflow_seq, 0);
+
+        // No command for replayed child
+        let commands_after_first = ctx.get_commands();
+        assert!(
+            commands_after_first.is_empty(),
+            "First child should not generate command (replayed)"
+        );
+
+        // Second call: NEW child workflow - should generate unique UUID
+        let child2 =
+            ctx.schedule_workflow_raw("process-item-1", "item-processor", serde_json::json!({}));
+        assert_eq!(child2.child_workflow_seq, 1);
+
+        // Should have generated a command with a new UUID
+        let commands_after_second = ctx.get_commands();
+        assert_eq!(
+            commands_after_second.len(),
+            1,
+            "Second child should generate command"
+        );
+
+        // Extract the child execution ID from the command
+        if let WorkflowCommand::ScheduleChildWorkflow {
+            child_execution_id, ..
+        } = &commands_after_second[0]
+        {
+            // The second child's UUID should NOT be the same as the first child's
+            // First child had UUID "11111111-1111-1111-1111-111111111111" from replay
+            let first_child_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+            assert_ne!(
+                *child_execution_id, first_child_id,
+                "Second child must have different UUID than first child"
+            );
+
+            // Additionally, verify the UUID is deterministic based on counter=1
+            // (counter=0 was used for first child during original execution)
+            let expected_uuid = Uuid::new_v5(&workflow_id, format!("{}:1", workflow_id).as_bytes());
+            assert_eq!(
+                *child_execution_id, expected_uuid,
+                "Second child UUID should use counter=1"
+            );
+        } else {
+            panic!("Expected ScheduleChildWorkflow command");
+        }
     }
 
     // ============= Sequence-Based Replay Tests =============

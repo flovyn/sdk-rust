@@ -51,6 +51,7 @@ impl TaskExecutionClient {
         timeout: Duration,
         max_retries: u32,
         queue: Option<&str>,
+        metadata: Option<std::collections::HashMap<String, String>>,
     ) -> CoreResult<SubmitTaskResult> {
         let input_bytes = serde_json::to_vec(&input)?;
 
@@ -61,7 +62,7 @@ impl TaskExecutionClient {
             tenant_id: tenant_id.to_string(),
             kind: task_type.to_string(),
             input: input_bytes,
-            labels: std::collections::HashMap::new(),
+            metadata: metadata.unwrap_or_default(),
             max_retries: max_retries as i32,
             timeout_ms: timeout.as_millis() as i64,
             idempotency_key: None,

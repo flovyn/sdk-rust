@@ -152,7 +152,8 @@ message StartWorkflowRequest {
   string tenant_id = 1;
   string workflow_kind = 2;
   bytes input = 3;
-  map<string, string> labels = 4;
+  // Arbitrary key-value metadata for tracking, filtering, and analytics
+  map<string, string> metadata = 4;
 
   // Task queue routing (default: "default")
   string queue = 5;
@@ -326,7 +327,8 @@ message SubmitTaskRequest {
   string tenant_id = 2;
   string kind = 3;
   bytes input = 4;
-  map<string, string> labels = 5;
+  // Arbitrary key-value metadata for tracking, filtering, and analytics
+  map<string, string> metadata = 5;
   int32 max_retries = 6;
   int64 timeout_ms = 7;
   // Idempotency key to prevent duplicate task executions

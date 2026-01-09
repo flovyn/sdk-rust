@@ -117,8 +117,9 @@ pub struct StartWorkflowRequest {
     pub workflow_kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "3")]
     pub input: ::prost::alloc::vec::Vec<u8>,
+    /// Arbitrary key-value metadata for tracking, filtering, and analytics
     #[prost(map = "string, string", tag = "4")]
-    pub labels:
+    pub metadata:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// Task queue routing (default: "default")
     #[prost(string, tag = "5")]
@@ -291,8 +292,9 @@ pub struct SubmitTaskRequest {
     pub kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub input: ::prost::alloc::vec::Vec<u8>,
+    /// Arbitrary key-value metadata for tracking, filtering, and analytics
     #[prost(map = "string, string", tag = "5")]
-    pub labels:
+    pub metadata:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(int32, tag = "6")]
     pub max_retries: i32,

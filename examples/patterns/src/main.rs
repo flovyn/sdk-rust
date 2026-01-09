@@ -17,6 +17,9 @@ pub mod timer_workflow;
 
 use child_workflow::{BatchProcessingWorkflow, ControlledParallelWorkflow, ItemProcessorWorkflow};
 use flovyn_sdk::prelude::*;
+use parallel_tasks::{
+    FetchDataTask, FetchItemsTask, ProcessItemTask, RunOperationTask, SlowOperationTask,
+};
 use parallel_workflow::{
     BatchWithConcurrencyWorkflow, DynamicParallelismWorkflow, FanOutFanInWorkflow,
     PartialCompletionWorkflow, RacingWorkflow, TimeoutWorkflow,
@@ -101,6 +104,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .register_workflow(BatchWithConcurrencyWorkflow)
         .register_workflow(PartialCompletionWorkflow)
         .register_workflow(DynamicParallelismWorkflow)
+        // Parallel execution tasks
+        .register_task(ProcessItemTask)
+        .register_task(FetchDataTask)
+        .register_task(SlowOperationTask)
+        .register_task(RunOperationTask)
+        .register_task(FetchItemsTask)
         .build()
         .await?;
 

@@ -19,6 +19,7 @@ pub struct RetryInput {
     pub operation_name: String,
     pub max_attempts: u32,
     /// Simulated failure probability (0.0 - 1.0)
+    /// Note: Values >= 1.0 are capped at 0.99 to ensure at least 1% success chance
     pub failure_probability: f64,
 }
 
@@ -93,6 +94,10 @@ impl WorkflowDefinition for RetryWorkflow {
         let base_delay_ms: u64 = 100;
         let max_delay_ms: u64 = 10000;
 
+        // Cap failure probability at 0.99 to ensure there's always at least 1% chance of success
+        // This prevents infinite retry loops when failure_probability = 1.0
+        let effective_failure_prob = input.failure_probability.min(0.99);
+
         for attempt in 1..=input.max_attempts {
             ctx.check_cancellation().await?;
 
@@ -108,8 +113,9 @@ impl WorkflowDefinition for RetryWorkflow {
 
             // Simulate the operation
             // Using deterministic random to decide if operation succeeds
+            // random_value is in [0, 1), success when random >= failure_probability
             let random_value = ctx.random().next_double();
-            let success = random_value >= input.failure_probability;
+            let success = random_value >= effective_failure_prob;
 
             let result = AttemptResult {
                 success,
@@ -147,7 +153,12 @@ impl WorkflowDefinition for RetryWorkflow {
             // Operation failed, calculate backoff
             if attempt < input.max_attempts {
                 // Exponential backoff: base_delay * 2^(attempt-1), capped at max_delay
-                let delay_ms = (base_delay_ms * (1 << (attempt - 1))).min(max_delay_ms);
+                // Use saturating arithmetic to prevent overflow at high attempt counts
+                let delay_ms = 1u64
+                    .checked_shl(attempt - 1)
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(base_delay_ms)
+                    .min(max_delay_ms);
 
                 warn!(
                     operation = %input.operation_name,

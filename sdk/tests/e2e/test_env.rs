@@ -418,8 +418,8 @@ impl E2ETestEnvBuilder {
     pub fn register_task<T, I, O>(mut self, task: T) -> Self
     where
         T: TaskDefinition<Input = I, Output = O> + 'static,
-        I: Serialize + DeserializeOwned + Send + 'static,
-        O: Serialize + DeserializeOwned + Send + 'static,
+        I: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        O: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
     {
         self.builder = self.builder.register_task(task);
         self

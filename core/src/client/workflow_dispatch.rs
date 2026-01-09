@@ -90,6 +90,7 @@ impl WorkflowDispatch {
         queue: Option<&str>,
         workflow_version: Option<&str>,
         idempotency_key: Option<&str>,
+        metadata: Option<std::collections::HashMap<String, String>>,
     ) -> CoreResult<StartWorkflowResult> {
         let input_bytes = serde_json::to_vec(&input)?;
 
@@ -97,7 +98,7 @@ impl WorkflowDispatch {
             tenant_id: tenant_id.to_string(),
             workflow_kind: workflow_kind.to_string(),
             input: input_bytes,
-            labels: std::collections::HashMap::new(),
+            metadata: metadata.unwrap_or_default(),
             queue: queue.unwrap_or("default").to_string(),
             priority_seconds: 0,
             workflow_definition_id: None,

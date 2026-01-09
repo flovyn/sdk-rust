@@ -46,8 +46,8 @@ pub struct StartWorkflowResult {
 /// Options for starting a workflow
 #[derive(Debug, Clone, Default)]
 pub struct StartWorkflowOptions {
-    /// Labels for the workflow
-    pub labels: std::collections::HashMap<String, String>,
+    /// Metadata for tracking, filtering, and analytics
+    pub metadata: std::collections::HashMap<String, String>,
     /// Task queue to use
     pub queue: String,
     /// Priority in seconds (higher = lower priority)
@@ -69,9 +69,50 @@ impl StartWorkflowOptions {
         }
     }
 
-    /// Set labels
-    pub fn with_labels(mut self, labels: std::collections::HashMap<String, String>) -> Self {
-        self.labels = labels;
+    /// Set metadata for tracking, filtering, and analytics.
+    ///
+    /// Accepts any iterator of key-value pairs that can be converted to strings.
+    ///
+    /// # Examples
+    /// ```
+    /// use flovyn_sdk::client::StartWorkflowOptions;
+    ///
+    /// // From array of tuples
+    /// let options = StartWorkflowOptions::new()
+    ///     .with_metadata([("customerId", "CUST-123"), ("region", "us-east")]);
+    ///
+    /// // From HashMap
+    /// let mut map = std::collections::HashMap::new();
+    /// map.insert("key".to_string(), "value".to_string());
+    /// let options = StartWorkflowOptions::new().with_metadata(map);
+    /// ```
+    pub fn with_metadata<I, K, V>(mut self, metadata: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.metadata = metadata
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
+    /// Add a single metadata entry.
+    ///
+    /// Can be chained to add multiple entries.
+    ///
+    /// # Example
+    /// ```
+    /// use flovyn_sdk::client::StartWorkflowOptions;
+    ///
+    /// let options = StartWorkflowOptions::new()
+    ///     .with_metadata_entry("customerId", "CUST-123")
+    ///     .with_metadata_entry("region", "us-east");
+    /// ```
+    pub fn with_metadata_entry(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
         self
     }
 
@@ -381,6 +422,13 @@ impl FlovynClient {
     ) -> Result<StartWorkflowResult> {
         let mut client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
 
+        // Convert metadata to Option, using None if empty
+        let metadata = if options.metadata.is_empty() {
+            None
+        } else {
+            Some(options.metadata)
+        };
+
         let result = client
             .start_workflow(
                 &self.tenant_id.to_string(),
@@ -389,6 +437,7 @@ impl FlovynClient {
                 Some(&options.queue),
                 options.workflow_version.as_deref(),
                 options.idempotency_key.as_deref(),
+                metadata,
             )
             .await?;
 
@@ -1130,16 +1179,16 @@ mod tests {
     }
 
     #[test]
-    fn test_start_workflow_options_with_labels() {
-        let mut labels = std::collections::HashMap::new();
-        labels.insert("environment".to_string(), "production".to_string());
-        labels.insert("priority".to_string(), "high".to_string());
+    fn test_start_workflow_options_with_metadata() {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("environment".to_string(), "production".to_string());
+        metadata.insert("priority".to_string(), "high".to_string());
 
-        let options = StartWorkflowOptions::new().with_labels(labels.clone());
+        let options = StartWorkflowOptions::new().with_metadata(metadata.clone());
 
-        assert_eq!(options.labels.len(), 2);
+        assert_eq!(options.metadata.len(), 2);
         assert_eq!(
-            options.labels.get("environment"),
+            options.metadata.get("environment"),
             Some(&"production".to_string())
         );
     }
