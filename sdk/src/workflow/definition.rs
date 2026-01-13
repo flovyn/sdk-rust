@@ -69,7 +69,7 @@ pub trait WorkflowDefinition: Send + Sync {
 }
 
 /// Generate JSON Schema from a type that implements JsonSchema.
-/// This is the Rust equivalent of Kotlin's JsonSchemaGenerator.generateSchema<T>().
+/// This is the Rust equivalent of Kotlin's `JsonSchemaGenerator.generateSchema<T>()`.
 pub fn generate_schema<T: JsonSchema>() -> Value {
     let schema = schemars::schema_for!(T);
     serde_json::to_value(schema).unwrap_or(Value::Null)

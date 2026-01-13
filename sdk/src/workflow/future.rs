@@ -305,7 +305,7 @@ impl<T: DeserializeOwned> Future for TaskFuture<T> {
                 Poll::Pending
             }
             Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
-                panic!("Determinism violation: {}", e)
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -527,7 +527,7 @@ impl Future for TimerFuture {
                 Poll::Pending
             }
             Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
-                panic!("Determinism violation: {}", e)
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -768,7 +768,7 @@ impl<T: DeserializeOwned> Future for ChildWorkflowFuture<T> {
                 Poll::Pending
             }
             Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
-                panic!("Determinism violation: {}", e)
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -983,7 +983,7 @@ impl<T: DeserializeOwned> Future for PromiseFuture<T> {
                 Poll::Pending
             }
             Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
-                panic!("Determinism violation: {}", e)
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -1089,7 +1089,7 @@ impl<T: DeserializeOwned> Future for OperationFuture<T> {
                 unreachable!("OperationFuture should never suspend")
             }
             Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
-                panic!("Determinism violation: {}", e)
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
             }
             Poll::Pending => Poll::Pending,
         }
