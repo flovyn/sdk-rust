@@ -82,6 +82,7 @@ impl WorkflowDispatch {
     }
 
     /// Start a workflow programmatically
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_workflow(
         &mut self,
         org_id: &str,

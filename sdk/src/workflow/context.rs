@@ -489,13 +489,13 @@ mod typed_tests {
     // Test Task Definition
     // ========================================================================
 
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
     struct EmailRequest {
         to: String,
         subject: String,
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
     struct EmailResponse {
         sent: bool,
         message_id: String,
