@@ -2,7 +2,7 @@
   "name": "determinism-violation-task-type",
   "description": "Task type mismatch - workflow changed task type at same sequence position",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000002",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "task-type-change-workflow",
   "input": {},
   "events": [

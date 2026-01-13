@@ -2,7 +2,7 @@
 //!
 //! These tests run against a real Flovyn server using Testcontainers.
 //! The test harness starts PostgreSQL, NATS, and Flovyn server containers,
-//! then creates a test tenant and worker token for SDK authentication.
+//! then creates a test org and worker token for SDK authentication.
 //!
 //! # Running E2E tests
 //!

@@ -439,7 +439,7 @@ pub enum WorkflowQueryError {
 ```rust
 let client = FlovynClient::builder()
     .server_address("localhost", 9090)
-    .tenant_id(tenant_id)
+    .org_id(org_id)
     .worker_token(token)
     .register_workflow(OrderWorkflow)
     .build()
@@ -594,7 +594,7 @@ impl QueryableWorkflow for OrderWorkflow {
 ```rust
 let client = FlovynClient::builder()
     .server_address("localhost", 9090)
-    .tenant_id(tenant_id)
+    .org_id(org_id)
     .worker_token(token)
     .register_workflow(OrderWorkflow)
     .build()
@@ -804,7 +804,7 @@ async fn test_task_stream_progress() {
 async fn test_worker_registration_status() {
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(test_tenant_id())
+        .org_id(test_org_id())
         .worker_token(test_token())
         .register_workflow(EchoWorkflow)
         .build()
@@ -919,7 +919,7 @@ impl QueryableWorkflow for GreetWorkflow {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(/* ... */)
+        .org_id(/* ... */)
         .worker_token(/* ... */)
         .register_workflow(GreetWorkflow)
         .build()
@@ -1045,7 +1045,7 @@ impl QueryableWorkflow for LlmWorkflow {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(/* ... */)
+        .org_id(/* ... */)
         .worker_token(/* ... */)
         .register_workflow(LlmWorkflow)
         .register_task(LlmTask)

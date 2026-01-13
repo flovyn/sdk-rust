@@ -140,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the client with fluent registration
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(Uuid::parse_str("your-tenant-id")?)
+        .org_id(Uuid::parse_str("your-org-id")?)
         .task_queue("default")
         .register_workflow(OrderWorkflow)
         .register_task(PaymentTask)
@@ -167,7 +167,7 @@ The `WorkflowContext` provides APIs for workflow execution:
 | Method | Description |
 |--------|-------------|
 | `workflow_execution_id()` | Unique ID of this execution |
-| `tenant_id()` | Tenant ID |
+| `org_id()` | Organization ID |
 | `current_time_millis()` | Deterministic timestamp |
 | `random_uuid()` | Deterministic UUID generation |
 | `random()` | Deterministic random number generator |
@@ -347,7 +347,7 @@ When `check_cancellation()` detects cancellation, it returns `Err(FlovynError::T
 ```rust
 let client = FlovynClient::builder()
     .server_address("localhost", 9090)
-    .tenant_id(tenant_id)
+    .org_id(org_id)
     .worker_id("my-worker-1")
     .task_queue("gpu-workers")
     .poll_timeout(Duration::from_secs(60))
@@ -399,7 +399,7 @@ impl WorkflowHook for MetricsHook {
 
 let client = FlovynClient::builder()
     .server_address("localhost", 9090)
-    .tenant_id(tenant_id)
+    .org_id(org_id)
     .register_workflow(MyWorkflow)
     .register_task(MyTask)
     .register_hook(MetricsHook)

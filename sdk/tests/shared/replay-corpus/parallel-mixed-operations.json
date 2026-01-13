@@ -2,7 +2,7 @@
   "name": "parallel-mixed-operations",
   "description": "Mix of tasks, timers, and child workflows scheduled in parallel",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000106",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "mixed-parallel-workflow",
   "input": {},
   "events": [

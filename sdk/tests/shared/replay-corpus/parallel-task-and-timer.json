@@ -2,7 +2,7 @@
   "name": "parallel-task-and-timer",
   "description": "Task and timer scheduled in parallel - tests independent per-type sequence matching",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000101",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "parallel-task-timer-workflow",
   "input": { "timeout_ms": 5000 },
   "events": [

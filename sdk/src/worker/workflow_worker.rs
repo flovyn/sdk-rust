@@ -27,8 +27,8 @@ use uuid::Uuid;
 pub struct WorkflowWorkerConfig {
     /// Unique worker identifier
     pub worker_id: String,
-    /// Tenant ID
-    pub tenant_id: Uuid,
+    /// Org ID
+    pub org_id: Uuid,
     /// Task queue to poll from
     pub queue: String,
     /// Long polling timeout
@@ -43,8 +43,8 @@ pub struct WorkflowWorkerConfig {
     pub worker_name: Option<String>,
     /// Worker version for registration
     pub worker_version: String,
-    /// Space ID (None = tenant-level)
-    pub space_id: Option<Uuid>,
+    /// Team ID (None = org-level)
+    pub team_id: Option<Uuid>,
     /// Enable automatic worker registration on startup
     pub enable_auto_registration: bool,
     /// Enable notification subscription for instant work notifications
@@ -66,7 +66,7 @@ impl Default for WorkflowWorkerConfig {
     fn default() -> Self {
         Self {
             worker_id: Uuid::new_v4().to_string(),
-            tenant_id: Uuid::nil(),
+            org_id: Uuid::nil(),
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
             no_work_backoff: Duration::from_millis(100),
@@ -74,7 +74,7 @@ impl Default for WorkflowWorkerConfig {
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
             worker_version: "1.0.0".to_string(),
-            space_id: None,
+            team_id: None,
             enable_auto_registration: true,
             enable_notifications: true,
             worker_token: String::new(),
@@ -90,14 +90,14 @@ impl std::fmt::Debug for WorkflowWorkerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WorkflowWorkerConfig")
             .field("worker_id", &self.worker_id)
-            .field("tenant_id", &self.tenant_id)
+            .field("org_id", &self.org_id)
             .field("queue", &self.queue)
             .field("poll_timeout", &self.poll_timeout)
             .field("max_concurrent", &self.max_concurrent)
             .field("heartbeat_interval", &self.heartbeat_interval)
             .field("worker_name", &self.worker_name)
             .field("worker_version", &self.worker_version)
-            .field("space_id", &self.space_id)
+            .field("team_id", &self.team_id)
             .field("enable_auto_registration", &self.enable_auto_registration)
             .field("enable_notifications", &self.enable_notifications)
             .field("worker_token", &"<redacted>")
@@ -266,7 +266,7 @@ impl WorkflowExecutorWorker {
             let stream_result = client
                 .subscribe_to_notifications(
                     &config.worker_id,
-                    &config.tenant_id.to_string(),
+                    &config.org_id.to_string(),
                     &config.queue,
                 )
                 .await;
@@ -285,7 +285,7 @@ impl WorkflowExecutorWorker {
                         match stream.next().await {
                             Some(Ok(event)) => {
                                 debug!(
-                                    tenant_id = %event.tenant_id,
+                                    org_id = %event.org_id,
                                     queue = %event.queue,
                                     "Received work available notification"
                                 );
@@ -331,7 +331,7 @@ impl WorkflowExecutorWorker {
 
         info!(
             worker_id = %self.config.worker_id,
-            tenant_id = %self.config.tenant_id,
+            org_id = %self.config.org_id,
             queue = %self.config.queue,
             "Starting workflow worker"
         );
@@ -550,7 +550,7 @@ impl WorkflowExecutorWorker {
         let workflow_info = client
             .poll_workflow(
                 &config.worker_id,
-                &config.tenant_id.to_string(),
+                &config.org_id.to_string(),
                 &config.queue,
                 config.poll_timeout,
             )
@@ -707,7 +707,7 @@ impl WorkflowExecutorWorker {
 
         let ctx = Arc::new(WorkflowContextImpl::new_with_telemetry(
             workflow_id,
-            workflow_info.tenant_id,
+            workflow_info.org_id,
             workflow_info.input.clone(),
             recorder,
             replay_events.clone(),
@@ -1074,14 +1074,14 @@ mod tests {
         assert!(config.enable_auto_registration);
         assert!(config.enable_notifications);
         assert!(config.worker_name.is_none());
-        assert!(config.space_id.is_none());
+        assert!(config.team_id.is_none());
     }
 
     #[test]
     fn test_workflow_worker_config_custom() {
         let config = WorkflowWorkerConfig {
             worker_id: "test-worker".to_string(),
-            tenant_id: Uuid::new_v4(),
+            org_id: Uuid::new_v4(),
             queue: "high-priority".to_string(),
             poll_timeout: Duration::from_secs(30),
             no_work_backoff: Duration::from_millis(100),
@@ -1089,7 +1089,7 @@ mod tests {
             heartbeat_interval: Duration::from_secs(15),
             worker_name: Some("My Worker".to_string()),
             worker_version: "2.0.0".to_string(),
-            space_id: Some(Uuid::new_v4()),
+            team_id: Some(Uuid::new_v4()),
             enable_auto_registration: false,
             enable_notifications: false,
             worker_token: "test-token".to_string(),

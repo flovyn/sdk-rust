@@ -44,7 +44,7 @@ impl TaskExecutionClient {
     #[allow(clippy::too_many_arguments)]
     pub async fn submit_task(
         &mut self,
-        tenant_id: &str,
+        org_id: &str,
         task_type: &str,
         input: Value,
         workflow_execution_id: Option<Uuid>,
@@ -59,7 +59,7 @@ impl TaskExecutionClient {
             workflow_execution_id: workflow_execution_id
                 .map(|id| id.to_string())
                 .unwrap_or_default(),
-            tenant_id: tenant_id.to_string(),
+            org_id: org_id.to_string(),
             kind: task_type.to_string(),
             input: input_bytes,
             metadata: metadata.unwrap_or_default(),
@@ -85,13 +85,13 @@ impl TaskExecutionClient {
     pub async fn poll_task(
         &mut self,
         worker_id: &str,
-        tenant_id: &str,
+        org_id: &str,
         queue: &str,
         timeout: Duration,
     ) -> CoreResult<Option<TaskExecutionInfo>> {
         let request = flovyn_v1::PollTaskRequest {
             worker_id: worker_id.to_string(),
-            tenant_id: tenant_id.to_string(),
+            org_id: org_id.to_string(),
             worker_labels: std::collections::HashMap::new(),
             timeout_seconds: timeout.as_secs() as i64,
             queue: queue.to_string(),

@@ -2,7 +2,7 @@
   "name": "determinism-mixed-commands",
   "description": "Mixed command types - tasks, timers, and child workflows interleaved",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000007",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "mixed-commands-workflow",
   "input": {},
   "events": [

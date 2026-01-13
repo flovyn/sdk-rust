@@ -21,7 +21,7 @@ pub struct DeterminismScenario {
     pub name: String,
     pub description: String,
     pub workflow_execution_id: String,
-    pub tenant_id: String,
+    pub org_id: String,
     pub workflow_kind: String,
     pub input: Value,
     pub events: Vec<ScenarioEvent>,
@@ -143,7 +143,7 @@ pub fn load_determinism_corpus() -> Vec<DeterminismScenario> {
 fn create_test_context(scenario: &DeterminismScenario) -> WorkflowContextImpl<CommandCollector> {
     let workflow_execution_id =
         Uuid::parse_str(&scenario.workflow_execution_id).expect("Invalid workflow_execution_id");
-    let tenant_id = Uuid::parse_str(&scenario.tenant_id).expect("Invalid tenant_id");
+    let org_id = Uuid::parse_str(&scenario.org_id).expect("Invalid org_id");
 
     let replay_events: Vec<ReplayEvent> = scenario
         .events
@@ -153,7 +153,7 @@ fn create_test_context(scenario: &DeterminismScenario) -> WorkflowContextImpl<Co
 
     WorkflowContextImpl::new(
         workflow_execution_id,
-        tenant_id,
+        org_id,
         scenario.input.clone(),
         CommandCollector::new(),
         replay_events,
@@ -345,8 +345,8 @@ fn test_all_determinism_scenarios_have_required_fields() {
             scenario.name
         );
         assert!(
-            !scenario.tenant_id.is_empty(),
-            "Tenant ID should not be empty for {}",
+            !scenario.org_id.is_empty(),
+            "Org ID should not be empty for {}",
             scenario.name
         );
         assert!(

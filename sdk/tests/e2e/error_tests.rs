@@ -22,7 +22,7 @@ async fn test_workflow_failure() {
         let queue = "error-failure-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-error-worker")
             .worker_token(harness.worker_token())
             .queue(queue)
@@ -98,7 +98,7 @@ async fn test_error_message_preserved() {
         let queue = "error-message-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-error-message-worker")
             .worker_token(harness.worker_token())
             .queue(queue)

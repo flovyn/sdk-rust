@@ -53,7 +53,7 @@ pub struct MockWorkflowContext {
 
 struct MockWorkflowContextInner {
     workflow_execution_id: Uuid,
-    tenant_id: Uuid,
+    org_id: Uuid,
     input: Value,
     time_controller: TimeController,
     state: RwLock<HashMap<String, Value>>,
@@ -224,7 +224,7 @@ impl Default for MockWorkflowContext {
 #[derive(Default)]
 pub struct MockWorkflowContextBuilder {
     workflow_execution_id: Option<Uuid>,
-    tenant_id: Option<Uuid>,
+    org_id: Option<Uuid>,
     input: Option<Value>,
     initial_time_millis: Option<i64>,
     initial_state: HashMap<String, Value>,
@@ -241,9 +241,9 @@ impl MockWorkflowContextBuilder {
         self
     }
 
-    /// Set the tenant ID.
-    pub fn tenant_id(mut self, id: Uuid) -> Self {
-        self.tenant_id = Some(id);
+    /// Set the org ID.
+    pub fn org_id(mut self, id: Uuid) -> Self {
+        self.org_id = Some(id);
         self
     }
 
@@ -299,7 +299,7 @@ impl MockWorkflowContextBuilder {
         MockWorkflowContext {
             inner: Arc::new(MockWorkflowContextInner {
                 workflow_execution_id: self.workflow_execution_id.unwrap_or_else(Uuid::new_v4),
-                tenant_id: self.tenant_id.unwrap_or_else(Uuid::new_v4),
+                org_id: self.org_id.unwrap_or_else(Uuid::new_v4),
                 input: self.input.unwrap_or(Value::Null),
                 time_controller,
                 state: RwLock::new(self.initial_state),
@@ -360,8 +360,8 @@ impl WorkflowContext for MockWorkflowContext {
         self.inner.workflow_execution_id
     }
 
-    fn tenant_id(&self) -> Uuid {
-        self.inner.tenant_id
+    fn org_id(&self) -> Uuid {
+        self.inner.org_id
     }
 
     fn input_raw(&self) -> &Value {
@@ -629,22 +629,22 @@ mod tests {
     fn test_mock_workflow_context_new() {
         let ctx = MockWorkflowContext::new();
         assert!(!ctx.workflow_execution_id().is_nil());
-        assert!(!ctx.tenant_id().is_nil());
+        assert!(!ctx.org_id().is_nil());
     }
 
     #[test]
     fn test_mock_workflow_context_builder() {
         let id = Uuid::new_v4();
-        let tenant = Uuid::new_v4();
+        let org = Uuid::new_v4();
         let ctx = MockWorkflowContext::builder()
             .workflow_execution_id(id)
-            .tenant_id(tenant)
+            .org_id(org)
             .input(json!({"key": "value"}))
             .initial_time_millis(1000)
             .build();
 
         assert_eq!(ctx.workflow_execution_id(), id);
-        assert_eq!(ctx.tenant_id(), tenant);
+        assert_eq!(ctx.org_id(), org);
         assert_eq!(ctx.input_raw(), &json!({"key": "value"}));
         assert_eq!(ctx.current_time_millis(), 1000);
     }

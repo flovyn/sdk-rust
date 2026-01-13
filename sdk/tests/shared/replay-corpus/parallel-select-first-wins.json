@@ -2,7 +2,7 @@
   "name": "parallel-select-first-wins",
   "description": "Select pattern - first task to complete wins, other is cancelled",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000103",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "racing-tasks-workflow",
   "input": {},
   "events": [

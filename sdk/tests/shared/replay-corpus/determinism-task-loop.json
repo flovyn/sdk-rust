@@ -2,7 +2,7 @@
   "name": "determinism-task-loop",
   "description": "Tasks in a loop - tests sequence-based replay with multiple tasks of the same type",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000001",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "task-loop-workflow",
   "input": {
     "items": ["item-1", "item-2", "item-3"]

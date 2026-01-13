@@ -866,7 +866,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("  - Cancellation support");
 
     // Parse configuration from environment
-    let tenant_id = std::env::var("FLOVYN_TENANT_ID")
+    let org_id = std::env::var("FLOVYN_ORG_ID")
         .ok()
         .and_then(|s| uuid::Uuid::parse_str(&s).ok())
         .unwrap_or_else(uuid::Uuid::new_v4);
@@ -879,7 +879,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let queue = std::env::var("FLOVYN_QUEUE").unwrap_or_else(|_| "default".to_string());
 
     info!(
-        tenant_id = %tenant_id,
+        org_id = %org_id,
         server = %format!("{}:{}", server_host, server_port),
         queue = %queue,
         "Connecting to Flovyn server"
@@ -888,7 +888,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Build the client with all task registrations
     let client = FlovynClient::builder()
         .server_address(&server_host, server_port)
-        .tenant_id(tenant_id)
+        .org_id(org_id)
         .worker_token(worker_token)
         .queue(&queue)
         .max_concurrent_tasks(4)

@@ -2,7 +2,7 @@
   "name": "child-workflow",
   "description": "Parent workflow that schedules a child workflow",
   "workflow_execution_id": "a7b8c9d0-e1f2-3456-1234-567890123456",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "parent-workflow",
   "input": {
     "items": ["item-1", "item-2"]

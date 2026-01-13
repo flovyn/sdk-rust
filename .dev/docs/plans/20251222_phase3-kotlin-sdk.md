@@ -286,7 +286,7 @@ data class SemanticVersion(
 // sdk-jackson/src/main/kotlin/io/flovyn/sdk/workflow/WorkflowContext.kt
 interface WorkflowContext {
     val workflowExecutionId: UUID
-    val tenantId: UUID
+    val orgId: UUID
     val input: Map<String, Any?>
 
     // Deterministic operations
@@ -361,7 +361,7 @@ data class ScheduleTaskOptions(
 // sdk-jackson/src/main/kotlin/io/flovyn/sdk/workflow/WorkflowContextImpl.kt
 internal class WorkflowContextImpl(
     override val workflowExecutionId: UUID,
-    override val tenantId: UUID,
+    override val orgId: UUID,
     override val input: Map<String, Any?>,
     private val timestampMs: Long,
     private val randomSeed: ByteArray,
@@ -553,7 +553,7 @@ data class RegisteredWorkflow<INPUT, OUTPUT>(
 class FlovynClientBuilder {
     private var serverAddress: String = "localhost"
     private var serverPort: Int = 9090
-    private var tenantId: UUID? = null
+    private var orgId: UUID? = null
     private var workerId: String? = null
     private var taskQueue: String = "default"
     private var maxConcurrentWorkflows: Int = 10
@@ -568,7 +568,7 @@ class FlovynClientBuilder {
         this.serverPort = port
     }
 
-    fun tenantId(tenantId: UUID) = apply { this.tenantId = tenantId }
+    fun orgId(orgId: UUID) = apply { this.orgId = orgId }
     fun workerId(workerId: String) = apply { this.workerId = workerId }
     fun taskQueue(taskQueue: String) = apply { this.taskQueue = taskQueue }
 
@@ -598,11 +598,11 @@ class FlovynClientBuilder {
     fun registerHook(hook: WorkflowHook) = apply { hooks.add(hook) }
 
     suspend fun build(): FlovynClient {
-        requireNotNull(tenantId) { "tenantId is required" }
+        requireNotNull(orgId) { "orgId is required" }
 
         val config = WorkerConfig(
             serverUrl = "$serverAddress:$serverPort",
-            tenantId = tenantId.toString(),
+            orgId = orgId.toString(),
             taskQueue = taskQueue,
             workerIdentity = workerId,
             maxConcurrentWorkflowTasks = maxConcurrentWorkflows,
@@ -726,7 +726,7 @@ internal class WorkflowWorker(
 
         val context = WorkflowContextImpl(
             workflowExecutionId = activation.workflowExecutionId,
-            tenantId = activation.tenantId,
+            orgId = activation.orgId,
             input = activation.input,
             timestampMs = activation.timestampMs,
             randomSeed = activation.randomSeed,
@@ -833,7 +833,7 @@ data class GreetingOutput(val message: String, val timestamp: Long)
 suspend fun main() {
     val client = FlovynClient.builder()
         .serverAddress("localhost", 9090)
-        .tenantId(UUID.randomUUID())
+        .orgId(UUID.randomUUID())
         .registerWorkflow(GreetingWorkflow())
         .build()
 

@@ -48,7 +48,7 @@ pub struct TestHarness {
     server: ContainerAsync<GenericImage>,
     server_grpc_port: u16,
     server_http_port: u16,
-    tenant_id: Uuid,
+    org_id: Uuid,
     worker_token: String,
 }
 
@@ -103,9 +103,9 @@ impl TestHarness {
         let server_grpc_port = server.get_host_port_ipv4(9090).await.unwrap();
         let server_http_port = server.get_host_port_ipv4(8080).await.unwrap();
 
-        // 4. Create test tenant and worker token via REST API
-        let (tenant_id, tenant_slug, worker_token) =
-            Self::setup_test_tenant(server_http_port).await;
+        // 4. Create test org and worker token via REST API
+        let (org_id, org_slug, worker_token) =
+            Self::setup_test_org(server_http_port).await;
 
         Self {
             postgres,
@@ -113,26 +113,26 @@ impl TestHarness {
             server,
             server_grpc_port,
             server_http_port,
-            tenant_id,
+            org_id,
             worker_token,
         }
     }
 
-    /// Setup test tenant and worker token via REST API.
+    /// Setup test org and worker token via REST API.
     /// Uses a self-signed JWT for authentication (signature not verified).
-    async fn setup_test_tenant(http_port: u16) -> (Uuid, String, String) {
+    async fn setup_test_org(http_port: u16) -> (Uuid, String, String) {
         let base_url = format!("http://localhost:{}", http_port);
 
         // 1. Generate self-signed JWT (any key works, verification disabled)
         let jwt = Self::generate_test_jwt();
 
         // 2. Create tenant via REST API
-        // POST /api/tenants with Authorization: Bearer <jwt>
+        // POST /api/orgs with Authorization: Bearer <jwt>
         let tenant_response = reqwest::Client::new()
-            .post(format!("{}/api/tenants", base_url))
+            .post(format!("{}/api/orgs", base_url))
             .header("Authorization", format!("Bearer {}", jwt))
             .json(&json!({
-                "name": "Test Tenant",
+                "name": "test org",
                 "slug": format!("test-{}", Uuid::new_v4().to_string()[..8]),
             }))
             .send()
@@ -140,13 +140,13 @@ impl TestHarness {
             .unwrap();
 
         let tenant: serde_json::Value = tenant_response.json().await.unwrap();
-        let tenant_id = Uuid::parse_str(tenant["id"].as_str().unwrap()).unwrap();
-        let tenant_slug = tenant["slug"].as_str().unwrap().to_string();
+        let org_id = Uuid::parse_str(tenant["id"].as_str().unwrap()).unwrap();
+        let org_slug = tenant["slug"].as_str().unwrap().to_string();
 
         // 3. Create worker token via REST API
-        // POST /api/tenants/{slug}/worker-tokens
+        // POST /api/orgs/{slug}/worker-tokens
         let token_response = reqwest::Client::new()
-            .post(format!("{}/api/tenants/{}/worker-tokens", base_url, tenant_slug))
+            .post(format!("{}/api/orgs/{}/worker-tokens", base_url, org_slug))
             .header("Authorization", format!("Bearer {}", jwt))
             .json(&json!({
                 "displayName": "e2e-test-worker",
@@ -158,7 +158,7 @@ impl TestHarness {
         let token: serde_json::Value = token_response.json().await.unwrap();
         let worker_token = token["token"].as_str().unwrap().to_string();
 
-        (tenant_id, tenant_slug, worker_token)
+        (org_id, org_slug, worker_token)
     }
 
     /// Generate a self-signed JWT for REST API authentication.
@@ -186,8 +186,8 @@ impl TestHarness {
         self.server_grpc_port
     }
 
-    pub fn tenant_id(&self) -> Uuid {
-        self.tenant_id
+    pub fn org_id(&self) -> Uuid {
+        self.org_id
     }
 
     pub fn worker_token(&self) -> &str {

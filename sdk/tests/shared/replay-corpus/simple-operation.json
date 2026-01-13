@@ -2,7 +2,7 @@
   "name": "simple-operation",
   "description": "Single operation (ctx.run) that records and replays a result",
   "workflow_execution_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "simple-workflow",
   "input": {
     "value": 42

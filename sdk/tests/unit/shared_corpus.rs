@@ -16,7 +16,7 @@ pub struct ReplayScenario {
     pub name: String,
     pub description: String,
     pub workflow_execution_id: String,
-    pub tenant_id: String,
+    pub org_id: String,
     pub workflow_kind: String,
     pub input: Value,
     pub events: Vec<ScenarioEvent>,
@@ -345,10 +345,7 @@ fn test_all_scenarios_have_required_fields() {
             !scenario.workflow_execution_id.is_empty(),
             "Workflow execution ID should not be empty"
         );
-        assert!(
-            !scenario.tenant_id.is_empty(),
-            "Tenant ID should not be empty"
-        );
+        assert!(!scenario.org_id.is_empty(), "Org ID should not be empty");
         assert!(
             !scenario.workflow_kind.is_empty(),
             "Workflow kind should not be empty"

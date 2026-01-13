@@ -91,7 +91,7 @@ impl E2ETestEnvironment {
     pub fn client_builder(&self) -> FlovynClientBuilder {
         FlovynClient::builder()
             .server_address(self.harness.grpc_host(), self.harness.grpc_port())
-            .tenant_id(self.harness.tenant_id())
+            .org_id(self.harness.org_id())
             .worker_token(self.harness.worker_token())
             .queue(&self.queue)
     }
@@ -342,7 +342,7 @@ impl E2ETestEnvBuilder {
         let harness = get_harness().await;
         let builder = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id(worker_id)
             .queue(queue);
@@ -366,7 +366,7 @@ impl E2ETestEnvBuilder {
 
         let builder = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id(&worker_id)
             .queue(&queue);

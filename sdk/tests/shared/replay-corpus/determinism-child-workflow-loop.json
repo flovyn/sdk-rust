@@ -2,7 +2,7 @@
   "name": "determinism-child-workflow-loop",
   "description": "Child workflows in a loop - tests sequence-based replay with multiple child workflows",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000004",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "child-workflow-loop-workflow",
   "input": {
     "count": 3

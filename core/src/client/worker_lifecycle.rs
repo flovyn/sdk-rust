@@ -89,8 +89,8 @@ impl WorkerLifecycleClient {
     /// * `worker_name` - Human-readable name for the worker
     /// * `worker_version` - Version string for the worker
     /// * `worker_type` - Type of worker (Workflow, Task, or Unified)
-    /// * `tenant_id` - Tenant ID for multi-tenancy
-    /// * `space_id` - Optional space ID (None = tenant-level)
+    /// * `org_id` - Org ID for multi-tenancy
+    /// * `team_id` - Optional team ID (None = org-level)
     /// * `workflows` - List of workflow metadata to register
     /// * `tasks` - List of task metadata to register
     #[allow(clippy::too_many_arguments)]
@@ -99,8 +99,8 @@ impl WorkerLifecycleClient {
         worker_name: &str,
         worker_version: &str,
         worker_type: WorkerType,
-        tenant_id: Uuid,
-        space_id: Option<Uuid>,
+        org_id: Uuid,
+        team_id: Option<Uuid>,
         workflows: Vec<WorkflowMetadata>,
         tasks: Vec<TaskMetadata>,
     ) -> CoreResult<RegistrationResult> {
@@ -113,8 +113,8 @@ impl WorkerLifecycleClient {
             worker_name: worker_name.to_string(),
             worker_version: worker_version.to_string(),
             worker_type: worker_type.as_str().to_string(),
-            tenant_id: tenant_id.to_string(),
-            space_id: space_id.map(|id| id.to_string()),
+            org_id: org_id.to_string(),
+            team_id: team_id.map(|id| id.to_string()),
             host_name,
             process_id,
             workflows: workflows.into_iter().map(workflow_to_proto).collect(),

@@ -173,14 +173,14 @@ All samples support configuration via environment variables:
 |----------|-------------|---------|
 | `FLOVYN_SERVER_HOST` | Server hostname | `localhost` |
 | `FLOVYN_SERVER_PORT` | Server gRPC port | `9090` |
-| `FLOVYN_TENANT_ID` | Tenant UUID | Random UUID |
+| `FLOVYN_ORG_ID` | Tenant UUID | Random UUID |
 
 Example:
 
 ```bash
 FLOVYN_SERVER_HOST=flovyn.example.com \
 FLOVYN_SERVER_PORT=9090 \
-FLOVYN_TENANT_ID=550e8400-e29b-41d4-a716-446655440000 \
+FLOVYN_ORG_ID=550e8400-e29b-41d4-a716-446655440000 \
 cargo run -p ecommerce-sample
 ```
 

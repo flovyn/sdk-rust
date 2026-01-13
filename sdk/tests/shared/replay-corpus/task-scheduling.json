@@ -2,7 +2,7 @@
   "name": "task-scheduling",
   "description": "Workflow that schedules external tasks via ctx.schedule",
   "workflow_execution_id": "d4e5f6a7-b8c9-0123-def0-234567890123",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "task-workflow",
   "input": {
     "order_id": "order-456"

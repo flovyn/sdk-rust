@@ -28,8 +28,8 @@ pub struct WorkflowContextImpl<R: CommandRecorder> {
     /// Unique workflow execution ID
     workflow_execution_id: Uuid,
 
-    /// Tenant ID
-    tenant_id: Uuid,
+    /// Org ID
+    org_id: Uuid,
 
     /// Workflow input
     input: Value,
@@ -125,7 +125,7 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
     /// Create a new WorkflowContextImpl
     pub fn new(
         workflow_execution_id: Uuid,
-        tenant_id: Uuid,
+        org_id: Uuid,
         input: Value,
         recorder: R,
         existing_events: Vec<ReplayEvent>,
@@ -133,7 +133,7 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
     ) -> Self {
         Self::new_with_telemetry(
             workflow_execution_id,
-            tenant_id,
+            org_id,
             input,
             recorder,
             existing_events,
@@ -146,7 +146,7 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_telemetry(
         workflow_execution_id: Uuid,
-        tenant_id: Uuid,
+        org_id: Uuid,
         input: Value,
         recorder: R,
         existing_events: Vec<ReplayEvent>,
@@ -169,7 +169,7 @@ impl<R: CommandRecorder> WorkflowContextImpl<R> {
 
         Self {
             workflow_execution_id,
-            tenant_id,
+            org_id,
             input,
             recorder: RwLock::new(recorder),
             replay_engine,
@@ -299,8 +299,8 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         self.workflow_execution_id
     }
 
-    fn tenant_id(&self) -> Uuid {
-        self.tenant_id
+    fn org_id(&self) -> Uuid {
+        self.org_id
     }
 
     fn input_raw(&self) -> &Value {
@@ -1141,17 +1141,17 @@ mod tests {
     }
 
     #[test]
-    fn test_tenant_id() {
-        let tenant_id = Uuid::new_v4();
+    fn test_org_id() {
+        let org_id = Uuid::new_v4();
         let ctx = WorkflowContextImpl::new(
             Uuid::new_v4(),
-            tenant_id,
+            org_id,
             serde_json::json!({}),
             CommandCollector::new(),
             vec![],
             0,
         );
-        assert_eq!(ctx.tenant_id(), tenant_id);
+        assert_eq!(ctx.org_id(), org_id);
     }
 
     #[test]

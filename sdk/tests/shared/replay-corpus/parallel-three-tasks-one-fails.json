@@ -2,7 +2,7 @@
   "name": "parallel-three-tasks-one-fails",
   "description": "Three parallel tasks where one fails - tests error propagation in parallel execution",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000102",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "parallel-tasks-with-failure-workflow",
   "input": { "items": [1, 2, 3] },
   "events": [

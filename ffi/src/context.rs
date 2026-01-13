@@ -204,7 +204,7 @@ pub struct FfiWorkflowContext {
     // Identifiers
     workflow_execution_id: Uuid,
     #[allow(dead_code)]
-    tenant_id: Uuid,
+    org_id: Uuid,
 
     // Replay engine for event filtering, sequence management, and terminal event lookup
     replay_engine: ReplayEngine,
@@ -237,7 +237,7 @@ impl FfiWorkflowContext {
     /// This parses all events and builds lookup tables for replay.
     pub fn new(
         workflow_execution_id: Uuid,
-        tenant_id: Uuid,
+        org_id: Uuid,
         timestamp_ms: i64,
         random_seed: u64,
         events: Vec<FfiReplayEvent>,
@@ -274,7 +274,7 @@ impl FfiWorkflowContext {
 
         Arc::new(Self {
             workflow_execution_id,
-            tenant_id,
+            org_id,
             replay_engine,
             commands: Mutex::new(Vec::new()),
             completed_tasks,

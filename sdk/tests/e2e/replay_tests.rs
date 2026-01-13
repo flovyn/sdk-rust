@@ -29,7 +29,7 @@ async fn test_e2e_task_loop_replay() {
         // 1. Execute workflow - this would normally run through the server
         // For now, we'll create a simulated execution with mock events
         let workflow_execution_id = Uuid::new_v4();
-        let tenant_id = harness.tenant_id();
+        let org_id = harness.org_id();
 
         // 2. Get events from server (simulated)
         // In a full E2E test, this would call harness.get_workflow_events()
@@ -40,7 +40,7 @@ async fn test_e2e_task_loop_replay() {
 
         // This test is a placeholder - full implementation requires
         // the workflow executor to be wired up to the test harness
-        let _ = (workflow_execution_id, tenant_id); // suppress unused warnings
+        let _ = (workflow_execution_id, org_id); // suppress unused warnings
     })
     .await;
 }
@@ -54,10 +54,10 @@ async fn test_e2e_child_workflow_loop_replay() {
         let harness = get_harness().await;
 
         let workflow_execution_id = Uuid::new_v4();
-        let tenant_id = harness.tenant_id();
+        let org_id = harness.org_id();
 
         // Similar to task loop test - validates child workflow replay
-        let _ = (workflow_execution_id, tenant_id); // suppress unused warnings
+        let _ = (workflow_execution_id, org_id); // suppress unused warnings
     })
     .await;
 }
@@ -89,7 +89,7 @@ async fn test_e2e_determinism_violation_on_task_type_change() {
             // Create context with these events
             let _ctx: WorkflowContextImpl<CommandCollector> = WorkflowContextImpl::new(
                 Uuid::new_v4(),
-                harness.tenant_id(),
+                harness.org_id(),
                 serde_json::json!({}),
                 CommandCollector::new(),
                 replay_events,
@@ -138,7 +138,7 @@ async fn test_e2e_determinism_violation_on_child_name_change() {
 
             let ctx: WorkflowContextImpl<CommandCollector> = WorkflowContextImpl::new(
                 Uuid::new_v4(),
-                harness.tenant_id(),
+                harness.org_id(),
                 serde_json::json!({}),
                 CommandCollector::new(),
                 replay_events,
@@ -176,7 +176,7 @@ async fn test_e2e_workflow_extension_allowed() {
 
         let ctx: WorkflowContextImpl<CommandCollector> = WorkflowContextImpl::new(
             Uuid::new_v4(),
-            harness.tenant_id(),
+            harness.org_id(),
             serde_json::json!({}),
             CommandCollector::new(),
             replay_events,
@@ -250,7 +250,7 @@ async fn test_e2e_mixed_commands_replay() {
 
         let ctx: WorkflowContextImpl<CommandCollector> = WorkflowContextImpl::new(
             Uuid::new_v4(),
-            harness.tenant_id(),
+            harness.org_id(),
             serde_json::json!({}),
             CommandCollector::new(),
             replay_events,
@@ -293,7 +293,7 @@ async fn test_e2e_operation_name_mismatch() {
 
         let ctx: WorkflowContextImpl<CommandCollector> = WorkflowContextImpl::new(
             Uuid::new_v4(),
-            harness.tenant_id(),
+            harness.org_id(),
             serde_json::json!({}),
             CommandCollector::new(),
             replay_events,

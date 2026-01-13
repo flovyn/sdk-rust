@@ -106,7 +106,7 @@ impl CoreClient {
         let result = self.runtime.block_on(async {
             dispatch_client
                 .start_workflow(
-                    &self.config.tenant_id,
+                    &self.config.org_id,
                     &workflow_kind,
                     input_value,
                     queue.as_deref(),

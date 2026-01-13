@@ -2,7 +2,7 @@
   "name": "multiple-operations",
   "description": "Multiple operations (ctx.run) in sequence",
   "workflow_execution_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "multi-operation-workflow",
   "input": {
     "items": ["a", "b", "c"]

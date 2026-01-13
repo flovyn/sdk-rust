@@ -149,13 +149,13 @@ impl StartWorkflowOptions {
 
 /// Main client for interacting with the Flovyn server
 pub struct FlovynClient {
-    pub(crate) tenant_id: Uuid,
+    pub(crate) org_id: Uuid,
     pub(crate) worker_id: String,
     pub(crate) queue: String,
     pub(crate) poll_timeout: Duration,
     pub(crate) config: FlovynClientConfig,
     pub(crate) channel: Channel,
-    pub(crate) space_id: Option<Uuid>,
+    pub(crate) team_id: Option<Uuid>,
     pub(crate) worker_name: Option<String>,
     pub(crate) worker_version: String,
     pub(crate) enable_auto_registration: bool,
@@ -182,9 +182,9 @@ impl FlovynClient {
         FlovynClientBuilder::new()
     }
 
-    /// Get the tenant ID
-    pub fn tenant_id(&self) -> Uuid {
-        self.tenant_id
+    /// Get the org ID
+    pub fn org_id(&self) -> Uuid {
+        self.org_id
     }
 
     /// Get the worker ID
@@ -281,7 +281,7 @@ impl FlovynClient {
 
         info!(
             worker_id = %self.worker_id,
-            tenant_id = %self.tenant_id,
+            org_id = %self.org_id,
             queue = %self.queue,
             "Starting FlovynClient"
         );
@@ -304,7 +304,7 @@ impl FlovynClient {
             if self.workflow_registry.has_registrations() {
                 let config = WorkflowWorkerConfig {
                     worker_id: self.worker_id.clone(),
-                    tenant_id: self.tenant_id,
+                    org_id: self.org_id,
                     queue: self.queue.clone(),
                     poll_timeout: self.poll_timeout,
                     no_work_backoff: Duration::from_millis(100),
@@ -312,7 +312,7 @@ impl FlovynClient {
                     heartbeat_interval: self.heartbeat_interval,
                     worker_name: self.worker_name.clone(),
                     worker_version: self.worker_version.clone(),
-                    space_id: self.space_id,
+                    team_id: self.team_id,
                     enable_auto_registration: false, // Unified registration already done
                     enable_notifications: true,
                     worker_token: self.worker_token.clone(),
@@ -354,7 +354,7 @@ impl FlovynClient {
         let (task_handle, task_ready, task_running) = if self.task_registry.has_registrations() {
             let config = TaskWorkerConfig {
                 worker_id: self.worker_id.clone(),
-                tenant_id: self.tenant_id,
+                org_id: self.org_id,
                 queue: self.queue.clone(),
                 poll_timeout: self.poll_timeout,
                 no_work_backoff: Duration::from_millis(100),
@@ -362,7 +362,7 @@ impl FlovynClient {
                 heartbeat_interval: self.heartbeat_interval,
                 worker_name: self.worker_name.clone(),
                 worker_version: self.worker_version.clone(),
-                space_id: self.space_id,
+                team_id: self.team_id,
                 enable_auto_registration: false, // Unified registration already done
                 worker_token: self.worker_token.clone(),
                 enable_telemetry: self.enable_telemetry,
@@ -431,7 +431,7 @@ impl FlovynClient {
 
         let result = client
             .start_workflow(
-                &self.tenant_id.to_string(),
+                &self.org_id.to_string(),
                 workflow_kind,
                 input,
                 Some(&options.queue),
@@ -764,8 +764,8 @@ impl FlovynClient {
                 &worker_name,
                 &self.worker_version,
                 WorkerType::Unified,
-                self.tenant_id,
-                self.space_id,
+                self.org_id,
+                self.team_id,
                 workflows.into_iter().map(Into::into).collect(),
                 tasks.into_iter().map(Into::into).collect(),
             )

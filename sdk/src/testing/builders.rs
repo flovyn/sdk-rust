@@ -28,7 +28,7 @@ use super::{MockTaskContext, MockWorkflowContext};
 #[derive(Default)]
 pub struct WorkflowTestBuilder {
     workflow_execution_id: Option<Uuid>,
-    tenant_id: Option<Uuid>,
+    org_id: Option<Uuid>,
     input: Option<Value>,
     initial_time_millis: Option<i64>,
     events: Vec<ReplayEvent>,
@@ -51,8 +51,8 @@ impl WorkflowTestBuilder {
     }
 
     /// Set the tenant ID.
-    pub fn tenant_id(mut self, id: Uuid) -> Self {
-        self.tenant_id = Some(id);
+    pub fn org_id(mut self, id: Uuid) -> Self {
+        self.org_id = Some(id);
         self
     }
 
@@ -283,8 +283,8 @@ impl WorkflowTestBuilder {
         if let Some(id) = self.workflow_execution_id {
             builder = builder.workflow_execution_id(id);
         }
-        if let Some(id) = self.tenant_id {
-            builder = builder.tenant_id(id);
+        if let Some(id) = self.org_id {
+            builder = builder.org_id(id);
         }
         if let Some(input) = self.input {
             builder = builder.input(input);

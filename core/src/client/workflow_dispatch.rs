@@ -32,13 +32,13 @@ impl WorkflowDispatch {
     pub async fn poll_workflow(
         &mut self,
         worker_id: &str,
-        tenant_id: &str,
+        org_id: &str,
         queue: &str,
         timeout: Duration,
     ) -> CoreResult<Option<WorkflowExecutionInfo>> {
         let request = flovyn_v1::PollRequest {
             worker_id: worker_id.to_string(),
-            tenant_id: tenant_id.to_string(),
+            org_id: org_id.to_string(),
             queue: queue.to_string(),
             timeout_seconds: timeout.as_secs() as i64,
             worker_pool_id: None,
@@ -53,7 +53,7 @@ impl WorkflowDispatch {
             .map(|we| WorkflowExecutionInfo {
                 id: we.id.parse().unwrap_or_default(),
                 kind: we.kind,
-                tenant_id: we.tenant_id.parse().unwrap_or_default(),
+                org_id: we.org_id.parse().unwrap_or_default(),
                 input: serde_json::from_slice(&we.input).unwrap_or(Value::Null),
                 queue: we.queue,
                 current_sequence: we.current_sequence,
@@ -67,12 +67,12 @@ impl WorkflowDispatch {
     pub async fn subscribe_to_notifications(
         &mut self,
         worker_id: &str,
-        tenant_id: &str,
+        org_id: &str,
         queue: &str,
     ) -> CoreResult<tonic::codec::Streaming<flovyn_v1::WorkAvailableEvent>> {
         let request = flovyn_v1::SubscriptionRequest {
             worker_id: worker_id.to_string(),
-            tenant_id: tenant_id.to_string(),
+            org_id: org_id.to_string(),
             queue: queue.to_string(),
         };
 
@@ -84,7 +84,7 @@ impl WorkflowDispatch {
     /// Start a workflow programmatically
     pub async fn start_workflow(
         &mut self,
-        tenant_id: &str,
+        org_id: &str,
         workflow_kind: &str,
         input: Value,
         queue: Option<&str>,
@@ -95,7 +95,7 @@ impl WorkflowDispatch {
         let input_bytes = serde_json::to_vec(&input)?;
 
         let request = flovyn_v1::StartWorkflowRequest {
-            tenant_id: tenant_id.to_string(),
+            org_id: org_id.to_string(),
             workflow_kind: workflow_kind.to_string(),
             input: input_bytes,
             metadata: metadata.unwrap_or_default(),
@@ -313,8 +313,8 @@ pub struct WorkflowExecutionInfo {
     pub id: Uuid,
     /// Workflow kind/type
     pub kind: String,
-    /// Tenant ID
-    pub tenant_id: Uuid,
+    /// Org ID
+    pub org_id: Uuid,
     /// Input data
     pub input: Value,
     /// Task queue
@@ -369,7 +369,7 @@ mod tests {
         let info = WorkflowExecutionInfo {
             id: Uuid::new_v4(),
             kind: "test-workflow".to_string(),
-            tenant_id: Uuid::new_v4(),
+            org_id: Uuid::new_v4(),
             input: serde_json::json!({"key": "value"}),
             queue: "default".to_string(),
             current_sequence: 0,

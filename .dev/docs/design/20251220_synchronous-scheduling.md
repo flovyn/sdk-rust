@@ -407,7 +407,7 @@ let results = futures::future::join_all(futures).await;
 #### Current: Server generates ID in submitTask
 ```protobuf
 message SubmitTaskRequest {
-    string tenant_id = 1;
+    string org_id = 1;
     string task_type = 2;
     bytes input = 3;
     optional string workflow_execution_id = 4;
@@ -463,7 +463,7 @@ fun processScheduleTask(command: ScheduleTaskCommand, workflowExecution: Workflo
     // Create TaskExecution with client-provided ID
     val taskExecution = TaskExecution(
         id = taskExecutionId,  // Use client-provided ID
-        tenantId = workflowExecution.tenantId,
+        orgId = workflowExecution.orgId,
         taskType = command.taskType,
         input = command.input,
         status = TaskExecutionStatus.PENDING,

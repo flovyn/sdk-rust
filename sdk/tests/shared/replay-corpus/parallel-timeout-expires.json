@@ -2,7 +2,7 @@
   "name": "parallel-timeout-expires",
   "description": "Timeout fires before task completes - task is cancelled, workflow returns timeout error",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000105",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "timeout-workflow",
   "input": { "timeout_ms": 1000 },
   "events": [

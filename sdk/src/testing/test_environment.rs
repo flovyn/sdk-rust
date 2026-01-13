@@ -42,7 +42,7 @@ struct TestWorkflowEnvironmentInner {
     workflow_registry: RwLock<WorkflowRegistry>,
     task_registry: RwLock<TaskRegistry>,
     time_controller: TimeController,
-    tenant_id: Uuid,
+    org_id: Uuid,
     task_results: RwLock<HashMap<String, Value>>,
     promise_results: RwLock<HashMap<String, Value>>,
     execution_history: RwLock<Vec<ExecutionRecord>>,
@@ -89,7 +89,7 @@ impl TestWorkflowEnvironment {
                 workflow_registry: RwLock::new(WorkflowRegistry::new()),
                 task_registry: RwLock::new(TaskRegistry::new()),
                 time_controller: TimeController::new(),
-                tenant_id: Uuid::new_v4(),
+                org_id: Uuid::new_v4(),
                 task_results: RwLock::new(HashMap::new()),
                 promise_results: RwLock::new(HashMap::new()),
                 execution_history: RwLock::new(Vec::new()),
@@ -104,7 +104,7 @@ impl TestWorkflowEnvironment {
                 workflow_registry: RwLock::new(WorkflowRegistry::new()),
                 task_registry: RwLock::new(TaskRegistry::new()),
                 time_controller: TimeController::with_initial_time(initial_time_millis),
-                tenant_id: Uuid::new_v4(),
+                org_id: Uuid::new_v4(),
                 task_results: RwLock::new(HashMap::new()),
                 promise_results: RwLock::new(HashMap::new()),
                 execution_history: RwLock::new(Vec::new()),
@@ -118,8 +118,8 @@ impl TestWorkflowEnvironment {
     }
 
     /// Get the tenant ID.
-    pub fn tenant_id(&self) -> Uuid {
-        self.inner.tenant_id
+    pub fn org_id(&self) -> Uuid {
+        self.inner.org_id
     }
 
     /// Register a workflow definition.
@@ -169,7 +169,7 @@ impl TestWorkflowEnvironment {
         // Create mock context with task results
         let mut builder = MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::new_v4())
-            .tenant_id(self.inner.tenant_id)
+            .org_id(self.inner.org_id)
             .input(input.clone())
             .initial_time_millis(started_at);
 
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn test_environment_new() {
         let env = TestWorkflowEnvironment::new();
-        assert!(!env.tenant_id().is_nil());
+        assert!(!env.org_id().is_nil());
     }
 
     #[test]

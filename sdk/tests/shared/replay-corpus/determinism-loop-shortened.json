@@ -2,7 +2,7 @@
   "name": "determinism-loop-shortened",
   "description": "Validates that a shortened loop (fewer iterations than original) is valid - orphaned events are allowed",
   "workflow_execution_id": "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
-  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "org_id": "11111111-1111-1111-1111-111111111111",
   "workflow_kind": "loop-workflow",
   "input": {"iterations": 2},
   "events": [

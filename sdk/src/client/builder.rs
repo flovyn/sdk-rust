@@ -27,7 +27,7 @@ pub const DEFAULT_TASK_QUEUE: &str = "default";
 /// ```ignore
 /// let client = FlovynClient::builder()
 ///     .server_address("localhost", 9090)
-///     .tenant_id(tenant_id)
+///     .org_id(org_id)
 ///     .queue("my-queue")
 ///     .register_workflow(MyWorkflow::new())
 ///     .register_task(MyTask::new())
@@ -37,13 +37,13 @@ pub const DEFAULT_TASK_QUEUE: &str = "default";
 pub struct FlovynClientBuilder {
     server_host: String,
     server_port: u16,
-    tenant_id: Uuid,
+    org_id: Uuid,
     worker_id: String,
     queue: String,
     config: FlovynClientConfig,
     custom_channel: Option<Channel>,
     poll_timeout: Duration,
-    space_id: Option<Uuid>,
+    team_id: Option<Uuid>,
     worker_name: Option<String>,
     worker_version: String,
     enable_auto_registration: bool,
@@ -76,13 +76,13 @@ impl FlovynClientBuilder {
         Self {
             server_host: "localhost".to_string(),
             server_port: 9090,
-            tenant_id: Uuid::new_v4(),
+            org_id: Uuid::new_v4(),
             worker_id: format!("worker-{}", Uuid::new_v4()),
             queue: DEFAULT_TASK_QUEUE.to_string(),
             config: FlovynClientConfig::default(),
             custom_channel: None,
             poll_timeout: Duration::from_secs(60),
-            space_id: None,
+            team_id: None,
             worker_name: None,
             worker_version: "1.0.0".to_string(),
             enable_auto_registration: true,
@@ -106,9 +106,9 @@ impl FlovynClientBuilder {
         self
     }
 
-    /// Set the tenant ID
-    pub fn tenant_id(mut self, id: Uuid) -> Self {
-        self.tenant_id = id;
+    /// Set the org ID
+    pub fn org_id(mut self, id: Uuid) -> Self {
+        self.org_id = id;
         self
     }
 
@@ -147,8 +147,8 @@ impl FlovynClientBuilder {
     }
 
     /// Set the space ID for space-scoped workflow/task registration
-    pub fn space_id(mut self, id: Option<Uuid>) -> Self {
-        self.space_id = id;
+    pub fn team_id(mut self, id: Option<Uuid>) -> Self {
+        self.team_id = id;
         self
     }
 
@@ -213,7 +213,7 @@ impl FlovynClientBuilder {
     /// ```ignore
     /// let client = FlovynClient::builder()
     ///     .server_address("localhost", 9090)
-    ///     .tenant_id(tenant_id)
+    ///     .org_id(org_id)
     ///     .oauth2_client_credentials(
     ///         "my-worker-client",
     ///         "my-client-secret",
@@ -250,7 +250,7 @@ impl FlovynClientBuilder {
     /// ```ignore
     /// let client = FlovynClient::builder()
     ///     .server_address("localhost", 9090)
-    ///     .tenant_id(tenant_id)
+    ///     .org_id(org_id)
     ///     .oauth2_client_credentials_with_scopes(
     ///         "my-worker-client",
     ///         "my-client-secret",
@@ -390,7 +390,7 @@ impl FlovynClientBuilder {
     /// ```ignore
     /// let client = FlovynClient::builder()
     ///     .server_address("localhost", 9090)
-    ///     .tenant_id(tenant_id)
+    ///     .org_id(org_id)
     ///     .register_workflow(MyWorkflow)
     ///     .build()
     ///     .await?;
@@ -413,7 +413,7 @@ impl FlovynClientBuilder {
     /// ```ignore
     /// let client = FlovynClient::builder()
     ///     .server_address("localhost", 9090)
-    ///     .tenant_id(tenant_id)
+    ///     .org_id(org_id)
     ///     .register_task(MyTask)
     ///     .build()
     ///     .await?;
@@ -489,13 +489,13 @@ impl FlovynClientBuilder {
         }
 
         Ok(super::FlovynClient {
-            tenant_id: self.tenant_id,
+            org_id: self.org_id,
             worker_id: self.worker_id,
             queue: self.queue,
             poll_timeout: self.poll_timeout,
             config: self.config,
             channel,
-            space_id: self.space_id,
+            team_id: self.team_id,
             worker_name: self.worker_name,
             worker_version: self.worker_version,
             enable_auto_registration: self.enable_auto_registration,
@@ -534,10 +534,10 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_tenant_id() {
+    fn test_builder_org_id() {
         let id = Uuid::new_v4();
-        let builder = FlovynClientBuilder::new().tenant_id(id);
-        assert_eq!(builder.tenant_id, id);
+        let builder = FlovynClientBuilder::new().org_id(id);
+        assert_eq!(builder.org_id, id);
     }
 
     #[test]

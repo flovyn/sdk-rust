@@ -183,8 +183,8 @@ impl CoreWorker {
             .clone()
             .unwrap_or_else(|| format!("ffi-worker-{}", &self.config.queue));
 
-        // Get tenant ID from config
-        let tenant_id = Uuid::parse_str(&self.config.tenant_id).unwrap_or_else(|_| Uuid::nil());
+        // Get org ID from config
+        let org_id = Uuid::parse_str(&self.config.org_id).unwrap_or_else(|_| Uuid::nil());
 
         let result = self.runtime.block_on(async {
             lifecycle_client
@@ -192,7 +192,7 @@ impl CoreWorker {
                     &worker_name,
                     "0.1.0",
                     worker_type,
-                    tenant_id,
+                    org_id,
                     None, // No space_id
                     workflows,
                     tasks,
@@ -236,7 +236,7 @@ impl CoreWorker {
             })?
         };
 
-        let tenant_id = Uuid::parse_str(&self.config.tenant_id).unwrap_or_else(|_| Uuid::nil());
+        let org_id = Uuid::parse_str(&self.config.org_id).unwrap_or_else(|_| Uuid::nil());
 
         let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
 
@@ -244,7 +244,7 @@ impl CoreWorker {
             dispatch_client
                 .poll_workflow(
                     &worker_id.to_string(),
-                    &self.config.tenant_id,
+                    &self.config.org_id,
                     &self.config.queue,
                     std::time::Duration::from_secs(30),
                 )
@@ -281,7 +281,7 @@ impl CoreWorker {
                 // Create the replay-aware context
                 let context = FfiWorkflowContext::new(
                     workflow_info.id,
-                    tenant_id,
+                    org_id,
                     workflow_info.workflow_task_time_millis,
                     workflow_info.id.as_u128() as u64, // Use workflow ID as random seed
                     ffi_events,
@@ -410,7 +410,7 @@ impl CoreWorker {
             task_client
                 .poll_task(
                     &worker_id.to_string(),
-                    &self.config.tenant_id,
+                    &self.config.org_id,
                     &self.config.queue,
                     std::time::Duration::from_secs(30),
                 )

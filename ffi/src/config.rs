@@ -96,8 +96,8 @@ pub struct WorkerConfig {
     /// If provided, the SDK will fetch a JWT using client credentials flow.
     pub oauth2_credentials: Option<OAuth2Credentials>,
 
-    /// Tenant ID (UUID format) for worker registration.
-    pub tenant_id: String,
+    /// Org ID (UUID format) for worker registration.
+    pub org_id: String,
 
     /// Task queue to poll for work.
     pub queue: String,
@@ -124,7 +124,7 @@ impl Default for WorkerConfig {
             server_url: "http://localhost:9090".to_string(),
             worker_token: None,
             oauth2_credentials: None,
-            tenant_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            org_id: "00000000-0000-0000-0000-000000000000".to_string(),
             queue: "default".to_string(),
             worker_identity: None,
             max_concurrent_workflow_tasks: Some(100),
@@ -150,8 +150,8 @@ pub struct ClientConfig {
     /// If provided, the SDK will fetch a JWT using client credentials flow.
     pub oauth2_credentials: Option<OAuth2Credentials>,
 
-    /// Tenant ID (UUID format) for operations.
-    pub tenant_id: String,
+    /// Org ID (UUID format) for operations.
+    pub org_id: String,
 }
 
 impl Default for ClientConfig {
@@ -160,7 +160,7 @@ impl Default for ClientConfig {
             server_url: "http://localhost:9090".to_string(),
             client_token: None,
             oauth2_credentials: None,
-            tenant_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            org_id: "00000000-0000-0000-0000-000000000000".to_string(),
         }
     }
 }
@@ -174,7 +174,7 @@ mod tests {
         let config = WorkerConfig::default();
         assert_eq!(config.server_url, "http://localhost:9090");
         assert!(config.worker_token.is_none());
-        assert_eq!(config.tenant_id, "00000000-0000-0000-0000-000000000000");
+        assert_eq!(config.org_id, "00000000-0000-0000-0000-000000000000");
         assert_eq!(config.queue, "default");
         assert!(config.worker_identity.is_none());
     }
@@ -184,6 +184,6 @@ mod tests {
         let config = ClientConfig::default();
         assert_eq!(config.server_url, "http://localhost:9090");
         assert!(config.client_token.is_none());
-        assert_eq!(config.tenant_id, "00000000-0000-0000-0000-000000000000");
+        assert_eq!(config.org_id, "00000000-0000-0000-0000-000000000000");
     }
 }

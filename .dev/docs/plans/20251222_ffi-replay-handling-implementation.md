@@ -96,7 +96,7 @@ Create `ffi/src/context.rs` with the core replay-aware context.
 pub struct FfiWorkflowContext {
     // Identifiers
     workflow_execution_id: Uuid,
-    tenant_id: Uuid,
+    org_id: Uuid,
 
     // Replay state - pre-filtered event lists
     task_events: Vec<ReplayEvent>,
@@ -148,7 +148,7 @@ pub struct FfiWorkflowContext {
 impl FfiWorkflowContext {
     pub fn new(
         workflow_execution_id: Uuid,
-        tenant_id: Uuid,
+        org_id: Uuid,
         timestamp_ms: i64,
         random_seed: Vec<u8>,
         events: Vec<FfiReplayEvent>,
@@ -176,7 +176,7 @@ impl FfiWorkflowContext {
 
         Self {
             workflow_execution_id,
-            tenant_id,
+            org_id,
             task_events,
             promise_events,
             // ... initialize all fields
@@ -483,7 +483,7 @@ pub fn poll_workflow_activation(&self) -> Result<Option<WorkflowActivation>, Ffi
             // Create replay-aware context
             let context = Arc::new(FfiWorkflowContext::new(
                 workflow_info.id,
-                Uuid::parse_str(&self.config.tenant_id).unwrap_or(Uuid::nil()),
+                Uuid::parse_str(&self.config.org_id).unwrap_or(Uuid::nil()),
                 workflow_info.workflow_task_time_millis,
                 workflow_info.random_seed,
                 events.clone(),

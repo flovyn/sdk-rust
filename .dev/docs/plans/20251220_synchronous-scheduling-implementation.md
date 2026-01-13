@@ -157,7 +157,7 @@ fun processScheduleTask(
     // Create TaskExecution with client-provided ID
     val taskExecution = TaskExecution(
         id = taskExecutionId,
-        tenantId = workflowExecution.tenantId,
+        orgId = workflowExecution.orgId,
         taskType = command.taskType,
         input = command.input,
         status = TaskExecutionStatus.PENDING,

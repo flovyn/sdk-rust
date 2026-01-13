@@ -2,7 +2,7 @@
   "name": "state-management",
   "description": "Workflow state get/set/clear operations",
   "workflow_execution_id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "stateful-workflow",
   "input": {
     "user_id": "user-123"

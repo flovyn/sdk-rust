@@ -43,7 +43,7 @@
 //!
 //! // Build client and start worker
 //! let client = FlovynClientBuilder::new("http://localhost:9090", "fwt_token")
-//!     .tenant_id(tenant_id)
+//!     .org_id(org_id)
 //!     .register_workflow(MyWorkflow)
 //!     .build()
 //!     .await?;

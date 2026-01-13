@@ -82,7 +82,7 @@ This document provides a detailed design for enhancing the worker lifecycle mana
 ```rust
 pub struct WorkflowWorkerConfig {
     pub worker_id: String,
-    pub tenant_id: Uuid,
+    pub org_id: Uuid,
     pub task_queue: String,
     pub poll_timeout: Duration,           // Default: 60s
     pub max_concurrent: usize,            // Default: 10
@@ -917,7 +917,7 @@ impl Default for ReconnectionStrategy {
 // Usage
 let client = FlovynClient::builder()
     .server_address("localhost", 9090)
-    .tenant_id(tenant_id)
+    .org_id(org_id)
     .worker_token(token)
     .reconnection_strategy(ReconnectionStrategy::ExponentialBackoff {
         initial_delay: Duration::from_millis(500),
@@ -1297,7 +1297,7 @@ async fn test_worker_status_transitions() {
 async fn test_registration_info() {
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(test_tenant_id())
+        .org_id(test_org_id())
         .worker_token(test_token())
         .worker_name("test-worker")
         .worker_version("1.2.3")
@@ -1494,7 +1494,7 @@ async fn test_lifecycle_hook() {
 
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(test_tenant_id())
+        .org_id(test_org_id())
         .worker_token(test_token())
         .register_workflow(EchoWorkflow)
         .add_lifecycle_hook(hook.clone())
@@ -1551,7 +1551,7 @@ async fn test_reconnection_on_failure() {
 
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(test_tenant_id())
+        .org_id(test_org_id())
         .worker_token(test_token())
         .register_workflow(EchoWorkflow)
         .reconnection_strategy(ReconnectionStrategy::ExponentialBackoff {
@@ -1641,7 +1641,7 @@ async fn test_max_reconnect_attempts() {
     // Use unreachable server
     let client = FlovynClient::builder()
         .server_address("localhost", 19999) // Wrong port
-        .tenant_id(test_tenant_id())
+        .org_id(test_org_id())
         .worker_token(test_token())
         .register_workflow(EchoWorkflow)
         .reconnection_strategy(ReconnectionStrategy::Fixed {
@@ -1775,7 +1775,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(std::env::var("FLOVYN_TENANT_ID")?.parse()?)
+        .org_id(std::env::var("FLOVYN_ORG_ID")?.parse()?)
         .worker_token(std::env::var("FLOVYN_WORKER_TOKEN")?)
         .worker_name("production-worker")
         .worker_version(env!("CARGO_PKG_VERSION"))
@@ -1934,7 +1934,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start Flovyn worker
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(/* ... */)
+        .org_id(/* ... */)
         .worker_token(/* ... */)
         .register_workflow(MyWorkflow)
         .build()
@@ -1978,7 +1978,7 @@ enum MaintenanceCommand {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(/* ... */)
+        .org_id(/* ... */)
         .worker_token(/* ... */)
         .register_workflow(MyWorkflow)
         .build()
@@ -2075,7 +2075,7 @@ The existing API remains fully compatible. New features are additive:
 // Before (still works)
 let client = FlovynClient::builder()
     .server_address("localhost", 9090)
-    .tenant_id(tenant_id)
+    .org_id(org_id)
     .worker_token(token)
     .register_workflow(MyWorkflow)
     .build()
@@ -2089,7 +2089,7 @@ handle.stop().await;
 // After (with new features)
 let client = FlovynClient::builder()
     .server_address("localhost", 9090)
-    .tenant_id(tenant_id)
+    .org_id(org_id)
     .worker_token(token)
     .register_workflow(MyWorkflow)
     // New: Add lifecycle hooks

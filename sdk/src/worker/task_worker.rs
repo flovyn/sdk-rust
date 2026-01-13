@@ -21,8 +21,8 @@ use uuid::Uuid;
 pub struct TaskWorkerConfig {
     /// Unique worker identifier
     pub worker_id: String,
-    /// Tenant ID
-    pub tenant_id: Uuid,
+    /// Org ID
+    pub org_id: Uuid,
     /// Queue to poll tasks from
     pub queue: String,
     /// Long polling timeout
@@ -37,8 +37,8 @@ pub struct TaskWorkerConfig {
     pub worker_name: Option<String>,
     /// Worker version for registration
     pub worker_version: String,
-    /// Space ID (None = tenant-level)
-    pub space_id: Option<Uuid>,
+    /// Team ID (None = org-level)
+    pub team_id: Option<Uuid>,
     /// Enable automatic worker registration on startup
     pub enable_auto_registration: bool,
     /// Worker token for gRPC authentication
@@ -58,7 +58,7 @@ impl Default for TaskWorkerConfig {
     fn default() -> Self {
         Self {
             worker_id: Uuid::new_v4().to_string(),
-            tenant_id: Uuid::nil(),
+            org_id: Uuid::nil(),
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
             no_work_backoff: Duration::from_millis(100),
@@ -66,7 +66,7 @@ impl Default for TaskWorkerConfig {
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
             worker_version: "1.0.0".to_string(),
-            space_id: None,
+            team_id: None,
             enable_auto_registration: true,
             worker_token: String::new(),
             enable_telemetry: false,
@@ -81,14 +81,14 @@ impl std::fmt::Debug for TaskWorkerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TaskWorkerConfig")
             .field("worker_id", &self.worker_id)
-            .field("tenant_id", &self.tenant_id)
+            .field("org_id", &self.org_id)
             .field("queue", &self.queue)
             .field("poll_timeout", &self.poll_timeout)
             .field("worker_labels", &self.worker_labels)
             .field("heartbeat_interval", &self.heartbeat_interval)
             .field("worker_name", &self.worker_name)
             .field("worker_version", &self.worker_version)
-            .field("space_id", &self.space_id)
+            .field("team_id", &self.team_id)
             .field("enable_auto_registration", &self.enable_auto_registration)
             .field("worker_token", &"<redacted>")
             .field("enable_telemetry", &self.enable_telemetry)
@@ -240,7 +240,7 @@ impl TaskExecutorWorker {
 
         info!(
             worker_id = %self.config.worker_id,
-            tenant_id = %self.config.tenant_id,
+            org_id = %self.config.org_id,
             queue = %self.config.queue,
             "Starting task worker"
         );
@@ -402,7 +402,7 @@ impl TaskExecutorWorker {
             .client
             .poll_task(
                 &self.config.worker_id,
-                &self.config.tenant_id.to_string(),
+                &self.config.org_id.to_string(),
                 &self.config.queue,
                 self.config.poll_timeout,
             )
@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(config.worker_version, "1.0.0");
         assert!(config.enable_auto_registration);
         assert!(config.worker_name.is_none());
-        assert!(config.space_id.is_none());
+        assert!(config.team_id.is_none());
         assert!(!config.enable_telemetry);
     }
 
@@ -710,7 +710,7 @@ mod tests {
 
         let config = TaskWorkerConfig {
             worker_id: "task-worker-1".to_string(),
-            tenant_id: Uuid::new_v4(),
+            org_id: Uuid::new_v4(),
             queue: "gpu-tasks".to_string(),
             poll_timeout: Duration::from_secs(30),
             no_work_backoff: Duration::from_millis(100),
@@ -718,7 +718,7 @@ mod tests {
             heartbeat_interval: Duration::from_secs(15),
             worker_name: Some("GPU Task Worker".to_string()),
             worker_version: "2.0.0".to_string(),
-            space_id: Some(Uuid::new_v4()),
+            team_id: Some(Uuid::new_v4()),
             enable_auto_registration: false,
             worker_token: "test-token".to_string(),
             enable_telemetry: true,

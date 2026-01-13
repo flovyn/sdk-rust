@@ -68,7 +68,7 @@ pub fn to_replay_events(events: &[WorkflowEventResponse]) -> Vec<ReplayEvent> {
 /// Create a WorkflowContextImpl for replay testing from server events.
 pub fn create_replay_context(
     workflow_execution_id: Uuid,
-    tenant_id: Uuid,
+    org_id: Uuid,
     input: serde_json::Value,
     events: &[WorkflowEventResponse],
 ) -> WorkflowContextImpl<CommandCollector> {
@@ -76,7 +76,7 @@ pub fn create_replay_context(
 
     WorkflowContextImpl::new(
         workflow_execution_id,
-        tenant_id,
+        org_id,
         input,
         CommandCollector::new(),
         replay_events,

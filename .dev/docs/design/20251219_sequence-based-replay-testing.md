@@ -373,7 +373,7 @@ JSON-based replay scenarios for cross-language validation (Rust SDK <-> Kotlin s
   "name": "determinism-task-loop",
   "description": "Validates sequence-based matching for tasks in a loop",
   "workflow_execution_id": "wf-det-001",
-  "tenant_id": "test-tenant",
+  "org_id": "test-org",
   "workflow_kind": "loop-task-workflow",
   "input": {"items": [1, 2, 3]},
   "events": [
@@ -402,7 +402,7 @@ JSON-based replay scenarios for cross-language validation (Rust SDK <-> Kotlin s
   "name": "determinism-violation-task-type",
   "description": "Should raise determinism violation when task type changes",
   "workflow_execution_id": "wf-det-002",
-  "tenant_id": "test-tenant",
+  "org_id": "test-org",
   "workflow_kind": "changed-task-workflow",
   "input": {},
   "events": [
@@ -421,7 +421,7 @@ JSON-based replay scenarios for cross-language validation (Rust SDK <-> Kotlin s
   "name": "determinism-violation-child-workflow-name",
   "description": "Should raise determinism violation when child workflow name changes",
   "workflow_execution_id": "wf-det-003",
-  "tenant_id": "test-tenant",
+  "org_id": "test-org",
   "workflow_kind": "parent-workflow",
   "input": {},
   "events": [

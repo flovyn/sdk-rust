@@ -828,7 +828,7 @@ The goal is to have APIs that are **semantically identical** across all language
 | Rust | Python | TypeScript | Java |
 |------|--------|------------|------|
 | `ctx.workflow_execution_id()` | `ctx.workflow_execution_id` | `ctx.workflowExecutionId` | `ctx.getWorkflowExecutionId()` |
-| `ctx.tenant_id()` | `ctx.tenant_id` | `ctx.tenantId` | `ctx.getTenantId()` |
+| `ctx.org_id()` | `ctx.org_id` | `ctx.orgId` | `ctx.getTenantId()` |
 | `ctx.current_time_millis()` | `ctx.current_time_millis()` | `ctx.currentTimeMillis()` | `ctx.currentTimeMillis()` |
 | `ctx.random_uuid()` | `ctx.random_uuid()` | `ctx.randomUuid()` | `ctx.randomUuid()` |
 | `ctx.random().next_int(0, 100)` | `ctx.random.next_int(0, 100)` | `ctx.random.nextInt(0, 100)` | `ctx.getRandom().nextInt(0, 100)` |
@@ -1006,7 +1006,7 @@ impl TaskDefinition for ProcessPaymentTask {
 async fn main() -> Result<()> {
     let client = FlovynClient::builder()
         .server_url("http://localhost:9090")
-        .tenant_id("550e8400-e29b-41d4-a716-446655440000".parse()?)
+        .org_id("550e8400-e29b-41d4-a716-446655440000".parse()?)
         .build()
         .await?;
 
@@ -1160,7 +1160,7 @@ async def ProcessPaymentTask(ctx: TaskContext, input: PaymentRequest) -> Payment
 async def main():
     client = await Client.connect(
         server_url="http://localhost:9090",
-        tenant_id="550e8400-e29b-41d4-a716-446655440000",
+        org_id="550e8400-e29b-41d4-a716-446655440000",
     )
 
     worker = Worker(
@@ -1322,7 +1322,7 @@ export const ProcessPaymentTask = defineTask<PaymentRequest, PaymentResult>({
 async function main() {
   const client = await Client.connect({
     serverUrl: 'http://localhost:9090',
-    tenantId: '550e8400-e29b-41d4-a716-446655440000',
+    orgId: '550e8400-e29b-41d4-a716-446655440000',
   });
 
   const worker = new Worker({
@@ -1510,7 +1510,7 @@ public class Main {
     public static void main(String[] args) throws Exception {
         var client = Client.connect(ClientOptions.builder()
             .serverUrl("http://localhost:9090")
-            .tenantId(UUID.fromString("550e8400-e29b-41d4-a716-446655440000"))
+            .orgId(UUID.fromString("550e8400-e29b-41d4-a716-446655440000"))
             .build());
 
         var worker = Worker.builder()
@@ -1659,7 +1659,7 @@ public class Main {
     public static void main(String[] args) throws Exception {
         var client = Client.connect(ClientOptions.builder()
             .serverUrl("http://localhost:9090")
-            .tenantId(UUID.fromString("550e8400-e29b-41d4-a716-446655440000"))
+            .orgId(UUID.fromString("550e8400-e29b-41d4-a716-446655440000"))
             .build());
 
         var worker = Worker.builder()

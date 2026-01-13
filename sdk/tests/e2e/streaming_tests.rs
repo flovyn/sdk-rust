@@ -51,7 +51,7 @@ async fn test_task_streams_tokens() {
         let queue = format!("stream-tokens-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-streaming-worker")
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -112,7 +112,7 @@ async fn test_task_streams_progress() {
         let queue = format!("stream-progress-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-progress-worker")
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -167,7 +167,7 @@ async fn test_task_streams_data() {
         let queue = format!("stream-data-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-data-worker")
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -223,7 +223,7 @@ async fn test_task_streams_errors() {
         let queue = format!("stream-errors-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-error-worker")
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -279,7 +279,7 @@ async fn test_task_streams_all_types() {
         let queue = format!("stream-all-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-allstreaming-worker")
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -373,7 +373,7 @@ async fn test_task_streams_custom_tokens() {
         let queue = format!("stream-custom-{}", uuid::Uuid::new_v4());
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-custom-worker")
             .worker_token(harness.worker_token())
             .queue(&queue)

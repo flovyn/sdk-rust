@@ -102,8 +102,8 @@ pub struct TestHarness {
     _config_file: tempfile::NamedTempFile,
     server_grpc_port: u16,
     server_http_port: u16,
-    tenant_id: Uuid,
-    tenant_slug: String,
+    org_id: Uuid,
+    org_slug: String,
     /// Static API key for HTTP requests (User principal)
     api_key: String,
     /// Static API key for gRPC/SDK connections (Worker principal)
@@ -148,17 +148,17 @@ impl TestHarness {
         let nats_host_port = nats.get_host_port_ipv4(4222).await.unwrap();
         println!("NATS started on port {}", nats_host_port);
 
-        // Generate test tenant and API keys
-        let tenant_id = Uuid::new_v4();
-        let tenant_slug = format!("test-{}", &Uuid::new_v4().to_string()[..8]);
+        // Generate test org and API keys
+        let org_id = Uuid::new_v4();
+        let org_slug = format!("test-{}", &Uuid::new_v4().to_string()[..8]);
         let api_key = format!("flovyn_sk_test_{}", &Uuid::new_v4().to_string()[..16]);
         let worker_token = format!("flovyn_wk_test_{}", &Uuid::new_v4().to_string()[..16]);
 
-        // Create config file with tenant and static API keys
-        let config_file = create_config_file(&tenant_id, &tenant_slug, &api_key, &worker_token);
+        // Create config file with org and static API keys
+        let config_file = create_config_file(&org_id, &org_slug, &api_key, &worker_token);
         let config_path = config_file.path().to_string_lossy().to_string();
         println!(
-            "[HARNESS] Created config file with pre-configured tenant and API keys at: {}",
+            "[HARNESS] Created config file with pre-configured org and API keys at: {}",
             config_path
         );
 
@@ -226,8 +226,8 @@ impl TestHarness {
             _config_file: config_file,
             server_grpc_port,
             server_http_port,
-            tenant_id,
-            tenant_slug,
+            org_id,
+            org_slug,
             api_key,
             worker_token,
         }
@@ -274,12 +274,12 @@ impl TestHarness {
         self.server_http_port
     }
 
-    pub fn tenant_id(&self) -> Uuid {
-        self.tenant_id
+    pub fn org_id(&self) -> Uuid {
+        self.org_id
     }
 
-    pub fn tenant_slug(&self) -> &str {
-        &self.tenant_slug
+    pub fn org_slug(&self) -> &str {
+        &self.org_slug
     }
 
     pub fn worker_token(&self) -> &str {
@@ -300,8 +300,8 @@ impl TestHarness {
         let client = reqwest::Client::new();
 
         let url = format!(
-            "{}/api/tenants/{}/workflow-executions/{}/events",
-            base_url, self.tenant_slug, workflow_execution_id
+            "{}/api/orgs/{}/workflow-executions/{}/events",
+            base_url, self.org_slug, workflow_execution_id
         );
 
         let response = client
@@ -332,8 +332,8 @@ impl TestHarness {
         let client = reqwest::Client::new();
 
         let url = format!(
-            "{}/api/tenants/{}/workflow-executions/{}",
-            base_url, self.tenant_slug, workflow_execution_id
+            "{}/api/orgs/{}/workflow-executions/{}",
+            base_url, self.org_slug, workflow_execution_id
         );
 
         let response = client
@@ -371,7 +371,7 @@ pub struct WorkflowEventResponse {
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowExecutionResponse {
     pub id: Uuid,
-    pub tenant_id: Uuid,
+    pub org_id: Uuid,
     pub workflow_kind: String,
     pub status: String,
     pub input: serde_json::Value,
@@ -384,20 +384,20 @@ pub struct WorkflowExecutionResponse {
     pub completed_at: Option<String>,
 }
 
-/// Create a temporary config file with tenant and static API key configuration
+/// Create a temporary config file with org and static API key configuration
 fn create_config_file(
-    tenant_id: &Uuid,
-    tenant_slug: &str,
+    org_id: &Uuid,
+    org_slug: &str,
     api_key: &str,
     worker_api_key: &str,
 ) -> tempfile::NamedTempFile {
     let config_content = format!(
         r#"
-# Pre-configured tenants
-[[tenants]]
-id = "{tenant_id}"
-name = "Test Tenant"
-slug = "{tenant_slug}"
+# Pre-configured organizations
+[[orgs]]
+id = "{org_id}"
+name = "Test Organization"
+slug = "{org_slug}"
 tier = "FREE"
 
 # Authentication configuration
@@ -407,8 +407,8 @@ enabled = true
 # Static API keys
 [auth.static_api_key]
 keys = [
-    {{ key = "{api_key}", tenant_id = "{tenant_id}", principal_type = "User", principal_id = "api:test", role = "ADMIN" }},
-    {{ key = "{worker_api_key}", tenant_id = "{tenant_id}", principal_type = "Worker", principal_id = "worker:test" }}
+    {{ key = "{api_key}", org_id = "{org_id}", principal_type = "User", principal_id = "api:test", role = "ADMIN" }},
+    {{ key = "{worker_api_key}", org_id = "{org_id}", principal_type = "Worker", principal_id = "worker:test" }}
 ]
 
 # Endpoint authentication

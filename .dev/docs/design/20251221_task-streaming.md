@@ -507,7 +507,7 @@ use futures::StreamExt;
 pub(crate) struct SseStreamClient {
     base_url: String,
     auth_token: String,
-    tenant_slug: String,
+    org_slug: String,
     http_client: reqwest::Client,
 }
 
@@ -517,8 +517,8 @@ impl SseStreamClient {
         workflow_execution_id: Uuid,
     ) -> Result<impl Stream<Item = Result<TaskStreamEvent, StreamError>>, ClientError> {
         let url = format!(
-            "{}/api/tenants/{}/stream/workflows/{}",
-            self.base_url, self.tenant_slug, workflow_execution_id
+            "{}/api/orgs/{}/stream/workflows/{}",
+            self.base_url, self.org_slug, workflow_execution_id
         );
 
         let response = self.http_client
@@ -777,7 +777,7 @@ use futures::StreamExt;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = FlovynClient::builder()
         .server_address("localhost", 9090)
-        .tenant_id(tenant_id)
+        .org_id(org_id)
         .worker_token(token)
         .streaming_url("http://localhost:8080") // REST API for SSE
         .build()
@@ -821,7 +821,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```javascript
 // Web client using SSE
 const eventSource = new EventSource(
-  `/api/tenants/${tenantSlug}/stream/workflows/${workflowId}`,
+  `/api/orgs/${orgSlug}/stream/workflows/${workflowId}`,
   { withCredentials: true }
 );
 
@@ -975,7 +975,7 @@ async fn test_task_streams_errors() {
 async fn test_stream_connection_timeout() {
     let client = FlovynClient::builder()
         .server_address("localhost", 9999) // Wrong port
-        .tenant_id(test_tenant_id())
+        .org_id(test_org_id())
         .worker_token(test_token())
         .streaming_connect_timeout(Duration::from_millis(100))
         .build()

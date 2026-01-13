@@ -25,7 +25,7 @@ async fn test_concurrent_workflow_execution() {
         let queue = "concurrency-exec-queue";
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-concurrent-worker")
             .worker_token(harness.worker_token())
             .queue(queue)
@@ -138,7 +138,7 @@ async fn test_multiple_workers() {
         // Create first worker
         let client1 = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-multi-worker-1")
             .worker_token(harness.worker_token())
             .queue(queue)
@@ -150,7 +150,7 @@ async fn test_multiple_workers() {
         // Create second worker (same workflow, same queue)
         let client2 = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id("e2e-multi-worker-2")
             .worker_token(harness.worker_token())
             .queue(queue)

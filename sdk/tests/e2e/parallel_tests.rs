@@ -29,7 +29,7 @@ async fn test_e2e_parallel_tasks_join_all() {
 
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -85,7 +85,7 @@ async fn test_e2e_fan_out_fan_in() {
 
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -140,7 +140,7 @@ async fn test_e2e_racing_tasks_select() {
 
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -194,7 +194,7 @@ async fn test_e2e_timeout_success() {
 
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -244,7 +244,7 @@ async fn test_e2e_mixed_parallel_operations() {
 
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
             .queue(&queue)
@@ -309,7 +309,7 @@ async fn test_e2e_parallel_large_batch() {
 
         let client = FlovynClient::builder()
             .server_address(harness.grpc_host(), harness.grpc_port())
-            .tenant_id(harness.tenant_id())
+            .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
             .queue(&queue)

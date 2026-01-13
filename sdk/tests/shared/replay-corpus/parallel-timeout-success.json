@@ -2,7 +2,7 @@
   "name": "parallel-timeout-success",
   "description": "Task completes before timeout - timeout timer is cancelled",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000104",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "timeout-workflow",
   "input": { "timeout_ms": 30000 },
   "events": [

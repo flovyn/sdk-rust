@@ -2,7 +2,7 @@
   "name": "parallel-two-tasks",
   "description": "Two tasks scheduled in parallel and awaited - tests per-type sequence matching",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000100",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "parallel-tasks-workflow",
   "input": { "items": ["a", "b"] },
   "events": [

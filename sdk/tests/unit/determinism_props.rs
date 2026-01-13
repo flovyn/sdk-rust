@@ -377,7 +377,7 @@ async fn test_single_task_is_deterministic() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .task_result("process-item", json!({"processed": true}))
@@ -394,7 +394,7 @@ async fn test_sequential_tasks_are_deterministic() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .task_result("process-item", json!({"processed": true}))
@@ -419,7 +419,7 @@ async fn test_time_based_workflow_is_deterministic() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000) // Even timestamp
             .rng_seed(42)
             .build()
@@ -436,7 +436,7 @@ async fn test_random_based_workflow_is_deterministic() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .task_result("path-a", json!({}))
@@ -454,7 +454,7 @@ async fn test_conditional_high_value_is_deterministic() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .task_result("request-approval", json!({"approved": true}))
@@ -472,7 +472,7 @@ async fn test_conditional_low_value_is_deterministic() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .build()
@@ -489,7 +489,7 @@ async fn test_parallel_workflow_is_deterministic() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .task_result("process-item", json!({"processed": true}))
@@ -514,7 +514,7 @@ async fn test_different_input_produces_different_actions() {
     let ctx_builder = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .task_result("process-item", json!({"processed": true}))
@@ -558,7 +558,7 @@ async fn test_conditional_paths_are_distinct() {
     let high_ctx = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .task_result("request-approval", json!({"approved": true}))
@@ -569,7 +569,7 @@ async fn test_conditional_paths_are_distinct() {
     let low_ctx = || {
         MockWorkflowContext::builder()
             .workflow_execution_id(Uuid::from_u128(1))
-            .tenant_id(Uuid::from_u128(2))
+            .org_id(Uuid::from_u128(2))
             .initial_time_millis(1000)
             .rng_seed(42)
             .build()

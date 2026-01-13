@@ -13,7 +13,7 @@ This plan implements the Task Streaming feature as specified in the design docum
 
 - Rust SDK compiles and existing tests pass
 - Flovyn server running with `StreamTaskData` gRPC endpoint implemented
-- Server SSE endpoint implemented at `/api/tenants/{tenant}/stream/workflows/{workflow_id}`
+- Server SSE endpoint implemented at `/api/orgs/{tenant}/stream/workflows/{workflow_id}`
 - Understanding of current `TaskContext` trait and `TaskContextImpl`
 
 ## Phase 1: Core Types and Stream Event Definitions ✅
@@ -269,7 +269,7 @@ This plan implements the Task Streaming feature as specified in the design docum
   pub(crate) struct SseStreamClient {
       base_url: String,
       auth_token: String,
-      tenant_slug: String,
+      org_slug: String,
       http_client: reqwest::Client,
   }
   ```
@@ -285,7 +285,7 @@ This plan implements the Task Streaming feature as specified in the design docum
       workflow_execution_id: Uuid,
   ) -> Result<impl Stream<Item = Result<TaskStreamEvent, StreamError>>, ClientError>
   ```
-  - Build SSE URL: `{base_url}/api/tenants/{tenant}/stream/workflows/{workflow_id}`
+  - Build SSE URL: `{base_url}/api/orgs/{tenant}/stream/workflows/{workflow_id}`
   - Set Authorization header
   - Set Accept: text/event-stream header
   - Return event stream using `eventsource_stream`

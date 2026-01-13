@@ -28,7 +28,7 @@ All gRPC clients now use authenticated channels:
 ### 3. E2E Test Harness
 - Uses Testcontainers to start Flovyn server
 - Connects to existing dev PostgreSQL (port 5435) and NATS (port 4222)
-- Creates test tenant and worker token via REST API with self-signed JWT
+- Creates test org and worker token via REST API with self-signed JWT
 - Server runs with `FLOVYN_SECURITY_JWT_SKIP_SIGNATURE_VERIFICATION=true`
 
 ### 4. Workflow Version Registration

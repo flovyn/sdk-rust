@@ -370,7 +370,7 @@ Client for workflow operations (start, query, signal).
 #[derive(uniffi::Record)]
 pub struct WorkerConfig {
     pub server_url: String,
-    pub tenant_id: String,
+    pub org_id: String,
     pub task_queue: String,
     pub worker_identity: Option<String>,
     pub max_concurrent_workflow_tasks: Option<u32>,
@@ -380,7 +380,7 @@ pub struct WorkerConfig {
 #[derive(uniffi::Record)]
 pub struct ClientConfig {
     pub server_url: String,
-    pub tenant_id: String,
+    pub org_id: String,
 }
 ```
 

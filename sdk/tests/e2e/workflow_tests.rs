@@ -9,15 +9,15 @@ use crate::{get_harness, with_timeout, TEST_TIMEOUT};
 use serde_json::json;
 use std::time::Duration;
 
-/// Test that the test harness can start all containers and create a tenant.
+/// Test that the test harness can start all containers and create an org.
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_harness_setup() {
     with_timeout(TEST_TIMEOUT, "test_harness_setup", async {
         let harness = get_harness().await;
 
-        assert!(!harness.tenant_id().is_nil());
-        assert!(!harness.tenant_slug().is_empty());
+        assert!(!harness.org_id().is_nil());
+        assert!(!harness.org_slug().is_empty());
         assert!(!harness.worker_token().is_empty());
         assert!(harness.grpc_port() > 0);
         assert!(harness.http_port() > 0);

@@ -140,8 +140,8 @@ pub trait WorkflowContext: Send + Sync {
     /// Get the unique ID of this workflow execution
     fn workflow_execution_id(&self) -> Uuid;
 
-    /// Get the tenant ID for this workflow
-    fn tenant_id(&self) -> Uuid;
+    /// Get the org ID for this workflow
+    fn org_id(&self) -> Uuid;
 
     /// Get the raw workflow input as JSON Value
     fn input_raw(&self) -> &Value;

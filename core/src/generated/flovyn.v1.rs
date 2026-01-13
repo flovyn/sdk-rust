@@ -5,10 +5,10 @@ pub struct PollRequest {
     /// Unique identifier for this worker
     #[prost(string, tag = "1")]
     pub worker_id: ::prost::alloc::string::String,
-    /// Tenant ID to poll workflows from
+    /// Organization ID to poll workflows from
     #[prost(string, tag = "2")]
-    pub tenant_id: ::prost::alloc::string::String,
-    /// Task queue to poll from (e.g., "default", "gpu-workers")
+    pub org_id: ::prost::alloc::string::String,
+    /// Queue to poll from (e.g., "default", "gpu-workers")
     #[prost(string, tag = "3")]
     pub queue: ::prost::alloc::string::String,
     /// Long polling timeout in seconds (e.g., 60)
@@ -27,10 +27,10 @@ pub struct SubscriptionRequest {
     /// Unique identifier for this worker
     #[prost(string, tag = "1")]
     pub worker_id: ::prost::alloc::string::String,
-    /// Tenant ID to subscribe to
+    /// Organization ID to subscribe to
     #[prost(string, tag = "2")]
-    pub tenant_id: ::prost::alloc::string::String,
-    /// Task queue to subscribe to
+    pub org_id: ::prost::alloc::string::String,
+    /// Queue to subscribe to
     #[prost(string, tag = "3")]
     pub queue: ::prost::alloc::string::String,
 }
@@ -53,13 +53,13 @@ pub struct WorkflowExecution {
     /// Workflow kind/type
     #[prost(string, tag = "2")]
     pub kind: ::prost::alloc::string::String,
-    /// Tenant ID
+    /// Organization ID
     #[prost(string, tag = "3")]
-    pub tenant_id: ::prost::alloc::string::String,
+    pub org_id: ::prost::alloc::string::String,
     /// Input data (serialized bytes)
     #[prost(bytes = "vec", tag = "4")]
     pub input: ::prost::alloc::vec::Vec<u8>,
-    /// Task queue for worker routing (e.g., "default", "gpu-workers")
+    /// Queue for worker routing (e.g., "default", "gpu-workers")
     #[prost(string, tag = "5")]
     pub queue: ::prost::alloc::string::String,
     /// Time-offset priority in milliseconds (priority score = created_at - priority_ms)
@@ -74,9 +74,9 @@ pub struct WorkflowExecution {
     /// Visual workflow definition ID (if this is a visual workflow)
     #[prost(string, optional, tag = "9")]
     pub workflow_definition_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// Space ID (if workflow is scoped to a space)
+    /// Team ID (if workflow is scoped to a team)
     #[prost(string, optional, tag = "10")]
-    pub space_id: ::core::option::Option<::prost::alloc::string::String>,
+    pub team_id: ::core::option::Option<::prost::alloc::string::String>,
     /// Worker pool ID (denormalized for dispatch efficiency)
     #[prost(string, optional, tag = "11")]
     pub worker_pool_id: ::core::option::Option<::prost::alloc::string::String>,
@@ -98,10 +98,10 @@ pub struct WorkflowExecution {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WorkAvailableEvent {
-    /// Tenant ID where work is available
+    /// Organization ID where work is available
     #[prost(string, tag = "1")]
-    pub tenant_id: ::prost::alloc::string::String,
-    /// Task queue where work is available
+    pub org_id: ::prost::alloc::string::String,
+    /// Queue where work is available
     #[prost(string, tag = "2")]
     pub queue: ::prost::alloc::string::String,
     /// Timestamp of notification (milliseconds since epoch)
@@ -112,7 +112,7 @@ pub struct WorkAvailableEvent {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StartWorkflowRequest {
     #[prost(string, tag = "1")]
-    pub tenant_id: ::prost::alloc::string::String,
+    pub org_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub workflow_kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "3")]
@@ -121,7 +121,7 @@ pub struct StartWorkflowRequest {
     #[prost(map = "string, string", tag = "4")]
     pub metadata:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
-    /// Task queue routing (default: "default")
+    /// Queue routing (default: "default")
     #[prost(string, tag = "5")]
     pub queue: ::prost::alloc::string::String,
     /// Time-offset priority in seconds (default: 0)
@@ -187,10 +187,10 @@ pub struct StartChildWorkflowRequest {
     #[prost(string, tag = "2")]
     pub child_execution_name: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
-    pub tenant_id: ::prost::alloc::string::String,
+    pub org_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "6")]
     pub input: ::prost::alloc::vec::Vec<u8>,
-    /// Task queue (inherits parent if empty)
+    /// Queue (inherits parent if empty)
     #[prost(string, tag = "7")]
     pub queue: ::prost::alloc::string::String,
     /// Time-offset priority in seconds (default: 0)
@@ -287,7 +287,7 @@ pub struct SubmitTaskRequest {
     #[prost(string, tag = "1")]
     pub workflow_execution_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub tenant_id: ::prost::alloc::string::String,
+    pub org_id: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub kind: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
@@ -331,7 +331,7 @@ pub struct PollTaskRequest {
     #[prost(string, tag = "1")]
     pub worker_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub tenant_id: ::prost::alloc::string::String,
+    pub org_id: ::prost::alloc::string::String,
     #[prost(map = "string, string", tag = "3")]
     pub worker_labels:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
@@ -634,10 +634,10 @@ pub struct CreatePromiseCommand {
     pub promise_id: ::prost::alloc::string::String,
     #[prost(int64, optional, tag = "2")]
     pub timeout_ms: ::core::option::Option<i64>,
-    /// Optional idempotency key for external webhook correlation
+    /// Idempotency key for external correlation (e.g., "stripe:ch_abc123")
     #[prost(string, optional, tag = "3")]
     pub idempotency_key: ::core::option::Option<::prost::alloc::string::String>,
-    /// TTL for the idempotency key in seconds (default: 86400 = 24 hours)
+    /// TTL for idempotency key in seconds (default: 86400 = 24 hours)
     #[prost(int64, optional, tag = "4")]
     pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
 }
@@ -796,12 +796,12 @@ pub struct WorkerRegistrationRequest {
     /// "WORKFLOW", "TASK", "UNIFIED"
     #[prost(string, tag = "3")]
     pub worker_type: ::prost::alloc::string::String,
-    /// Tenant and space
+    /// Organization and team
     #[prost(string, tag = "4")]
-    pub tenant_id: ::prost::alloc::string::String,
-    /// NULL = tenant-level (shared infrastructure)
+    pub org_id: ::prost::alloc::string::String,
+    /// NULL = org-level (shared infrastructure)
     #[prost(string, optional, tag = "5")]
-    pub space_id: ::core::option::Option<::prost::alloc::string::String>,
+    pub team_id: ::core::option::Option<::prost::alloc::string::String>,
     /// Connection info
     #[prost(string, tag = "6")]
     pub host_name: ::prost::alloc::string::String,
@@ -923,6 +923,9 @@ pub struct WorkerHeartbeatRequest {
 #[repr(i32)]
 pub enum StreamEventType {
     Unspecified = 0,
+    /// SDK-originated events (for real-time data streaming via gRPC)
+    /// Note: Server-originated task state events (task_created, task_started, etc.)
+    /// are published directly to SSE and don't use this proto enum.
     Token = 1,
     Progress = 2,
     Data = 3,

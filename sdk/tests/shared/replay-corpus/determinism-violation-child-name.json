@@ -2,7 +2,7 @@
   "name": "determinism-violation-child-name",
   "description": "Child workflow name mismatch - workflow changed child workflow name",
   "workflow_execution_id": "aaaa0000-0000-0000-0000-000000000005",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "org_id": "00000000-0000-0000-0000-000000000001",
   "workflow_kind": "child-name-change-workflow",
   "input": {},
   "events": [

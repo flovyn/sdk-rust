@@ -121,7 +121,7 @@ impl Default for WorkflowExecutorConfig {
 /// WorkflowExecutor executes workflow definitions with deterministic replay
 pub struct WorkflowExecutor {
     workflow_execution_id: Uuid,
-    tenant_id: Uuid,
+    org_id: Uuid,
     input: Value,
     existing_events: Vec<ReplayEvent>,
     config: WorkflowExecutorConfig,
@@ -131,13 +131,13 @@ impl WorkflowExecutor {
     /// Create a new workflow executor
     pub fn new(
         workflow_execution_id: Uuid,
-        tenant_id: Uuid,
+        org_id: Uuid,
         input: Value,
         existing_events: Vec<ReplayEvent>,
     ) -> Self {
         Self {
             workflow_execution_id,
-            tenant_id,
+            org_id,
             input,
             existing_events,
             config: WorkflowExecutorConfig::default(),
@@ -147,14 +147,14 @@ impl WorkflowExecutor {
     /// Create a new workflow executor with custom configuration
     pub fn with_config(
         workflow_execution_id: Uuid,
-        tenant_id: Uuid,
+        org_id: Uuid,
         input: Value,
         existing_events: Vec<ReplayEvent>,
         config: WorkflowExecutorConfig,
     ) -> Self {
         Self {
             workflow_execution_id,
-            tenant_id,
+            org_id,
             input,
             existing_events,
             config,
@@ -184,7 +184,7 @@ impl WorkflowExecutor {
 
         let ctx = Arc::new(WorkflowContextImpl::new(
             self.workflow_execution_id,
-            self.tenant_id,
+            self.org_id,
             self.input.clone(),
             recorder,
             self.existing_events.clone(),
@@ -215,7 +215,7 @@ impl WorkflowExecutor {
 
         let ctx = Arc::new(WorkflowContextImpl::new(
             self.workflow_execution_id,
-            self.tenant_id,
+            self.org_id,
             self.input.clone(),
             recorder,
             self.existing_events.clone(),
