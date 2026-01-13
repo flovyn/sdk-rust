@@ -355,14 +355,13 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .to_string();
 
             if event_key != key {
-                panic!(
-                    "Determinism violation: {}",
+                return Err(FlovynError::DeterminismViolation(
                     DeterminismViolationError::StateKeyMismatch {
                         sequence: state_seq as i32,
                         expected: event_key,
                         actual: key.to_string(),
-                    }
-                );
+                    },
+                ));
             }
 
             // State was already set - update replay engine state
@@ -409,14 +408,13 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 .to_string();
 
             if event_key != key {
-                panic!(
-                    "Determinism violation: {}",
+                return Err(FlovynError::DeterminismViolation(
                     DeterminismViolationError::StateKeyMismatch {
                         sequence: state_seq as i32,
                         expected: event_key,
                         actual: key.to_string(),
-                    }
-                );
+                    },
+                ));
             }
 
             // State was already cleared - update replay engine state
@@ -2322,7 +2320,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_state_key_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different state key
@@ -2345,8 +2342,12 @@ mod tests {
             1700000000000,
         );
 
-        // Try to set a different key - should panic with determinism violation
-        let _ = ctx.set_raw("order-id", serde_json::json!(456)).await;
+        // Try to set a different key - should return determinism violation error
+        let result = ctx.set_raw("order-id", serde_json::json!(456)).await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]

@@ -247,52 +247,21 @@ impl TestHarness {
                     return;
                 }
                 Ok(resp) => {
-                    eprintln!(
-                        "[HARNESS] Health check attempt {}/15: HTTP {} (not healthy yet)",
-                        i + 1,
-                        resp.status()
-                    );
+                    println!("Health check returned: {}", resp.status());
                 }
-                Err(e) => {
-                    eprintln!(
-                        "[HARNESS] Health check attempt {}/15: {} (server not ready)",
-                        i + 1,
-                        e
-                    );
+                Err(_) => {
+                    // Connection refused - server not ready yet
                 }
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
 
-        // Timeout - dump server logs before panicking
+        // Timeout - tell user to check logs
         let container_id = server.id();
-        eprintln!("\n[HARNESS] Server health check timed out after 30 seconds");
-        eprintln!(
-            "[HARNESS] Dumping server logs for container {}:\n",
+        panic!(
+            "Server health check timed out after 30 seconds.\nCheck logs with: docker logs {}",
             container_id
         );
-
-        // Dump server logs synchronously
-        match std::process::Command::new("docker")
-            .args(["logs", "--tail", "100", container_id])
-            .output()
-        {
-            Ok(output) => {
-                if !output.stdout.is_empty() {
-                    eprintln!("=== SERVER STDOUT ===");
-                    eprintln!("{}", String::from_utf8_lossy(&output.stdout));
-                }
-                if !output.stderr.is_empty() {
-                    eprintln!("=== SERVER STDERR ===");
-                    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-                }
-            }
-            Err(e) => {
-                eprintln!("[HARNESS] Failed to get server logs: {}", e);
-            }
-        }
-
-        panic!("Server health check timed out after 30 seconds. See logs above.");
     }
 
     pub fn grpc_host(&self) -> &str {

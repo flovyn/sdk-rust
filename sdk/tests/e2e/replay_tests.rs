@@ -111,10 +111,8 @@ async fn test_e2e_determinism_violation_on_task_type_change() {
 }
 
 /// Test that determinism violation is detected when child workflow name changes.
-/// Determinism violations now panic instead of returning errors.
 #[tokio::test]
 #[ignore]
-#[should_panic(expected = "Determinism violation")]
 async fn test_e2e_determinism_violation_on_child_name_change() {
     with_timeout(
         TEST_TIMEOUT,
@@ -145,10 +143,18 @@ async fn test_e2e_determinism_violation_on_child_name_change() {
                 chrono::Utc::now().timestamp_millis(),
             );
 
-            // Try to schedule a child workflow with different name - should panic with determinism violation
-            let _ = ctx
+            // Try to schedule a child workflow with different name - should return determinism violation error
+            let result = ctx
                 .schedule_workflow_raw("child-B", "process-child", serde_json::json!({}))
                 .await;
+            assert!(
+                matches!(
+                    result,
+                    Err(flovyn_sdk::error::FlovynError::DeterminismViolation(_))
+                ),
+                "Expected determinism violation, got {:?}",
+                result
+            );
         },
     )
     .await;
@@ -271,10 +277,8 @@ async fn test_e2e_mixed_commands_replay() {
 }
 
 /// Test that operation name mismatch is detected during replay.
-/// Determinism violations now panic instead of returning errors.
 #[tokio::test]
 #[ignore]
-#[should_panic(expected = "Determinism violation")]
 async fn test_e2e_operation_name_mismatch() {
     with_timeout(TEST_TIMEOUT, "test_e2e_operation_name_mismatch", async {
         let harness = get_harness().await;
@@ -300,8 +304,16 @@ async fn test_e2e_operation_name_mismatch() {
             chrono::Utc::now().timestamp_millis(),
         );
 
-        // Try to run with different operation name - should panic with determinism violation
-        let _ = ctx.run_raw("changed-op", serde_json::json!({})).await;
+        // Try to run with different operation name - should return determinism violation error
+        let result = ctx.run_raw("changed-op", serde_json::json!({})).await;
+        assert!(
+            matches!(
+                result,
+                Err(flovyn_sdk::error::FlovynError::DeterminismViolation(_))
+            ),
+            "Expected determinism violation, got {:?}",
+            result
+        );
     })
     .await;
 }
