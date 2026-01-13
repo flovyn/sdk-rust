@@ -193,7 +193,7 @@ impl CoreWorker {
                     "0.1.0",
                     worker_type,
                     org_id,
-                    None, // No space_id
+                    None, // No team_id
                     workflows,
                     tasks,
                 )

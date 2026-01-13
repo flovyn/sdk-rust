@@ -2046,7 +2046,6 @@ mod tests {
     // Tests for the per-type cursor matching behavior
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_task_type_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different task type
@@ -2069,14 +2068,17 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule a different task type - should panic with determinism violation
-        let _ = ctx
+        // Try to schedule a different task type - should return determinism violation error
+        let result = ctx
             .schedule_raw("process-payment", serde_json::json!({}))
             .await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_operation_name_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different operation name
@@ -2099,12 +2101,15 @@ mod tests {
             1700000000000,
         );
 
-        // Try to run a different operation - should panic with determinism violation
-        let _ = ctx.run_raw("calculate-total", serde_json::json!(100)).await;
+        // Try to run a different operation - should return determinism violation error
+        let result = ctx.run_raw("calculate-total", serde_json::json!(100)).await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_timer_id_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a timer with different ID
@@ -2128,12 +2133,15 @@ mod tests {
             1700000000000,
         );
 
-        // Try to sleep - should panic with determinism violation because timer ID doesn't match
-        let _ = ctx.sleep(Duration::from_secs(5)).await;
+        // Try to sleep - should return determinism violation error because timer ID doesn't match
+        let result = ctx.sleep(Duration::from_secs(5)).await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_promise_name_mismatch_violation() {
         use chrono::Utc;
         let promise_id = "550e8400-e29b-41d4-a716-446655440003";
@@ -2157,12 +2165,15 @@ mod tests {
             1700000000000,
         );
 
-        // Try to create a different promise - should panic with determinism violation
-        let _ = ctx.promise_raw("payment-confirmation").await;
+        // Try to create a different promise - should return determinism violation error
+        let result = ctx.promise_raw("payment-confirmation").await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_child_workflow_name_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different child workflow name
@@ -2185,10 +2196,14 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule a different child workflow - should panic with determinism violation
-        let _ = ctx
+        // Try to schedule a different child workflow - should return determinism violation error
+        let result = ctx
             .schedule_workflow_raw("payment-processor", "payment-wf", serde_json::json!({}))
             .await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]
@@ -2532,7 +2547,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_mixed_task_types_wrong_order_raises_violation() {
         use chrono::Utc;
         // History: task-A first
@@ -2566,12 +2580,15 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule task-B first (wrong order) - should panic with determinism violation
-        let _ = ctx.schedule_raw("task-B", serde_json::json!({})).await;
+        // Try to schedule task-B first (wrong order) - should return determinism violation error
+        let result = ctx.schedule_raw("task-B", serde_json::json!({})).await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Determinism violation")]
     async fn test_sequence_based_child_workflow_kind_mismatch_violation() {
         use chrono::Utc;
         // Create context with replay event for a different child workflow kind
@@ -2595,14 +2612,18 @@ mod tests {
             1700000000000,
         );
 
-        // Try to schedule with different kind - should panic with determinism violation
-        let _ = ctx
+        // Try to schedule with different kind - should return determinism violation error
+        let result = ctx
             .schedule_workflow_raw(
                 "payment-child",
                 "payment-workflow-v2",
                 serde_json::json!({}),
             )
             .await;
+        assert!(matches!(
+            result,
+            Err(crate::error::FlovynError::DeterminismViolation(_))
+        ));
     }
 
     #[tokio::test]

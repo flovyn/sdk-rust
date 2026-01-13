@@ -146,7 +146,7 @@ impl FlovynClientBuilder {
         self
     }
 
-    /// Set the space ID for space-scoped workflow/task registration
+    /// Set the team ID for team-scoped workflow/task registration
     pub fn team_id(mut self, id: Option<Uuid>) -> Self {
         self.team_id = id;
         self

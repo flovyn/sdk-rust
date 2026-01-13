@@ -89,7 +89,7 @@ pub struct WorkflowWorkerConfig {
     pub heartbeat_interval: Duration,     // Default: 30s
     pub worker_name: Option<String>,
     pub worker_version: String,           // Default: "1.0.0"
-    pub space_id: Option<Uuid>,
+    pub team_id: Option<Uuid>,
     pub enable_auto_registration: bool,   // Default: true
     pub enable_notifications: bool,       // Default: true
     pub worker_token: String,
