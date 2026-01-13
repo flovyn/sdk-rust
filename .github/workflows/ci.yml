@@ -78,6 +78,8 @@ jobs:
         run: docker pull rg.fr-par.scw.cloud/flovyn/flovyn-server:latest
 
       - name: Run E2E tests
-        run: cargo test --test e2e -- --ignored --nocapture
+        run: cargo test --test e2e -- --ignored --nocapture --show-output
         env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: debug
           FLOVYN_SERVER_IMAGE: rg.fr-par.scw.cloud/flovyn/flovyn-server
