@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use testcontainers::{
-    core::{ContainerPort, Mount, WaitFor},
+    core::{ContainerPort, Host, Mount, WaitFor},
     runners::AsyncRunner,
     ContainerAsync, GenericImage, ImageExt,
 };
@@ -173,6 +173,8 @@ impl TestHarness {
             .with_label("flovyn-test-session", session_id);
 
         let server: ContainerAsync<GenericImage> = server_image
+            // Add host.docker.internal mapping for Linux (required for container to reach host ports)
+            .with_host("host.docker.internal", Host::HostGateway)
             .with_env_var(
                 "DATABASE_URL",
                 format!(
