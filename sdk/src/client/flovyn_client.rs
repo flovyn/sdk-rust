@@ -314,7 +314,6 @@ impl FlovynClient {
                     worker_version: self.worker_version.clone(),
                     team_id: self.team_id,
                     enable_auto_registration: false, // Unified registration already done
-                    enable_notifications: true,
                     worker_token: self.worker_token.clone(),
                     enable_telemetry: self.enable_telemetry,
                     lifecycle_hooks: self.lifecycle_hooks.clone(),

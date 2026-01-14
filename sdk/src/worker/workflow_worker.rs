@@ -47,8 +47,6 @@ pub struct WorkflowWorkerConfig {
     pub team_id: Option<Uuid>,
     /// Enable automatic worker registration on startup
     pub enable_auto_registration: bool,
-    /// Enable notification subscription for instant work notifications
-    pub enable_notifications: bool,
     /// Worker token for gRPC authentication
     pub worker_token: String,
     /// Enable telemetry (span reporting to server)
@@ -76,7 +74,6 @@ impl Default for WorkflowWorkerConfig {
             worker_version: "1.0.0".to_string(),
             team_id: None,
             enable_auto_registration: true,
-            enable_notifications: true,
             worker_token: String::new(),
             enable_telemetry: false,
             lifecycle_hooks: HookChain::new(),
@@ -99,7 +96,6 @@ impl std::fmt::Debug for WorkflowWorkerConfig {
             .field("worker_version", &self.worker_version)
             .field("team_id", &self.team_id)
             .field("enable_auto_registration", &self.enable_auto_registration)
-            .field("enable_notifications", &self.enable_notifications)
             .field("worker_token", &"<redacted>")
             .field("enable_telemetry", &self.enable_telemetry)
             .field("lifecycle_hooks_count", &self.lifecycle_hooks.len())
@@ -123,8 +119,6 @@ pub struct WorkflowExecutorWorker {
     workflow_hook: Option<Arc<dyn WorkflowHook>>,
     /// Notify when worker is ready
     ready_notify: Arc<Notify>,
-    /// Notify when work is available (from notification subscription)
-    work_available_notify: Arc<Notify>,
     /// Span collector for telemetry
     span_collector: SpanCollector,
     /// External shutdown signal receiver
@@ -162,7 +156,6 @@ impl WorkflowExecutorWorker {
             server_worker_id: None,
             workflow_hook: None,
             ready_notify: Arc::new(Notify::new()),
-            work_available_notify: Arc::new(Notify::new()),
             span_collector,
             external_shutdown_rx: None,
             internals,
@@ -247,76 +240,6 @@ impl WorkflowExecutorWorker {
         }
     }
 
-    /// Run notification subscription loop
-    async fn notification_subscription_loop(
-        channel: Channel,
-        config: WorkflowWorkerConfig,
-        running: Arc<AtomicBool>,
-        work_available_notify: Arc<Notify>,
-    ) {
-        info!(
-            worker_id = %config.worker_id,
-            "Starting notification subscription"
-        );
-
-        while running.load(Ordering::SeqCst) {
-            let mut client = WorkflowDispatch::new(channel.clone(), &config.worker_token);
-
-            // Subscribe to notifications
-            let stream_result = client
-                .subscribe_to_notifications(
-                    &config.worker_id,
-                    &config.org_id.to_string(),
-                    &config.queue,
-                )
-                .await;
-
-            match stream_result {
-                Ok(mut stream) => {
-                    debug!("Notification subscription established");
-
-                    // Process notifications until stream ends or worker stops
-                    loop {
-                        if !running.load(Ordering::SeqCst) {
-                            break;
-                        }
-
-                        use tokio_stream::StreamExt;
-                        match stream.next().await {
-                            Some(Ok(event)) => {
-                                debug!(
-                                    org_id = %event.org_id,
-                                    queue = %event.queue,
-                                    "Received work available notification"
-                                );
-                                // Signal the polling loop to wake up immediately
-                                work_available_notify.notify_one();
-                            }
-                            Some(Err(e)) => {
-                                warn!("Notification stream error: {}", e);
-                                break; // Reconnect
-                            }
-                            None => {
-                                debug!("Notification stream ended");
-                                break; // Reconnect
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to subscribe to notifications: {}", e);
-                }
-            }
-
-            // Wait before reconnecting (unless shutting down)
-            if running.load(Ordering::SeqCst) {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        }
-
-        debug!("Notification subscription loop stopped");
-    }
-
     /// Start the worker
     pub async fn start(&mut self) -> Result<()> {
         if self.running.swap(true, Ordering::SeqCst) {
@@ -374,24 +297,6 @@ impl WorkflowExecutorWorker {
             .await;
         });
 
-        // Start notification subscription loop in background (if enabled)
-        if self.config.enable_notifications {
-            let notification_running = self.running.clone();
-            let notification_channel = self.channel.clone();
-            let notification_config = self.config.clone();
-            let work_available_notify = self.work_available_notify.clone();
-
-            tokio::spawn(async move {
-                Self::notification_subscription_loop(
-                    notification_channel,
-                    notification_config,
-                    notification_running,
-                    work_available_notify,
-                )
-                .await;
-            });
-        }
-
         // Signal that worker is ready
         // Use notify_one() instead of notify_waiters() to store a permit
         // that can be consumed even if await_ready() hasn't been called yet
@@ -399,9 +304,6 @@ impl WorkflowExecutorWorker {
 
         // Emit Ready event
         self.internals.record_ready(self.server_worker_id).await;
-
-        // Clone work_available_notify for the polling loop
-        let work_available_notify = self.work_available_notify.clone();
 
         // Polling loop with reconnection and pause support
         let mut reconnect_attempt: u32 = 0;
@@ -461,7 +363,6 @@ impl WorkflowExecutorWorker {
                     semaphore.clone(),
                     running.clone(),
                     workflow_hook.clone(),
-                    work_available_notify.clone(),
                     span_collector.clone(),
                     internals.clone(),
                 ) => {
@@ -536,7 +437,6 @@ impl WorkflowExecutorWorker {
         semaphore: Arc<Semaphore>,
         running: Arc<AtomicBool>,
         workflow_hook: Option<Arc<dyn WorkflowHook>>,
-        work_available_notify: Arc<Notify>,
         span_collector: SpanCollector,
         internals: Arc<WorkerInternals>,
     ) -> Result<()> {
@@ -610,19 +510,9 @@ impl WorkflowExecutorWorker {
                 Ok(())
             }
             None => {
-                // No workflow available - release permit and wait
+                // No workflow available - release permit and wait before next poll
                 drop(permit);
-
-                // Wait for notification or timeout before next poll
-                // This allows instant wake-up when work becomes available
-                tokio::select! {
-                    _ = work_available_notify.notified() => {
-                        debug!("Work available notification received, polling immediately");
-                    }
-                    _ = tokio::time::sleep(config.no_work_backoff) => {
-                        // Regular poll interval
-                    }
-                }
+                tokio::time::sleep(config.no_work_backoff).await;
                 Ok(())
             }
         }
@@ -1072,7 +962,6 @@ mod tests {
         assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
         assert_eq!(config.worker_version, "1.0.0");
         assert!(config.enable_auto_registration);
-        assert!(config.enable_notifications);
         assert!(config.worker_name.is_none());
         assert!(config.team_id.is_none());
     }
@@ -1091,7 +980,6 @@ mod tests {
             worker_version: "2.0.0".to_string(),
             team_id: Some(Uuid::new_v4()),
             enable_auto_registration: false,
-            enable_notifications: false,
             worker_token: "test-token".to_string(),
             enable_telemetry: true,
             lifecycle_hooks: HookChain::new(),
