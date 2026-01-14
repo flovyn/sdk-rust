@@ -12,7 +12,7 @@ pub mod models;
 pub mod tasks;
 pub mod workflows;
 
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use tasks::{AggregationTask, IngestionTask, TransformationTask, ValidationTask};
 use tracing::info;
 use workflows::DataPipelineWorkflow;

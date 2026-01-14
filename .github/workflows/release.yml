@@ -57,39 +57,39 @@ jobs:
 
       # Build for all targets using cargo-cross for cross-compilation
       - name: Build Linux x86_64
-        run: cargo build -p flovyn-ffi --release --target x86_64-unknown-linux-gnu
+        run: cargo build -p flovyn-worker-ffi --release --target x86_64-unknown-linux-gnu
 
       - name: Build Linux aarch64
-        run: cargo cross build -p flovyn-ffi --release --target aarch64-unknown-linux-gnu
+        run: cargo cross build -p flovyn-worker-ffi --release --target aarch64-unknown-linux-gnu
 
       # NOTE: macOS builds disabled - osxcross setup takes 10+ minutes
       # - name: Build macOS x86_64
-      #   run: cargo cross build -p flovyn-ffi --release --target x86_64-apple-darwin
+      #   run: cargo cross build -p flovyn-worker-ffi --release --target x86_64-apple-darwin
       #
       # - name: Build macOS aarch64
-      #   run: cargo cross build -p flovyn-ffi --release --target aarch64-apple-darwin
+      #   run: cargo cross build -p flovyn-worker-ffi --release --target aarch64-apple-darwin
 
       - name: Build Windows x86_64
-        run: cargo cross build -p flovyn-ffi --release --target x86_64-pc-windows-gnu
+        run: cargo cross build -p flovyn-worker-ffi --release --target x86_64-pc-windows-gnu
 
       # NOTE: Windows ARM64 disabled - needs native runner or manual llvm-mingw setup
       # - name: Build Windows ARM64
-      #   run: cargo cross build -p flovyn-ffi --release --target aarch64-pc-windows-gnullvm
+      #   run: cargo cross build -p flovyn-worker-ffi --release --target aarch64-pc-windows-gnullvm
 
       # Generate language bindings
       - name: Generate Kotlin bindings
         run: |
           mkdir -p bindings/kotlin
-          cargo run -p flovyn-ffi --bin uniffi-bindgen -- \
-            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
+          cargo run -p flovyn-worker-ffi --bin uniffi-bindgen -- \
+            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
             --language kotlin \
             --out-dir bindings/kotlin
 
       - name: Generate Python bindings
         run: |
           mkdir -p bindings/python
-          cargo run -p flovyn-ffi --bin uniffi-bindgen -- \
-            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
+          cargo run -p flovyn-worker-ffi --bin uniffi-bindgen -- \
+            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
             --language python \
             --out-dir bindings/python
 
@@ -98,23 +98,23 @@ jobs:
         run: |
           mkdir -p artifacts/natives/{linux-x86_64,linux-aarch64,windows-x86_64}
 
-          cp target/x86_64-unknown-linux-gnu/release/libflovyn_ffi.so \
+          cp target/x86_64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
              artifacts/natives/linux-x86_64/
 
-          cp target/aarch64-unknown-linux-gnu/release/libflovyn_ffi.so \
+          cp target/aarch64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
              artifacts/natives/linux-aarch64/
 
           # NOTE: macOS disabled
-          # cp target/x86_64-apple-darwin/release/libflovyn_ffi.dylib \
+          # cp target/x86_64-apple-darwin/release/libflovyn_worker_ffi.dylib \
           #    artifacts/natives/macos-x86_64/
-          # cp target/aarch64-apple-darwin/release/libflovyn_ffi.dylib \
+          # cp target/aarch64-apple-darwin/release/libflovyn_worker_ffi.dylib \
           #    artifacts/natives/macos-aarch64/
 
-          cp target/x86_64-pc-windows-gnu/release/flovyn_ffi.dll \
+          cp target/x86_64-pc-windows-gnu/release/flovyn_worker_ffi.dll \
              artifacts/natives/windows-x86_64/
 
           # NOTE: Windows ARM64 disabled
-          # cp target/aarch64-pc-windows-gnullvm/release/flovyn_ffi.dll \
+          # cp target/aarch64-pc-windows-gnullvm/release/flovyn_worker_ffi.dll \
           #    artifacts/natives/windows-aarch64/
 
           # Copy bindings
@@ -122,25 +122,25 @@ jobs:
 
           # Create combined archive for easy download
           cd artifacts
-          tar -czvf flovyn-ffi-${{ github.ref_name }}.tar.gz natives bindings
+          tar -czvf flovyn-worker-ffi-${{ github.ref_name }}.tar.gz natives bindings
 
       - name: Upload native libraries artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flovyn-ffi-natives
+          name: flovyn-worker-ffi-natives
           path: artifacts/natives/
 
       - name: Upload bindings artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flovyn-ffi-bindings
+          name: flovyn-worker-ffi-bindings
           path: artifacts/bindings/
 
       - name: Upload combined archive
         uses: actions/upload-artifact@v4
         with:
-          name: flovyn-ffi-release
-          path: artifacts/flovyn-ffi-${{ github.ref_name }}.tar.gz
+          name: flovyn-worker-ffi-release
+          path: artifacts/flovyn-worker-ffi-${{ github.ref_name }}.tar.gz
 
   # Validate the release
   validate:
@@ -182,20 +182,20 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Publish flovyn-core (dry-run)
-        run: cargo publish -p flovyn-core --dry-run
+      - name: Publish flovyn-worker-core (dry-run)
+        run: cargo publish -p flovyn-worker-core --dry-run
 
-      - name: Publish flovyn-sdk (dry-run)
-        run: cargo publish -p flovyn-sdk --dry-run
+      - name: Publish flovyn-worker-sdk (dry-run)
+        run: cargo publish -p flovyn-worker-sdk --dry-run
 
       # Uncomment when ready to publish
-      # - name: Publish flovyn-core
-      #   run: cargo publish -p flovyn-core
+      # - name: Publish flovyn-worker-core
+      #   run: cargo publish -p flovyn-worker-core
       #   env:
       #     CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       #
-      # - name: Publish flovyn-sdk
-      #   run: cargo publish -p flovyn-sdk
+      # - name: Publish flovyn-worker-sdk
+      #   run: cargo publish -p flovyn-worker-sdk
       #   env:
       #     CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -213,19 +213,19 @@ jobs:
       - name: Download native libraries
         uses: actions/download-artifact@v4
         with:
-          name: flovyn-ffi-natives
+          name: flovyn-worker-ffi-natives
           path: natives/
 
       - name: Download bindings
         uses: actions/download-artifact@v4
         with:
-          name: flovyn-ffi-bindings
+          name: flovyn-worker-ffi-bindings
           path: bindings/
 
       - name: Download combined archive
         uses: actions/download-artifact@v4
         with:
-          name: flovyn-ffi-release
+          name: flovyn-worker-ffi-release
           path: ./
 
       # Create individual platform archives for direct download
@@ -234,10 +234,10 @@ jobs:
         run: |
           cd natives
           for platform in linux-x86_64 linux-aarch64 windows-x86_64; do
-            tar -czvf ../libflovyn_ffi-${platform}.tar.gz ${platform}/
+            tar -czvf ../libflovyn_worker_ffi-${platform}.tar.gz ${platform}/
           done
           cd ../bindings
-          tar -czvf ../flovyn-ffi-bindings.tar.gz .
+          tar -czvf ../flovyn-worker-ffi-bindings.tar.gz .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -246,8 +246,8 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
           files: |
-            flovyn-ffi-${{ github.ref_name }}.tar.gz
-            libflovyn_ffi-linux-x86_64.tar.gz
-            libflovyn_ffi-linux-aarch64.tar.gz
-            libflovyn_ffi-windows-x86_64.tar.gz
-            flovyn-ffi-bindings.tar.gz
+            flovyn-worker-ffi-${{ github.ref_name }}.tar.gz
+            libflovyn_worker_ffi-linux-x86_64.tar.gz
+            libflovyn_worker_ffi-linux-aarch64.tar.gz
+            libflovyn_worker_ffi-windows-x86_64.tar.gz
+            flovyn-worker-ffi-bindings.tar.gz

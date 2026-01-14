@@ -9,8 +9,8 @@
 //! 4. **Batch with Concurrency Limit** - Process items with controlled parallelism
 
 use async_trait::async_trait;
-use flovyn_sdk::prelude::*;
-use flovyn_sdk::workflow::combinators::{join_all, join_n, select, with_timeout};
+use flovyn_worker_sdk::prelude::*;
+use flovyn_worker_sdk::workflow::combinators::{join_all, join_n, select, with_timeout};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

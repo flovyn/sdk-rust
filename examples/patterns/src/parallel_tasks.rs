@@ -11,7 +11,7 @@
 //! - `fetch-items`: Fetches a dynamic list of items from a source
 
 use async_trait::async_trait;
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

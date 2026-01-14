@@ -6,7 +6,7 @@ license.workspace = true
 description = "Minimal Flovyn workflow example"
 
 [dependencies]
-flovyn-sdk.workspace = true
+flovyn-worker-sdk.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,4 +19,4 @@ async-trait.workspace = true
 dotenvy.workspace = true
 
 [dev-dependencies]
-flovyn-sdk = { path = "../../sdk", features = ["testing"] }
+flovyn-worker-sdk = { path = "../../worker-sdk", features = ["testing"] }

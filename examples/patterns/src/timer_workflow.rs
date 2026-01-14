@@ -7,7 +7,7 @@
 //! - Timeout-based workflows
 
 use async_trait::async_trait;
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -244,7 +244,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use flovyn_sdk::testing::MockWorkflowContext;
+    use flovyn_worker_sdk::testing::MockWorkflowContext;
 
     #[tokio::test]
     async fn test_reminder_workflow_execution() {

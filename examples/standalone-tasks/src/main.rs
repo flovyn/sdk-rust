@@ -13,7 +13,7 @@
 //! - IndexingTask: Indexes documents with batch progress
 
 use async_trait::async_trait;
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use rand::Rng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1041,7 +1041,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use flovyn_sdk::testing::MockTaskContext;
+    use flovyn_worker_sdk::testing::MockTaskContext;
 
     #[tokio::test]
     async fn test_data_export_progress_reporting() {

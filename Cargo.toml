@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "core",
-    "ffi",
-    "sdk",
+    "worker-core",
+    "worker-ffi",
+    "worker-sdk",
     "examples/hello-world",
     "examples/ecommerce",
     "examples/data-pipeline",
@@ -19,9 +19,9 @@ repository = "https://github.com/flovyn/sdk-rust"
 rust-version = "1.82.0"
 
 [workspace.dependencies]
-# Flovyn SDK
-flovyn-sdk-core = { path = "./core" }
-flovyn-sdk = { path = "./sdk" }
+# Flovyn Worker SDK
+flovyn-worker-core = { path = "./worker-core" }
+flovyn-worker-sdk = { path = "./worker-sdk" }
 
 # Async runtime
 tokio = { version = "1.37", features = ["full"] }

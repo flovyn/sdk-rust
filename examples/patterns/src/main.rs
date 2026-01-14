@@ -16,7 +16,7 @@ pub mod retry_workflow;
 pub mod timer_workflow;
 
 use child_workflow::{BatchProcessingWorkflow, ControlledParallelWorkflow, ItemProcessorWorkflow};
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use parallel_tasks::{
     FetchDataTask, FetchItemsTask, ProcessItemTask, RunOperationTask, SlowOperationTask,
 };

@@ -240,7 +240,7 @@ examples/
 Workflows are defined by implementing the `WorkflowDefinition` trait:
 
 ```rust
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 
 struct MyWorkflow;
 
@@ -262,7 +262,7 @@ impl WorkflowDefinition for MyWorkflow {
 Tasks are defined by implementing the `TaskDefinition` trait:
 
 ```rust
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 
 struct MyTask;
 

@@ -4,7 +4,7 @@
 
 use crate::models::*;
 use async_trait::async_trait;
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use tracing::info;
 
 /// Task that transforms data

@@ -7,7 +7,7 @@
 //! - Circuit breaker patterns
 
 use async_trait::async_trait;
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

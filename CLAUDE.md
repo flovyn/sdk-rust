@@ -12,10 +12,10 @@ cargo build --workspace
 cargo test --workspace
 
 # Run specific test suite (unit, tck, e2e, or model)
-cargo test --test unit -p flovyn-sdk
-cargo test --test tck -p flovyn-sdk
-cargo test --test e2e -p flovyn-sdk
-cargo test --test model -p flovyn-sdk    # Stateright model checking
+cargo test --test unit -p flovyn-worker-sdk
+cargo test --test tck -p flovyn-worker-sdk
+cargo test --test e2e -p flovyn-worker-sdk
+cargo test --test model -p flovyn-worker-sdk    # Stateright model checking
 
 # Run tests with testing utilities feature
 cargo test --features testing
@@ -38,10 +38,12 @@ This is the Rust SDK for Flovyn, a workflow orchestration platform using event s
 
 ### Workspace Structure
 
-- `sdk/` - Core SDK library (`flovyn-sdk` crate)
+- `worker-core/` - Core library (`flovyn-worker-core` crate) - gRPC clients, protobuf, worker internals
+- `worker-sdk/` - Worker SDK library (`flovyn-worker-sdk` crate) - traits, contexts, executors
+- `worker-ffi/` - FFI library (`flovyn-worker-ffi` crate) - UniFFI bindings for Kotlin/Swift/Python
 - `examples/` - Example applications (hello-world, ecommerce, data-pipeline, patterns)
 
-### SDK Module Layout (`sdk/src/`)
+### SDK Module Layout (`worker-sdk/src/`)
 
 - **client/** - FlovynClient builder, worker lifecycle, workflow dispatch, task execution
 - **workflow/** - WorkflowDefinition trait, WorkflowContext, commands, events, replay recorder
@@ -70,7 +72,7 @@ Workflows must be deterministic for replay. Use context methods instead of stand
 
 Enable `testing` feature for mock contexts and test environment:
 ```toml
-flovyn-sdk = { path = "./sdk", features = ["testing"] }
+flovyn-worker-sdk = { path = "./worker-sdk", features = ["testing"] }
 ```
 
 Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `TimeController`, test builders.

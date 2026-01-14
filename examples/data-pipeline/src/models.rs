@@ -2,7 +2,7 @@
 //!
 //! This module contains all the data types used in the ETL pipeline workflow.
 
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use std::fmt;
 
 // =============================================================================

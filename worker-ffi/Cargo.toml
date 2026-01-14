@@ -1,0 +1,31 @@
+[package]
+name = "flovyn-worker-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Flovyn Worker FFI - uniffi bindings for cross-language SDK support"
+license = "Apache-2.0"
+repository = "https://github.com/flovyn/sdk-rust"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[dependencies]
+flovyn-worker-core = { path = "../worker-core" }
+uniffi = { version = "0.28", features = ["cli"] }
+tokio = { version = "1.37", features = ["rt-multi-thread", "sync"] }
+tonic = "0.11"
+async-trait = "0.1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+parking_lot = "0.12"
+chrono = "0.4"
+tracing = "0.1"
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"

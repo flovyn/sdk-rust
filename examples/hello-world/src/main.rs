@@ -8,7 +8,7 @@
 //! - Start a worker
 
 use async_trait::async_trait;
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -236,7 +236,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use flovyn_sdk::testing::{MockTaskContext, MockWorkflowContext};
+    use flovyn_worker_sdk::testing::{MockTaskContext, MockWorkflowContext};
 
     #[tokio::test]
     async fn test_greeting_workflow_execution() {

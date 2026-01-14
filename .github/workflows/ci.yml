@@ -44,7 +44,7 @@ jobs:
         run: cargo test --workspace --verbose
 
       - name: Run model checking tests
-        run: cargo test --test model -p flovyn-sdk -- --test-threads=1
+        run: cargo test --test model -p flovyn-worker-sdk -- --test-threads=1
 
       - name: Build documentation
         run: cargo doc --no-deps --workspace

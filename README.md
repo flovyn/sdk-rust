@@ -15,14 +15,14 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-flovyn-sdk = "0.1"
+flovyn-worker-sdk = "0.1"
 ```
 
 Or use a path dependency during development:
 
 ```toml
 [dependencies]
-flovyn-sdk = { path = "../sdk-rust/sdk" }
+flovyn-worker-sdk = { path = "../sdk-rust/worker-sdk" }
 ```
 
 ## Quick Start
@@ -30,7 +30,7 @@ flovyn-sdk = { path = "../sdk-rust/sdk" }
 ### Define a Workflow
 
 ```rust
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 
 struct GreetingWorkflow;
 
@@ -65,7 +65,7 @@ impl WorkflowDefinition for GreetingWorkflow {
 ### Define a Task
 
 ```rust
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 
 struct ProcessDataTask;
 
@@ -96,7 +96,7 @@ impl TaskDefinition for ProcessDataTask {
 ### Start a Worker
 
 ```rust
-use flovyn_sdk::prelude::*;
+use flovyn_worker_sdk::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -134,13 +134,13 @@ See the [examples](./examples) directory for complete working examples:
 cargo test --workspace
 
 # Run unit tests only
-cargo test --test unit -p flovyn-sdk
+cargo test --test unit -p flovyn-worker-sdk
 
 # Run TCK (conformance) tests
-cargo test --test tck -p flovyn-sdk
+cargo test --test tck -p flovyn-worker-sdk
 
 # Run E2E tests (requires Docker)
-FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-sdk -- --include-ignored
+FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-worker-sdk -- --include-ignored
 ```
 
 ### E2E Test Logging
@@ -149,10 +149,10 @@ E2E tests default to `warn` level to reduce noise. To see more detailed logs:
 
 ```bash
 # Show INFO logs
-RUST_LOG=info FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-sdk -- --include-ignored
+RUST_LOG=info FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-worker-sdk -- --include-ignored
 
 # Show DEBUG logs for debugging
-RUST_LOG=flovyn_sdk=debug FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-sdk -- --include-ignored --nocapture
+RUST_LOG=flovyn_sdk=debug FLOVYN_E2E_USE_DEV_INFRA=1 cargo test --test e2e -p flovyn-worker-sdk -- --include-ignored --nocapture
 ```
 
 ## Deterministic APIs
@@ -167,7 +167,7 @@ Workflows must be deterministic. Use these APIs instead of standard library:
 
 ## Documentation
 
-- [API Documentation](https://docs.rs/flovyn-sdk)
+- [API Documentation](https://docs.rs/flovyn-worker-sdk)
 - [Flovyn Server](https://github.com/flovyn/flovyn)
 
 ## License
