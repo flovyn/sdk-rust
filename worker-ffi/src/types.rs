@@ -242,6 +242,63 @@ impl FfiReplayEvent {
     }
 }
 
+/// Registration information for FFI.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiRegistrationInfo {
+    /// Server-assigned worker ID.
+    pub worker_id: String,
+
+    /// Whether registration was successful.
+    pub success: bool,
+
+    /// When the worker was registered (ms since epoch).
+    pub registered_at_ms: i64,
+
+    /// Registered workflow kinds.
+    pub workflow_kinds: Vec<String>,
+
+    /// Registered task kinds.
+    pub task_kinds: Vec<String>,
+
+    /// Whether there are any registration conflicts.
+    pub has_conflicts: bool,
+}
+
+/// Connection information for FFI.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiConnectionInfo {
+    /// Whether currently connected.
+    pub connected: bool,
+
+    /// Time of last successful heartbeat (ms since epoch, if any).
+    pub last_heartbeat_ms: Option<i64>,
+
+    /// Time of last successful poll (ms since epoch, if any).
+    pub last_poll_ms: Option<i64>,
+
+    /// Number of consecutive heartbeat failures.
+    pub heartbeat_failures: u32,
+
+    /// Number of consecutive poll failures.
+    pub poll_failures: u32,
+
+    /// Current reconnection attempt (if reconnecting).
+    pub reconnect_attempt: Option<u32>,
+}
+
+impl Default for FfiConnectionInfo {
+    fn default() -> Self {
+        Self {
+            connected: false,
+            last_heartbeat_ms: None,
+            last_poll_ms: None,
+            heartbeat_failures: 0,
+            poll_failures: 0,
+            reconnect_attempt: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

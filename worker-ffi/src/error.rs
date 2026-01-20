@@ -59,6 +59,13 @@ pub enum FfiError {
     #[error("Worker is shutting down")]
     ShuttingDown,
 
+    /// Invalid state for the requested operation.
+    #[error("Invalid state: {msg}")]
+    InvalidState {
+        /// Description of why the state is invalid.
+        msg: String,
+    },
+
     /// No work available (poll returned empty).
     #[error("No work available")]
     NoWorkAvailable,

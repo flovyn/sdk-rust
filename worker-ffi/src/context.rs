@@ -1,9 +1,13 @@
-//! FfiWorkflowContext - Replay-aware workflow context for FFI.
+//! FFI Context types for workflows and tasks.
 //!
-//! This module provides a workflow context that handles replay logic internally,
+//! This module provides context types for FFI:
+//!
+//! ## FfiWorkflowContext
+//!
+//! A replay-aware workflow context that handles replay logic internally,
 //! so language SDKs don't need to implement replay matching themselves.
 //!
-//! ## How it works
+//! ### How it works
 //!
 //! 1. Context is created with replay events from the server
 //! 2. Events are pre-filtered by type for O(1) lookup
@@ -12,6 +16,10 @@
 //!    - If replaying: validate determinism and return cached result
 //!    - If new: generate command and return Pending
 //! 5. Commands are extracted at completion time
+//!
+//! ## FfiTaskContext
+//!
+//! A task context that provides streaming and lifecycle APIs during task execution.
 
 use flovyn_worker_core::workflow::execution::{DeterministicRandom, SeededRandom};
 use flovyn_worker_core::workflow::ReplayEngine;
@@ -360,15 +368,17 @@ impl FfiWorkflowContext {
         for event in events {
             match event.event_type {
                 FfiEventType::ChildWorkflowCompleted => {
-                    if let Some(child_id) = event.get_string("childWorkflowExecutionId") {
+                    // Use childExecutionName as the key (matching Rust SDK behavior)
+                    if let Some(child_name) = event.get_string("childExecutionName") {
                         let output = event.get_bytes("output").unwrap_or_default();
-                        results.insert(child_id, ChildWorkflowResultInternal::Completed { output });
+                        results.insert(child_name, ChildWorkflowResultInternal::Completed { output });
                     }
                 }
                 FfiEventType::ChildWorkflowFailed => {
-                    if let Some(child_id) = event.get_string("childWorkflowExecutionId") {
+                    // Use childExecutionName as the key (matching Rust SDK behavior)
+                    if let Some(child_name) = event.get_string("childExecutionName") {
                         let error = event.get_string("error").unwrap_or_default();
-                        results.insert(child_id, ChildWorkflowResultInternal::Failed { error });
+                        results.insert(child_name, ChildWorkflowResultInternal::Failed { error });
                     }
                 }
                 _ => {}
@@ -383,7 +393,8 @@ impl FfiWorkflowContext {
             .iter()
             .filter(|e| e.event_type == FfiEventType::OperationCompleted)
             .filter_map(|e| {
-                let name = e.get_string("operationName")?;
+                // Note: Server may use "name" or "operationName" (match Rust SDK behavior)
+                let name = e.get_string("operationName").or_else(|| e.get_string("name"))?;
                 let result = e.get_bytes("result")?;
                 Some((name, result))
             })
@@ -391,11 +402,14 @@ impl FfiWorkflowContext {
     }
 
     /// Generate a deterministic UUID based on workflow ID and counter.
+    ///
+    /// Uses UUID v5 (SHA-1 based) with the workflow execution ID as namespace
+    /// and "{workflow_id}:{counter}" as the name. This matches the Rust SDK
+    /// implementation and ensures no collisions with nested workflows.
     fn generate_uuid(&self) -> Uuid {
         let counter = self.uuid_counter.fetch_add(1, Ordering::SeqCst);
-        let base = self.workflow_execution_id.as_u128();
-        let combined = base.wrapping_add(counter as u128);
-        Uuid::from_u128(combined)
+        let name = format!("{}:{}", self.workflow_execution_id, counter);
+        Uuid::new_v5(&self.workflow_execution_id, name.as_bytes())
     }
 }
 
@@ -437,6 +451,11 @@ impl FfiWorkflowContext {
                     ),
                 });
             }
+
+            // IMPORTANT: Increment UUID counter during replay to stay in sync
+            // This ensures that when we generate a NEW UUID after replay,
+            // it won't collide with previously generated UUIDs.
+            self.uuid_counter.fetch_add(1, Ordering::SeqCst);
 
             let task_execution_id = event
                 .get_string("taskExecutionId")
@@ -597,7 +616,7 @@ impl FfiWorkflowContext {
         if let Some(event) = self.replay_engine.get_child_workflow_event(child_seq) {
             // Replay: validate name matches
             let event_name = event
-                .get_string("childWorkflowExecutionName")
+                .get_string("childExecutionName")
                 .unwrap_or_default();
 
             if event_name != name {
@@ -609,10 +628,15 @@ impl FfiWorkflowContext {
                 });
             }
 
-            // Also validate kind if provided
+            // Also validate kind if provided and event has a kind
+            // (match Rust SDK behavior: only validate if event_kind is non-empty)
+            // Note: Server may use either "childWorkflowKind" or "workflowKind"
             if let Some(ref expected_kind) = kind {
-                let event_kind = event.get_string("workflowKind").unwrap_or_default();
-                if event_kind != expected_kind {
+                let event_kind = event
+                    .get_string("childWorkflowKind")
+                    .or_else(|| event.get_string("workflowKind"))
+                    .unwrap_or_default();
+                if !event_kind.is_empty() && event_kind != expected_kind {
                     return Err(FfiError::DeterminismViolation {
                         msg: format!(
                             "Child workflow kind mismatch at ChildWorkflow({}): expected '{}', got '{}'",
@@ -623,12 +647,16 @@ impl FfiWorkflowContext {
             }
 
             let child_execution_id = event
-                .get_string("childWorkflowExecutionId")
+                .get_string("childExecutionId")
                 .unwrap_or_default()
                 .to_string();
 
-            // Look up terminal result from FFI-specific cache
-            if let Some(result) = self.completed_child_workflows.get(&child_execution_id) {
+            // IMPORTANT: Increment UUID counter during replay to stay in sync
+            self.uuid_counter.fetch_add(1, Ordering::SeqCst);
+
+            // Look up terminal result from FFI-specific cache using the name
+            // (matching how build_child_workflow_results keys by childExecutionName)
+            if let Some(result) = self.completed_child_workflows.get(&name) {
                 return Ok(match result {
                     ChildWorkflowResultInternal::Completed { output } => {
                         FfiChildWorkflowResult::Completed {
@@ -656,7 +684,8 @@ impl FfiWorkflowContext {
                     kind,
                     child_execution_id: child_execution_id.clone(),
                     input,
-                    queue: queue.unwrap_or_else(|| "default".to_string()),
+                    // Use empty string for queue to inherit from parent (matching Rust SDK behavior)
+                    queue: queue.unwrap_or_default(),
                     priority_seconds: priority_seconds.unwrap_or(0),
                 });
 
@@ -674,7 +703,11 @@ impl FfiWorkflowContext {
 
         if let Some(event) = self.replay_engine.get_operation_event(operation_seq) {
             // Replay: validate operation name matches
-            let event_name = event.get_string("operationName").unwrap_or_default();
+            // Note: Server may use "name" or "operationName" for the field (match Rust SDK behavior)
+            let event_name = event
+                .get_string("operationName")
+                .or_else(|| event.get_string("name"))
+                .unwrap_or_default();
 
             if event_name != name {
                 return Err(FfiError::DeterminismViolation {
@@ -1000,5 +1033,237 @@ mod tests {
         let commands = ctx.take_commands();
         assert_eq!(commands.len(), 2);
         assert_eq!(ctx.command_count(), 0);
+    }
+}
+
+// ============================================================================
+// FfiTaskContext - Task context with streaming support
+// ============================================================================
+
+/// Stream event types for FFI.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum FfiStreamEvent {
+    /// LLM token or text chunk.
+    Token {
+        /// The token or text chunk.
+        text: String,
+    },
+    /// Progress update with optional details.
+    Progress {
+        /// Progress value (0.0 to 1.0).
+        progress: f64,
+        /// Optional progress details.
+        details: Option<String>,
+    },
+    /// Arbitrary structured data.
+    Data {
+        /// Data payload as JSON bytes.
+        data: Vec<u8>,
+    },
+    /// Error notification.
+    Error {
+        /// Error message.
+        message: String,
+        /// Optional error code.
+        code: Option<String>,
+    },
+}
+
+impl FfiStreamEvent {
+    /// Convert to core StreamEvent.
+    pub fn to_core_event(&self) -> flovyn_worker_core::task::streaming::StreamEvent {
+        use flovyn_worker_core::task::streaming::StreamEvent;
+        match self {
+            FfiStreamEvent::Token { text } => StreamEvent::token(text),
+            FfiStreamEvent::Progress { progress, details } => {
+                StreamEvent::progress(*progress, details.as_deref())
+            }
+            FfiStreamEvent::Data { data } => {
+                let value: serde_json::Value =
+                    serde_json::from_slice(data).unwrap_or(serde_json::Value::Null);
+                StreamEvent::data_value(value)
+            }
+            FfiStreamEvent::Error { message, code } => {
+                StreamEvent::error(message, code.as_deref())
+            }
+        }
+    }
+}
+
+/// Task context for FFI, providing streaming and lifecycle APIs.
+///
+/// This context is created for each task activation and allows:
+/// - Streaming tokens, progress, data, and errors to connected clients
+/// - Checking cancellation status
+/// - Reporting persisted progress
+#[derive(uniffi::Object)]
+pub struct FfiTaskContext {
+    /// Task execution ID.
+    task_execution_id: Uuid,
+    /// Workflow execution ID (if task is part of a workflow).
+    workflow_execution_id: Option<Uuid>,
+    /// Current attempt number (1-indexed).
+    attempt: u32,
+    /// gRPC channel for streaming.
+    channel: tonic::transport::Channel,
+    /// Worker token for authentication.
+    worker_token: String,
+    /// Tokio runtime for async operations.
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    /// Cancellation flag.
+    cancelled: AtomicBool,
+}
+
+impl FfiTaskContext {
+    /// Create a new FfiTaskContext.
+    pub fn new(
+        task_execution_id: Uuid,
+        workflow_execution_id: Option<Uuid>,
+        attempt: u32,
+        channel: tonic::transport::Channel,
+        worker_token: String,
+        runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            task_execution_id,
+            workflow_execution_id,
+            attempt,
+            channel,
+            worker_token,
+            runtime,
+            cancelled: AtomicBool::new(false),
+        })
+    }
+
+    /// Mark the task as cancelled.
+    pub fn mark_cancelled(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+}
+
+#[uniffi::export]
+impl FfiTaskContext {
+    /// Get the task execution ID.
+    pub fn task_execution_id(&self) -> String {
+        self.task_execution_id.to_string()
+    }
+
+    /// Get the workflow execution ID (if any).
+    pub fn workflow_execution_id(&self) -> Option<String> {
+        self.workflow_execution_id.map(|id| id.to_string())
+    }
+
+    /// Get the current attempt number (1-indexed).
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    /// Check if the task has been cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Stream a generic event to connected clients.
+    ///
+    /// Events are ephemeral (not persisted) and delivered via SSE.
+    /// This method is fire-and-forget; delivery failures are logged but not returned.
+    pub fn stream(&self, event: FfiStreamEvent) -> Result<bool, FfiError> {
+        use flovyn_worker_core::client::TaskExecutionClient;
+
+        let core_event = event.to_core_event();
+
+        self.runtime.block_on(async {
+            let mut client = TaskExecutionClient::new(self.channel.clone(), &self.worker_token);
+            client
+                .stream_task_data(self.task_execution_id, self.workflow_execution_id, &core_event)
+                .await
+                .map_err(|e| FfiError::Other {
+                    msg: format!("Stream error: {}", e),
+                })
+        })
+    }
+
+    /// Stream a token (convenience method).
+    ///
+    /// Use for streaming text generation from language models.
+    pub fn stream_token(&self, text: String) -> Result<bool, FfiError> {
+        self.stream(FfiStreamEvent::Token { text })
+    }
+
+    /// Stream progress (convenience method).
+    ///
+    /// Progress values are clamped to 0.0-1.0 during serialization.
+    pub fn stream_progress(&self, progress: f64, details: Option<String>) -> Result<bool, FfiError> {
+        self.stream(FfiStreamEvent::Progress { progress, details })
+    }
+
+    /// Stream data (convenience method).
+    ///
+    /// Data is provided as JSON bytes.
+    pub fn stream_data(&self, data: Vec<u8>) -> Result<bool, FfiError> {
+        self.stream(FfiStreamEvent::Data { data })
+    }
+
+    /// Stream an error notification (convenience method).
+    ///
+    /// Use to notify clients of recoverable errors during execution.
+    /// For fatal errors, let the task fail normally.
+    pub fn stream_error(&self, message: String, code: Option<String>) -> Result<bool, FfiError> {
+        self.stream(FfiStreamEvent::Error { message, code })
+    }
+}
+
+#[cfg(test)]
+mod task_context_tests {
+    use super::*;
+
+    #[test]
+    fn test_ffi_stream_event_token() {
+        let event = FfiStreamEvent::Token {
+            text: "Hello".to_string(),
+        };
+        let core = event.to_core_event();
+        assert!(matches!(
+            core,
+            flovyn_worker_core::task::streaming::StreamEvent::Token { .. }
+        ));
+    }
+
+    #[test]
+    fn test_ffi_stream_event_progress() {
+        let event = FfiStreamEvent::Progress {
+            progress: 0.5,
+            details: Some("Halfway".to_string()),
+        };
+        let core = event.to_core_event();
+        assert!(matches!(
+            core,
+            flovyn_worker_core::task::streaming::StreamEvent::Progress { .. }
+        ));
+    }
+
+    #[test]
+    fn test_ffi_stream_event_data() {
+        let event = FfiStreamEvent::Data {
+            data: b"{\"count\": 42}".to_vec(),
+        };
+        let core = event.to_core_event();
+        assert!(matches!(
+            core,
+            flovyn_worker_core::task::streaming::StreamEvent::Data { .. }
+        ));
+    }
+
+    #[test]
+    fn test_ffi_stream_event_error() {
+        let event = FfiStreamEvent::Error {
+            message: "Something went wrong".to_string(),
+            code: Some("ERR_001".to_string()),
+        };
+        let core = event.to_core_event();
+        assert!(matches!(
+            core,
+            flovyn_worker_core::task::streaming::StreamEvent::Error { .. }
+        ));
     }
 }

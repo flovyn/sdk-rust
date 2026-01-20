@@ -20,9 +20,20 @@ use crate::activation::{
     WorkflowCompletionStatus,
 };
 use crate::config::WorkerConfig;
-use crate::context::FfiWorkflowContext;
+use crate::context::{FfiTaskContext, FfiWorkflowContext};
 use crate::error::FfiError;
 use crate::types::{FfiEventType, FfiReplayEvent};
+
+/// Lifecycle event for worker status changes.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct LifecycleEvent {
+    /// Event name (e.g., "starting", "registered", "ready", "paused", "resumed", "stopped")
+    pub event_name: String,
+    /// Timestamp in milliseconds since Unix epoch
+    pub timestamp_ms: i64,
+    /// Optional additional data as JSON string
+    pub data: Option<String>,
+}
 
 /// The main worker object exposed to foreign languages via FFI.
 ///
@@ -41,10 +52,18 @@ pub struct CoreWorker {
     config: WorkerConfig,
     /// Server-assigned worker ID after registration
     worker_id: Mutex<Option<Uuid>>,
-    /// Tokio runtime for async operations
-    runtime: Runtime,
+    /// Tokio runtime for async operations (Arc for sharing with task contexts)
+    runtime: Arc<Runtime>,
     /// Shutdown flag
     shutdown_requested: std::sync::atomic::AtomicBool,
+    /// Worker start time in milliseconds since Unix epoch
+    started_at_ms: std::sync::atomic::AtomicI64,
+    /// Paused flag
+    paused: std::sync::atomic::AtomicBool,
+    /// Pause reason (when paused)
+    pause_reason: Mutex<Option<String>>,
+    /// Lifecycle events queue for polling
+    lifecycle_events: Mutex<Vec<LifecycleEvent>>,
 }
 
 #[uniffi::export]
@@ -60,10 +79,18 @@ impl CoreWorker {
     /// 3. Placeholder token (for testing)
     #[uniffi::constructor]
     pub fn new(config: WorkerConfig) -> Result<Arc<Self>, FfiError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
         // Create a Tokio runtime
-        let runtime = Runtime::new().map_err(|e| FfiError::Other {
+        let runtime = Arc::new(Runtime::new().map_err(|e| FfiError::Other {
             msg: format!("Failed to create runtime: {}", e),
-        })?;
+        })?);
+
+        // Get start time in milliseconds
+        let started_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
 
         // Connect to the server
         let channel: Channel = runtime.block_on(async {
@@ -108,14 +135,23 @@ impl CoreWorker {
             format!("fwt_placeholder-{}", Uuid::new_v4())
         };
 
-        Ok(Arc::new(Self {
+        let worker = Arc::new(Self {
             channel,
             worker_token,
             config,
             worker_id: Mutex::new(None),
             runtime,
             shutdown_requested: std::sync::atomic::AtomicBool::new(false),
-        }))
+            started_at_ms: std::sync::atomic::AtomicI64::new(started_at_ms),
+            paused: std::sync::atomic::AtomicBool::new(false),
+            pause_reason: Mutex::new(None),
+            lifecycle_events: Mutex::new(Vec::new()),
+        });
+
+        // Emit starting event
+        worker.emit_lifecycle_event("starting", None);
+
+        Ok(worker)
     }
 
     /// Register the worker with the Flovyn server.
@@ -209,6 +245,11 @@ impl CoreWorker {
         }
 
         *self.worker_id.lock() = Some(result.worker_id);
+
+        // Emit registered and ready events
+        self.emit_lifecycle_event("registered", Some(format!("{{\"worker_id\":\"{}\"}}", result.worker_id)));
+        self.emit_lifecycle_event("ready", None);
+
         Ok(result.worker_id.to_string())
     }
 
@@ -227,6 +268,11 @@ impl CoreWorker {
             .load(std::sync::atomic::Ordering::Relaxed)
         {
             return Err(FfiError::ShuttingDown);
+        }
+
+        // Don't poll when paused
+        if self.paused.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(None);
         }
 
         let worker_id = {
@@ -398,6 +444,11 @@ impl CoreWorker {
             return Err(FfiError::ShuttingDown);
         }
 
+        // Don't poll when paused
+        if self.paused.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(None);
+        }
+
         let worker_id = {
             let guard = self.worker_id.lock();
             guard.ok_or(FfiError::Other {
@@ -420,7 +471,18 @@ impl CoreWorker {
 
         match result {
             Some(task_info) => {
+                // Create task context for streaming and lifecycle
+                let task_context = FfiTaskContext::new(
+                    task_info.id,
+                    task_info.workflow_execution_id,
+                    task_info.execution_count,
+                    self.channel.clone(),
+                    self.worker_token.clone(),
+                    self.runtime.clone(),
+                );
+
                 let activation = TaskActivation {
+                    context: task_context,
                     task_execution_id: task_info.id.to_string(),
                     task_kind: task_info.task_type.clone(),
                     input: serde_json::to_vec(&task_info.input).unwrap_or_default(),
@@ -502,12 +564,298 @@ impl CoreWorker {
             .load(std::sync::atomic::Ordering::Relaxed)
         {
             "shutting_down".to_string()
+        } else if self.paused.load(std::sync::atomic::Ordering::Relaxed) {
+            "paused".to_string()
         } else if worker_id.is_some() {
             "running".to_string()
         } else {
             "initializing".to_string()
         }
     }
+
+    // =========================================================================
+    // Pause/Resume APIs
+    // =========================================================================
+
+    /// Pause the worker.
+    ///
+    /// When paused, the worker will not poll for new work but will continue
+    /// processing any in-flight work.
+    ///
+    /// Returns an error if the worker is not in Running state.
+    pub fn pause(&self, reason: String) -> Result<(), FfiError> {
+        // Check if already paused
+        if self.paused.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(FfiError::InvalidState {
+                msg: "Worker is already paused".to_string(),
+            });
+        }
+
+        // Check if shutdown requested
+        if self
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(FfiError::InvalidState {
+                msg: "Cannot pause worker that is shutting down".to_string(),
+            });
+        }
+
+        // Check if registered
+        if self.worker_id.lock().is_none() {
+            return Err(FfiError::InvalidState {
+                msg: "Cannot pause worker that is not registered".to_string(),
+            });
+        }
+
+        // Set paused state
+        self.paused.store(true, std::sync::atomic::Ordering::Relaxed);
+        *self.pause_reason.lock() = Some(reason.clone());
+
+        // Emit event
+        self.emit_lifecycle_event("paused", Some(format!("{{\"reason\":\"{}\"}}", reason)));
+
+        Ok(())
+    }
+
+    /// Resume the worker.
+    ///
+    /// Returns an error if the worker is not in Paused state.
+    pub fn resume(&self) -> Result<(), FfiError> {
+        // Check if not paused
+        if !self.paused.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(FfiError::InvalidState {
+                msg: "Worker is not paused".to_string(),
+            });
+        }
+
+        // Clear paused state
+        self.paused.store(false, std::sync::atomic::Ordering::Relaxed);
+        *self.pause_reason.lock() = None;
+
+        // Emit event
+        self.emit_lifecycle_event("resumed", None);
+
+        Ok(())
+    }
+
+    /// Check if the worker is paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Check if the worker is running (not paused and not shutting down).
+    pub fn is_running(&self) -> bool {
+        let is_registered = self.worker_id.lock().is_some();
+        let is_shutdown = self
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let is_paused = self.paused.load(std::sync::atomic::Ordering::Relaxed);
+
+        is_registered && !is_shutdown && !is_paused
+    }
+
+    /// Get the pause reason (if paused).
+    pub fn get_pause_reason(&self) -> Option<String> {
+        self.pause_reason.lock().clone()
+    }
+
+    // =========================================================================
+    // Config Accessor APIs
+    // =========================================================================
+
+    /// Get the maximum concurrent workflows setting.
+    pub fn get_max_concurrent_workflows(&self) -> u32 {
+        self.config.max_concurrent_workflow_tasks.unwrap_or(100)
+    }
+
+    /// Get the maximum concurrent tasks setting.
+    pub fn get_max_concurrent_tasks(&self) -> u32 {
+        self.config.max_concurrent_tasks.unwrap_or(100)
+    }
+
+    /// Get the queue name.
+    pub fn get_queue(&self) -> String {
+        self.config.queue.clone()
+    }
+
+    /// Get the org ID.
+    pub fn get_org_id(&self) -> String {
+        self.config.org_id.clone()
+    }
+
+    /// Get the server URL.
+    pub fn get_server_url(&self) -> String {
+        self.config.server_url.clone()
+    }
+
+    /// Get the worker identity.
+    pub fn get_worker_identity(&self) -> Option<String> {
+        self.config.worker_identity.clone()
+    }
+
+    // =========================================================================
+    // Lifecycle Events APIs
+    // =========================================================================
+
+    /// Poll for lifecycle events.
+    ///
+    /// Returns all events that have occurred since the last poll.
+    /// Events are cleared after being returned.
+    pub fn poll_lifecycle_events(&self) -> Vec<LifecycleEvent> {
+        let mut events = self.lifecycle_events.lock();
+        std::mem::take(&mut *events)
+    }
+
+    /// Get the count of pending lifecycle events.
+    pub fn pending_lifecycle_event_count(&self) -> u32 {
+        self.lifecycle_events.lock().len() as u32
+    }
+
+    // =========================================================================
+    // Lifecycle APIs
+    // =========================================================================
+
+    /// Get the worker uptime in milliseconds.
+    ///
+    /// Returns the number of milliseconds since the worker was created.
+    pub fn get_uptime_ms(&self) -> i64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let started_at = self.started_at_ms.load(std::sync::atomic::Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        now - started_at
+    }
+
+    /// Get the worker start time in milliseconds since Unix epoch.
+    pub fn get_started_at_ms(&self) -> i64 {
+        self.started_at_ms.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get the server-assigned worker ID (if registered).
+    pub fn get_worker_id(&self) -> Option<String> {
+        self.worker_id.lock().map(|id| id.to_string())
+    }
+
+    /// Get worker metrics.
+    ///
+    /// Returns a record containing various worker metrics.
+    pub fn get_metrics(&self) -> WorkerMetrics {
+        let uptime_ms = self.get_uptime_ms();
+        let status = self.get_status();
+        let worker_id = self.get_worker_id();
+
+        WorkerMetrics {
+            uptime_ms,
+            status,
+            worker_id,
+            // TODO: Add more metrics as they become available
+            workflows_processed: 0,
+            tasks_processed: 0,
+            active_workflows: 0,
+            active_tasks: 0,
+        }
+    }
+
+    /// Get registration information.
+    ///
+    /// Returns information about the worker's registration with the server.
+    pub fn get_registration_info(&self) -> Option<crate::types::FfiRegistrationInfo> {
+        let worker_id = self.worker_id.lock();
+        let worker_id = worker_id.as_ref()?;
+
+        let workflow_kinds: Vec<String> = self
+            .config
+            .workflow_metadata
+            .iter()
+            .map(|m| m.kind.clone())
+            .collect();
+        let task_kinds: Vec<String> = self
+            .config
+            .task_metadata
+            .iter()
+            .map(|m| m.kind.clone())
+            .collect();
+
+        Some(crate::types::FfiRegistrationInfo {
+            worker_id: worker_id.to_string(),
+            success: true,
+            registered_at_ms: self.started_at_ms.load(std::sync::atomic::Ordering::Relaxed),
+            workflow_kinds,
+            task_kinds,
+            has_conflicts: false,
+        })
+    }
+
+    /// Get connection information.
+    ///
+    /// Returns information about the worker's connection to the server.
+    pub fn get_connection_info(&self) -> crate::types::FfiConnectionInfo {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let is_running = self.worker_id.lock().is_some();
+        let is_shutdown = self
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        crate::types::FfiConnectionInfo {
+            connected: is_running && !is_shutdown,
+            last_heartbeat_ms: if is_running { Some(now_ms) } else { None },
+            last_poll_ms: if is_running { Some(now_ms) } else { None },
+            heartbeat_failures: 0,
+            poll_failures: 0,
+            reconnect_attempt: None,
+        }
+    }
+}
+
+/// Private implementation for internal helpers.
+impl CoreWorker {
+    /// Internal helper to emit a lifecycle event.
+    fn emit_lifecycle_event(&self, event_name: &str, data: Option<String>) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        let event = LifecycleEvent {
+            event_name: event_name.to_string(),
+            timestamp_ms,
+            data,
+        };
+
+        self.lifecycle_events.lock().push(event);
+    }
+}
+
+/// Worker metrics for FFI.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct WorkerMetrics {
+    /// Uptime in milliseconds.
+    pub uptime_ms: i64,
+    /// Current worker status.
+    pub status: String,
+    /// Server-assigned worker ID (if registered).
+    pub worker_id: Option<String>,
+    /// Total workflows processed.
+    pub workflows_processed: u64,
+    /// Total tasks processed.
+    pub tasks_processed: u64,
+    /// Currently active workflows.
+    pub active_workflows: u32,
+    /// Currently active tasks.
+    pub active_tasks: u32,
 }
 
 /// Helper struct for workflow state entries

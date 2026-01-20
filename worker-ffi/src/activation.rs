@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use crate::context::FfiWorkflowContext;
+use crate::context::{FfiTaskContext, FfiWorkflowContext};
 
 /// A workflow activation containing work for the language SDK to process.
 ///
@@ -172,8 +172,14 @@ pub enum WorkflowCompletionStatus {
 }
 
 /// A task activation containing work for the language SDK to process.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(uniffi::Record)]
 pub struct TaskActivation {
+    /// The task context for streaming and lifecycle APIs.
+    ///
+    /// Use this context to stream tokens, progress, data, and errors.
+    /// Also provides access to task metadata like attempt number.
+    pub context: Arc<FfiTaskContext>,
+
     /// The task execution ID.
     pub task_execution_id: String,
 
