@@ -133,20 +133,23 @@ class OrderWorkflow:
     """Process an order through validation, payment, and fulfillment."""
 
     async def run(self, ctx: WorkflowContext, input: OrderInput) -> OrderResult:
-        # Validate order
-        validation = await ctx.execute_task(ValidateOrder, input)
+        # Validate order (string-based task reference for distributed systems)
+        validation: ValidationResult = await ctx.execute_task(
+            "validate-order",
+            input.model_dump(),
+        )
 
         # Process payment
-        payment = await ctx.execute_task(ProcessPayment, PaymentRequest(
-            order_id=input.order_id,
-            amount=input.total,
-        ))
+        payment: PaymentResult = await ctx.execute_task(
+            "process-payment",
+            {"order_id": input.order_id, "amount": input.total},
+        )
 
         # Fulfill order
-        fulfillment = await ctx.execute_task(FulfillOrder, FulfillmentRequest(
-            order_id=input.order_id,
-            items=input.items,
-        ))
+        fulfillment: FulfillmentResult = await ctx.execute_task(
+            "fulfill-order",
+            {"order_id": input.order_id, "items": input.items},
+        )
 
         return OrderResult(
             confirmation_id=payment.transaction_id,
@@ -235,7 +238,7 @@ from flovyn import workflow, task, WorkflowContext, TaskContext
 
 @workflow(name="simple-workflow")
 async def simple_workflow(ctx: WorkflowContext, name: str) -> str:
-    greeting = await ctx.execute_task(greet_task, name)
+    greeting: str = await ctx.execute_task("greet", name)
     return f"Workflow completed: {greeting}"
 
 @task(name="greet")
@@ -264,45 +267,65 @@ class WorkflowContext(Protocol):
     def random(self) -> Random:
         """Get a deterministic random number generator."""
 
-    # Task execution
-    async def execute_task[T](
+    # Task execution (supports both string-based and typed APIs)
+    async def execute_task(
         self,
-        task: type[Task[Any, T]] | Callable[..., T],
+        task: str | type[Task] | Callable,  # String or class reference
         input: Any,
         *,
         timeout: timedelta | None = None,
         retry_policy: RetryPolicy | None = None,
-    ) -> T:
-        """Execute a task and await its result."""
+    ) -> Any:
+        """Execute a task and await its result.
 
-    def schedule_task[T](
+        Supports both APIs:
+        - String-based (distributed): execute_task("add-task", {"a": 1, "b": 2})
+        - Typed (single-server): execute_task(AddTask, AddInput(a=1, b=2))
+        """
+
+    def schedule_task(
         self,
-        task: type[Task[Any, T]] | Callable[..., T],
+        task: str | type[Task] | Callable,  # String or class reference
         input: Any,
         *,
         timeout: timedelta | None = None,
-    ) -> TaskHandle[T]:
-        """Schedule a task for execution, returns immediately."""
+    ) -> TaskHandle[Any]:
+        """Schedule a task for execution, returns immediately.
 
-    # Child workflows
-    async def execute_workflow[T](
+        Supports both APIs:
+        - String-based (distributed): schedule_task("add-task", {"a": 1, "b": 2})
+        - Typed (single-server): schedule_task(AddTask, AddInput(a=1, b=2))
+        """
+
+    # Child workflows (supports both string-based and typed APIs)
+    async def execute_workflow(
         self,
-        workflow: type[Workflow[Any, T]] | Callable[..., T],
+        workflow: str | type[Workflow] | Callable,  # String or class reference
         input: Any,
         *,
         workflow_id: str | None = None,
         timeout: timedelta | None = None,
-    ) -> T:
-        """Execute a child workflow and await its result."""
+    ) -> Any:
+        """Execute a child workflow and await its result.
 
-    def schedule_workflow[T](
+        Supports both APIs:
+        - String-based (distributed): execute_workflow("order-workflow", {...})
+        - Typed (single-server): execute_workflow(OrderWorkflow, OrderInput(...))
+        """
+
+    def schedule_workflow(
         self,
-        workflow: type[Workflow[Any, T]] | Callable[..., T],
+        workflow: str | type[Workflow] | Callable,  # String or class reference
         input: Any,
         *,
         workflow_id: str | None = None,
-    ) -> WorkflowHandle[T]:
-        """Schedule a child workflow, returns immediately."""
+    ) -> WorkflowHandle[Any]:
+        """Schedule a child workflow, returns immediately.
+
+        Supports both APIs:
+        - String-based (distributed): schedule_workflow("order-workflow", {...})
+        - Typed (single-server): schedule_workflow(OrderWorkflow, OrderInput(...))
+        """
 
     # Timers
     async def sleep(self, duration: timedelta) -> None:
@@ -419,11 +442,19 @@ async with client:
     # Worker runs until context exits
     await asyncio.sleep(3600)
 
-# Start a workflow
+# Start a workflow (supports both string-based and typed APIs)
+# String-based API (for distributed systems)
 handle = await client.start_workflow(
-    OrderWorkflow,
-    OrderInput(order_id="123", items=["item1"], total=99.99),
+    "order-processing",  # workflow kind (string)
+    {"order_id": "123", "items": ["item1"], "total": 99.99},  # input as dict
     workflow_id="order-123",  # Optional custom ID
+)
+
+# Typed API (for single-server deployments)
+handle = await client.start_workflow(
+    OrderWorkflow,  # workflow class
+    {"order_id": "123", "items": ["item1"], "total": 99.99},
+    workflow_id="order-123",
 )
 
 # Wait for result
@@ -467,8 +498,8 @@ class MetricsHook(WorkflowHook):
 @workflow(name="parallel-tasks")
 class ParallelWorkflow:
     async def run(self, ctx: WorkflowContext, items: list[str]) -> list[str]:
-        # Schedule all tasks concurrently
-        handles = [ctx.schedule_task(ProcessItem, item) for item in items]
+        # Schedule all tasks concurrently (string-based task reference)
+        handles = [ctx.schedule_task("process-item", item) for item in items]
 
         # Await all results
         results = await asyncio.gather(*[h.result() for h in handles])
@@ -528,25 +559,64 @@ class ProcessPayment:
         return PaymentResult(transaction_id="txn-456")
 ```
 
-### Type-Safe Task Invocation (Inspired by Restate)
+### Dual API: String-Based vs Typed
 
-Use function/class references instead of string names for compile-time safety:
+The SDK supports both string-based and typed APIs for workflow/task invocation:
+
+**String-Based API (Distributed Systems)**
+
+Use string-based references when the client and worker may be on different machines:
 
 ```python
 @workflow(name="order")
 class OrderWorkflow:
     async def run(self, ctx: WorkflowContext, input: OrderInput) -> OrderResult:
-        # Type-safe: IDE knows ValidateOrder expects OrderInput, returns ValidationResult
-        validation = await ctx.execute_task(ValidateOrder, input)
+        # String-based: task kind as string, works across distributed workers
+        validation: ValidationResult = await ctx.execute_task(
+            "validate-order",
+            input.model_dump(),
+        )
 
-        # Type error caught by mypy/pyright:
-        # validation = await ctx.execute_task(ValidateOrder, "wrong type")  # Error!
-
-        # For function-based tasks, same pattern
-        greeting = await ctx.execute_task(greet_task, "Alice")
+        # Caller must know the expected return type
+        greeting: str = await ctx.execute_task("greet", "Alice")
 
         return OrderResult(...)
 ```
+
+**Note**: String-based invocation is required for distributed systems where the workflow
+executor may not have the task class available. The caller is responsible for knowing
+the expected input/output types.
+
+**Typed API (Single-Server Deployments)**
+
+Use typed references when the client and worker are on the same machine:
+
+```python
+from myapp.tasks import ValidateOrder, GreetTask
+
+@workflow(name="order")
+class OrderWorkflow:
+    async def run(self, ctx: WorkflowContext, input: OrderInput) -> OrderResult:
+        # Typed: pass class reference, enables IDE support and type checking
+        validation = await ctx.execute_task(
+            ValidateOrder,  # Class reference
+            input.model_dump(),
+        )
+
+        greeting = await ctx.execute_task(GreetTask, "Alice")
+
+        return OrderResult(...)
+```
+
+**When to Use Each API:**
+
+| Scenario | API | Reason |
+|----------|-----|--------|
+| Distributed system (multiple machines) | String-based | Worker may not have task class available |
+| Microservices architecture | String-based | Services deploy independently |
+| Single server (all-in-one) | Typed | Better IDE support, type checking |
+| Development/testing | Typed | Easier refactoring, catch errors early |
+| Dynamic task routing | String-based | Task kind determined at runtime |
 
 ### Durable Side Effects with ctx.run() (Inspired by Restate)
 
@@ -597,13 +667,13 @@ class PaymentWorkflow:
             case ("confirmation", result):
                 return PaymentResult(status="confirmed", data=result)
             case ("timeout", _):
-                await ctx.execute_task(RefundTask, input)
+                await ctx.execute_task("refund", input.model_dump())
                 raise WorkflowCancelled("Payment timed out")
 
         # Race multiple tasks
         match await select(
-            fast=ctx.execute_task(FastProvider, input),
-            slow=ctx.execute_task(SlowProvider, input),
+            fast=ctx.execute_task("fast-provider", input.model_dump()),
+            slow=ctx.execute_task("slow-provider", input.model_dump()),
         ):
             case ("fast", result):
                 return result
@@ -835,7 +905,9 @@ class WorkflowContext(Protocol):
         ...
 ```
 
-### Type Inference Examples
+### Type Annotation Examples
+
+With string-based API, type annotations are explicit (no automatic inference):
 
 ```python
 @task(name="process-payment")
@@ -846,21 +918,24 @@ class ProcessPayment:
 @workflow(name="order")
 class OrderWorkflow:
     async def run(self, ctx: WorkflowContext, input: OrderInput) -> OrderOutput:
-        # Type checker infers: payment is PaymentResult
-        payment = await ctx.execute_task(ProcessPayment, PaymentRequest(...))
-
-        # Type error: wrong input type
-        # payment = await ctx.execute_task(ProcessPayment, "wrong")  # Error!
+        # String-based API: caller annotates expected type
+        payment: PaymentResult = await ctx.execute_task(
+            "process-payment",
+            {"amount": 100.0, "currency": "USD"},
+        )
 
         return OrderOutput(...)
 
-# Client API with type inference
+# Client API (string-based for distributed systems)
 client = FlovynClient.builder().build()
 
-# handle is WorkflowHandle[OrderOutput]
-handle = await client.start_workflow(OrderWorkflow, OrderInput(...))
+# Start workflow by kind string
+handle = await client.start_workflow(
+    "order",  # workflow kind
+    {"order_id": "123", "items": ["item1"]},
+)
 
-# result is OrderOutput
+# Result is Any - caller deserializes as needed
 result = await handle.result()
 ```
 
@@ -1356,14 +1431,14 @@ class WorkflowContextImpl(WorkflowContext):
 | Feature | Inspired By | Flovyn Implementation |
 |---------|-------------|----------------------|
 | Activation model | Temporal | Poll-complete cycle via UniFFI |
-| Type-safe invocation | Restate | `ctx.execute_task(TaskClass, input)` |
-| DAG dependencies | Hatchet | `@task(parents=[Task1, Task2])` |
+| String-based invocation | Temporal | `ctx.execute_task("task-kind", input)` |
+| DAG dependencies | Hatchet | `@task(parents=["task-1", "task-2"])` |
 | Durable side effects | Restate | `ctx.run("name", fn)` |
 | select() pattern | Restate | `match await select(a=..., b=...)` |
 | Conditional execution | Hatchet | `skip_if`, `wait_for` parameters |
 | Multi-tier serde | Restate | Auto-detect Pydantic/msgspec/dataclass |
 | Workflow triggers | Hatchet | `on_cron`, `on_events` parameters |
-| Parent output access | Hatchet | `ctx.task_output(ParentTask)` |
+| Parent output access | Hatchet | `ctx.task_output("parent-task")` |
 
 ### Key Differentiators
 

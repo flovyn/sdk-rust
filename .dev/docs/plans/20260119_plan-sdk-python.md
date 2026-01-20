@@ -1090,3 +1090,66 @@ Python has some unit tests but coverage comparison needed.
   - 32 unit tests pass
   - 59 E2E tests pass in ~2 minutes
   - All ruff linting checks pass
+
+## Phase 26: String-Based API for Distributed Systems ✅
+
+**Goal**: Change task/workflow invocation API from class-based to string-based for distributed system compatibility.
+
+### Problem
+
+The original API used class references for task/workflow invocation:
+```python
+# Class-based (OLD) - doesn't work in distributed systems
+handle = await client.start_workflow(OrderWorkflow, OrderInput(...))
+result = await ctx.execute_task(AddTask, AddInput(...))
+```
+
+In a distributed workflow system, the client that starts a workflow may be on a different machine than the worker that executes it. Using class references requires the client to have the workflow class available, which creates tight coupling.
+
+### Solution
+
+Changed all APIs to use string-based kind references (matching sdk-kotlin):
+```python
+# String-based (NEW) - works across distributed systems
+handle = await client.start_workflow("order-workflow", {"field": "value"})
+result = await ctx.execute_task("add-task", {"a": 1, "b": 2})
+```
+
+### TODO
+
+- [x] Update design document with string-based API examples
+- [x] Update `FlovynClient.start_workflow()` to take `workflow_kind: str`
+- [x] Update `WorkflowContext` methods:
+  - `execute_task(task_kind: str, input: Any)`
+  - `schedule_task(task_kind: str, input: Any)`
+  - `execute_workflow(workflow_kind: str, input: Any)`
+  - `schedule_workflow(workflow_kind: str, input: Any)`
+- [x] Update `FlovynTestEnvironment.start_workflow()` to take `workflow_kind: str`
+- [x] Update `MockWorkflowContext` methods to use string-based API
+- [x] Update all workflow fixtures (workflows.py) to use string-based invocations
+- [x] Update all E2E tests to use string-based workflow references
+- [x] Remove unused workflow/task class imports from test files
+- [x] Verify all 59 E2E tests pass
+
+### Files Modified
+
+**Core SDK** (`flovyn/`):
+- `client.py` - `start_workflow()` now takes `workflow_kind: str`
+- `context.py` - All task/workflow methods now take string kind
+
+**Testing** (`flovyn/testing/`):
+- `environment.py` - `start_workflow()` and `start_and_await()` now take `workflow_kind: str`
+- `mocks.py` - Mock context methods updated to use string-based API
+
+**Test Fixtures** (`tests/e2e/fixtures/`):
+- `workflows.py` - All `ctx.execute_task()`, `ctx.schedule_task()`, `ctx.execute_workflow()` calls updated
+
+**E2E Tests** (`tests/e2e/`):
+- All 12 test files updated to use string-based `env.start_workflow("kind", {...})`
+
+### Impact
+
+- **Client code**: Must use workflow/task kind strings instead of class references
+- **Result types**: Return `dict` instead of Pydantic models (caller deserializes as needed)
+- **Type safety**: Caller must annotate expected return types explicitly
+- **Distributed compatibility**: Clients no longer need workflow/task class definitions
