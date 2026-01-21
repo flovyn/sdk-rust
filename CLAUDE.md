@@ -4,32 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Development Commands
 
+Use [mise](https://mise.jdx.dev/) for all development tasks:
+
 ```bash
 # Build entire workspace
-cargo build --workspace
+mise run build
 
 # Run all tests
-cargo test --workspace
+mise run test
 
-# Run specific test suite (unit, tck, e2e, or model)
-cargo test --test unit -p flovyn-worker-sdk
-cargo test --test tck -p flovyn-worker-sdk
-cargo test --test e2e -p flovyn-worker-sdk
-cargo test --test model -p flovyn-worker-sdk    # Stateright model checking
-
-# Run tests with testing utilities feature
-cargo test --features testing
+# Run specific test suite
+mise run test:unit            # Unit tests
+mise run test:tck             # TCK tests
+mise run test:e2e             # E2E tests (requires server)
+mise run test:model           # Stateright model checking
 
 # Code quality
-cargo fmt --all                                       # Format code
-cargo clippy --workspace --all-targets -- -D warnings # Lint
-cargo doc --no-deps --workspace                       # Build docs
+mise run check                # Check code without building
+mise run fmt                  # Format code
+mise run clippy               # Run linter
+mise run lint                 # Run fmt check + clippy
+mise run doc                  # Build documentation
 
 # Run examples
-cargo run -p hello-world-sample
-cargo run -p ecommerce-sample
-cargo run -p data-pipeline-sample
-cargo run -p patterns-sample
+mise run example:hello        # Hello world
+mise run example:ecommerce    # E-commerce sample
+mise run example:pipeline     # Data pipeline sample
+mise run example:patterns     # Patterns sample
+
+# Utilities
+mise run model:check          # Run model checking
+mise run cleanup:containers   # Cleanup test containers
 ```
 
 ## Architecture
@@ -80,9 +85,10 @@ Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `
 ## Documentation
 
 ### Location
-- **Design documents**: `.dev/docs/design/` - Architecture, API design, technical decisions
-- **Implementation plans**: `.dev/docs/plans/` - Step-by-step implementation plans
-- **Bug reports**: `.dev/docs/plans/` - Bug report and fixes
+Documentation is centralized in the `dev` repo:
+- **Design documents**: `dev/docs/design/` - Architecture, API design, technical decisions
+- **Implementation plans**: `dev/docs/plans/` - Step-by-step implementation plans
+- **Bug reports**: `dev/docs/bugs/` - Bug reports and fixes
 
 ### Plan Guidelines
 - Before writing a plan, think critically to find things we would have missed from the design
@@ -99,7 +105,7 @@ Provides: `MockWorkflowContext`, `MockTaskContext`, `TestWorkflowEnvironment`, `
 
 ## Prerequisites
 
-- Rust 1.82+
+- [mise](https://mise.jdx.dev/) (installs Rust automatically)
 - Protocol Buffers compiler (`protoc`)
 - Flovyn server running on `localhost:9090` (for examples/e2e tests)
 

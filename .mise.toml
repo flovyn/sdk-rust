@@ -1,0 +1,76 @@
+# Flovyn Rust SDK Development Tasks
+# Usage: mise run <task>
+
+[tools]
+rust = "stable"
+
+[tasks.build]
+description = "Build entire workspace"
+run = "cargo build --workspace"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test --workspace"
+
+[tasks."test:unit"]
+description = "Run unit tests"
+run = "cargo test --test unit -p flovyn-worker-sdk"
+
+[tasks."test:tck"]
+description = "Run TCK tests"
+run = "cargo test --test tck -p flovyn-worker-sdk"
+
+[tasks."test:e2e"]
+description = "Run E2E tests (requires server)"
+run = "cargo test --test e2e -p flovyn-worker-sdk -- --ignored --nocapture"
+
+[tasks."test:model"]
+description = "Run Stateright model checking tests"
+run = "cargo test --test model -p flovyn-worker-sdk"
+
+[tasks.check]
+description = "Check code without building"
+run = "cargo check --workspace"
+
+[tasks.fmt]
+description = "Format code"
+run = "cargo fmt --all"
+
+[tasks.clippy]
+description = "Run linter"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.lint]
+description = "Run all linting (fmt check + clippy)"
+run = """
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+"""
+
+[tasks.doc]
+description = "Build documentation"
+run = "cargo doc --no-deps --workspace"
+
+[tasks."example:hello"]
+description = "Run hello-world example"
+run = "cargo run -p hello-world-sample"
+
+[tasks."example:ecommerce"]
+description = "Run ecommerce example"
+run = "cargo run -p ecommerce-sample"
+
+[tasks."example:pipeline"]
+description = "Run data-pipeline example"
+run = "cargo run -p data-pipeline-sample"
+
+[tasks."example:patterns"]
+description = "Run patterns example"
+run = "cargo run -p patterns-sample"
+
+[tasks."cleanup:containers"]
+description = "Cleanup test containers"
+run = "./bin/dev/cleanup-test-containers.sh"
+
+[tasks."model:check"]
+description = "Run model checking"
+run = "./bin/dev/run-model-check.sh"
