@@ -80,9 +80,16 @@ description = "Run model checking"
 run = "./bin/dev/run-model-check.sh"
 
 [tasks."docker:build"]
-description = "Build Docker image for examples"
-run = "docker build -t rg.fr-par.scw.cloud/flovyn/rust-examples-worker:latest -f examples/Dockerfile ."
+description = "Build Docker image for examples (tagged with branch name)"
+run = """
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/[^a-zA-Z0-9._-]/-/g')
+docker build -t rg.fr-par.scw.cloud/flovyn/rust-examples-worker:${BRANCH} -f examples/Dockerfile .
+echo "Built: rg.fr-par.scw.cloud/flovyn/rust-examples-worker:${BRANCH}"
+"""
 
 [tasks."docker:run"]
 description = "Run example in Docker (EXAMPLE=hello-world)"
-run = "docker run --rm -e EXAMPLE=${EXAMPLE:-hello-world} -e FLOVYN_GRPC_SERVER_URL -e FLOVYN_WORKER_TOKEN -e FLOVYN_ORG_ID rg.fr-par.scw.cloud/flovyn/rust-examples-worker:latest"
+run = """
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/[^a-zA-Z0-9._-]/-/g')
+docker run --rm -e EXAMPLE=${EXAMPLE:-hello-world} -e FLOVYN_GRPC_SERVER_URL -e FLOVYN_WORKER_TOKEN -e FLOVYN_ORG_ID rg.fr-par.scw.cloud/flovyn/rust-examples-worker:${BRANCH}
+"""

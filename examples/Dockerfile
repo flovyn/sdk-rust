@@ -1,7 +1,9 @@
 # Flovyn SDK Examples - Multi-binary Docker image
 #
-# Build: docker build -t rg.fr-par.scw.cloud/flovyn/rust-examples-worker:latest -f examples/Dockerfile .
-# Run:   docker run -e EXAMPLE=hello-world -e FLOVYN_WORKER_TOKEN=... rg.fr-par.scw.cloud/flovyn/rust-examples-worker:latest
+# Build: docker build -t rg.fr-par.scw.cloud/flovyn/rust-examples-worker:<branch> -f examples/Dockerfile .
+# Run:   docker run -e EXAMPLE=hello-world -e FLOVYN_WORKER_TOKEN=... rg.fr-par.scw.cloud/flovyn/rust-examples-worker:<branch>
+#
+# Or use mise: mise run docker:build && mise run docker:run
 #
 # Available examples:
 #   - hello-world
