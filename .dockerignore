@@ -1,0 +1,24 @@
+# Build artifacts
+target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Development files
+.env
+*.env
+examples/.env
+
+# Documentation
+*.md
+!README.md
+
+# Tests outputs
+*.log

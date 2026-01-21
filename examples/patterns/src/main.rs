@@ -43,8 +43,13 @@ fn parse_server_url(url: &str) -> (String, u16) {
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Load environment variables from examples/.env
-    dotenvy::from_filename("examples/.env").ok();
+    // Load environment variables from .env file
+    // Use DOTENV_PATH to specify a custom path, otherwise try examples/.env
+    if let Ok(dotenv_path) = std::env::var("DOTENV_PATH") {
+        dotenvy::from_filename(&dotenv_path).ok();
+    } else {
+        dotenvy::from_filename("examples/.env").ok();
+    }
 
     // Initialize tracing
     tracing_subscriber::fmt()
