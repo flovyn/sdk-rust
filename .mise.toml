@@ -77,8 +77,8 @@ run = "./bin/dev/run-model-check.sh"
 
 [tasks."docker:build"]
 description = "Build Docker image for examples"
-run = "docker build -t flovyn-examples -f examples/Dockerfile ."
+run = "docker build -t rg.fr-par.scw.cloud/flovyn/rust-examples-worker:latest -f examples/Dockerfile ."
 
 [tasks."docker:run"]
 description = "Run example in Docker (EXAMPLE=hello-world)"
-run = "docker run --rm -e EXAMPLE=${EXAMPLE:-hello-world} -e FLOVYN_GRPC_SERVER_URL -e FLOVYN_WORKER_TOKEN -e FLOVYN_ORG_ID flovyn-examples"
+run = "docker run --rm -e EXAMPLE=${EXAMPLE:-hello-world} -e FLOVYN_GRPC_SERVER_URL -e FLOVYN_WORKER_TOKEN -e FLOVYN_ORG_ID rg.fr-par.scw.cloud/flovyn/rust-examples-worker:latest"
