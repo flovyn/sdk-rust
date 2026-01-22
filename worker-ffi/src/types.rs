@@ -265,7 +265,7 @@ pub struct FfiRegistrationInfo {
 }
 
 /// Connection information for FFI.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct FfiConnectionInfo {
     /// Whether currently connected.
     pub connected: bool,
@@ -284,19 +284,6 @@ pub struct FfiConnectionInfo {
 
     /// Current reconnection attempt (if reconnecting).
     pub reconnect_attempt: Option<u32>,
-}
-
-impl Default for FfiConnectionInfo {
-    fn default() -> Self {
-        Self {
-            connected: false,
-            last_heartbeat_ms: None,
-            last_poll_ms: None,
-            heartbeat_failures: 0,
-            poll_failures: 0,
-            reconnect_attempt: None,
-        }
-    }
 }
 
 #[cfg(test)]

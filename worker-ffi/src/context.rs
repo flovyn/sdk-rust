@@ -194,8 +194,6 @@ impl ParsedEvent {
     }
 }
 
-// SeededRandom is imported from flovyn_worker_core::workflow::execution
-
 // ============================================================================
 // FfiWorkflowContext - Main context object
 // ============================================================================
@@ -371,7 +369,10 @@ impl FfiWorkflowContext {
                     // Use childExecutionName as the key (matching Rust SDK behavior)
                     if let Some(child_name) = event.get_string("childExecutionName") {
                         let output = event.get_bytes("output").unwrap_or_default();
-                        results.insert(child_name, ChildWorkflowResultInternal::Completed { output });
+                        results.insert(
+                            child_name,
+                            ChildWorkflowResultInternal::Completed { output },
+                        );
                     }
                 }
                 FfiEventType::ChildWorkflowFailed => {
@@ -394,7 +395,9 @@ impl FfiWorkflowContext {
             .filter(|e| e.event_type == FfiEventType::OperationCompleted)
             .filter_map(|e| {
                 // Note: Server may use "name" or "operationName" (match Rust SDK behavior)
-                let name = e.get_string("operationName").or_else(|| e.get_string("name"))?;
+                let name = e
+                    .get_string("operationName")
+                    .or_else(|| e.get_string("name"))?;
                 let result = e.get_bytes("result")?;
                 Some((name, result))
             })
@@ -615,9 +618,7 @@ impl FfiWorkflowContext {
 
         if let Some(event) = self.replay_engine.get_child_workflow_event(child_seq) {
             // Replay: validate name matches
-            let event_name = event
-                .get_string("childExecutionName")
-                .unwrap_or_default();
+            let event_name = event.get_string("childExecutionName").unwrap_or_default();
 
             if event_name != name {
                 return Err(FfiError::DeterminismViolation {
@@ -1083,9 +1084,7 @@ impl FfiStreamEvent {
                     serde_json::from_slice(data).unwrap_or(serde_json::Value::Null);
                 StreamEvent::data_value(value)
             }
-            FfiStreamEvent::Error { message, code } => {
-                StreamEvent::error(message, code.as_deref())
-            }
+            FfiStreamEvent::Error { message, code } => StreamEvent::error(message, code.as_deref()),
         }
     }
 }
@@ -1175,7 +1174,11 @@ impl FfiTaskContext {
         self.runtime.block_on(async {
             let mut client = TaskExecutionClient::new(self.channel.clone(), &self.worker_token);
             client
-                .stream_task_data(self.task_execution_id, self.workflow_execution_id, &core_event)
+                .stream_task_data(
+                    self.task_execution_id,
+                    self.workflow_execution_id,
+                    &core_event,
+                )
                 .await
                 .map_err(|e| FfiError::Other {
                     msg: format!("Stream error: {}", e),
@@ -1193,7 +1196,11 @@ impl FfiTaskContext {
     /// Stream progress (convenience method).
     ///
     /// Progress values are clamped to 0.0-1.0 during serialization.
-    pub fn stream_progress(&self, progress: f64, details: Option<String>) -> Result<bool, FfiError> {
+    pub fn stream_progress(
+        &self,
+        progress: f64,
+        details: Option<String>,
+    ) -> Result<bool, FfiError> {
         self.stream(FfiStreamEvent::Progress { progress, details })
     }
 
