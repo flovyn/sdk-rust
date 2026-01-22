@@ -247,7 +247,10 @@ impl CoreWorker {
         *self.worker_id.lock() = Some(result.worker_id);
 
         // Emit registered and ready events
-        self.emit_lifecycle_event("registered", Some(format!("{{\"worker_id\":\"{}\"}}", result.worker_id)));
+        self.emit_lifecycle_event(
+            "registered",
+            Some(format!("{{\"worker_id\":\"{}\"}}", result.worker_id)),
+        );
         self.emit_lifecycle_event("ready", None);
 
         Ok(result.worker_id.to_string())
@@ -609,7 +612,8 @@ impl CoreWorker {
         }
 
         // Set paused state
-        self.paused.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.paused
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         *self.pause_reason.lock() = Some(reason.clone());
 
         // Emit event
@@ -630,7 +634,8 @@ impl CoreWorker {
         }
 
         // Clear paused state
-        self.paused.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.paused
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         *self.pause_reason.lock() = None;
 
         // Emit event
@@ -722,7 +727,9 @@ impl CoreWorker {
     pub fn get_uptime_ms(&self) -> i64 {
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let started_at = self.started_at_ms.load(std::sync::atomic::Ordering::Relaxed);
+        let started_at = self
+            .started_at_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -733,7 +740,8 @@ impl CoreWorker {
 
     /// Get the worker start time in milliseconds since Unix epoch.
     pub fn get_started_at_ms(&self) -> i64 {
-        self.started_at_ms.load(std::sync::atomic::Ordering::Relaxed)
+        self.started_at_ms
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get the server-assigned worker ID (if registered).
@@ -784,7 +792,9 @@ impl CoreWorker {
         Some(crate::types::FfiRegistrationInfo {
             worker_id: worker_id.to_string(),
             success: true,
-            registered_at_ms: self.started_at_ms.load(std::sync::atomic::Ordering::Relaxed),
+            registered_at_ms: self
+                .started_at_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
             workflow_kinds,
             task_kinds,
             has_conflicts: false,

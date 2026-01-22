@@ -2,7 +2,7 @@
 //!
 //! These tests verify workflow promise (external signal) functionality against a real server.
 
-use crate::fixtures::workflows::PromiseWorkflow;
+use crate::fixtures::workflows::{PromiseWithTimeoutWorkflow, PromiseWorkflow};
 use crate::test_env::E2ETestEnvBuilder;
 use crate::{with_timeout, TEST_TIMEOUT};
 use serde_json::json;
@@ -131,6 +131,64 @@ async fn test_promise_reject() {
                 error
             );
         }
+    })
+    .await;
+}
+
+/// Test promise timeout: workflow waits for promise with timeout, no resolution, should timeout.
+///
+/// This tests the flow:
+/// 1. Start workflow that calls ctx.promise_with_timeout("approval", 2s)
+/// 2. Workflow suspends waiting for promise
+/// 3. Don't resolve the promise - let it timeout
+/// 4. Server should fire PROMISE_TIMEOUT event after 2 seconds
+/// 5. Workflow resumes with timeout error
+#[tokio::test]
+#[ignore] // Enable when Docker is available
+async fn test_promise_timeout() {
+    with_timeout(Duration::from_secs(30), "test_promise_timeout", async {
+        let env =
+            E2ETestEnvBuilder::with_queue("e2e-promise-timeout-worker", "promise-timeout-queue")
+                .await
+                .register_workflow(PromiseWithTimeoutWorkflow)
+                .build_and_start()
+                .await;
+
+        // Start the workflow with a short timeout (2 seconds)
+        let workflow_id = env
+            .start_workflow(
+                "promise-timeout-workflow",
+                json!({
+                    "promiseName": "approval",
+                    "timeoutMs": 2000
+                }),
+            )
+            .await;
+
+        // Don't resolve the promise - let it timeout
+        // The workflow should complete (not fail) because PromiseWithTimeoutWorkflow
+        // catches the error and returns it in the output
+
+        // Wait for workflow to complete (should happen after ~2s timeout + processing)
+        let result = env.await_completion(workflow_id).await;
+        env.assert_completed(&result);
+
+        // Verify the output shows timeout occurred
+        let output = result.output.as_ref().expect("Expected output");
+        assert_eq!(output["promiseName"], json!("approval"));
+        assert_eq!(
+            output["resolved"],
+            json!(false),
+            "Promise should have timed out, not resolved"
+        );
+
+        // The error should mention timeout
+        let error = output["error"].as_str().unwrap_or("");
+        assert!(
+            error.to_lowercase().contains("timeout"),
+            "Expected timeout error, got: {}",
+            error
+        );
     })
     .await;
 }

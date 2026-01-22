@@ -859,10 +859,8 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         PromiseFuture::new_with_cell(promise_seq, name.to_string(), self.suspension_cell.clone())
     }
 
-    fn promise_with_timeout_raw(&self, name: &str, _timeout: Duration) -> PromiseFutureRaw {
-        // TODO: Handle timeout in the future implementation
-        // For now, just delegate to promise_raw - the server handles timeout
-        self.promise_raw(name)
+    fn promise_with_timeout_raw(&self, name: &str, timeout: Duration) -> PromiseFutureRaw {
+        self.promise_with_options_raw(name, PromiseOptions::default().timeout(timeout))
     }
 
     fn promise_with_options_raw(&self, name: &str, options: PromiseOptions) -> PromiseFutureRaw {
