@@ -52,24 +52,24 @@ description = "Build documentation"
 run = "cargo doc --no-deps --workspace"
 
 [tasks."example:hello"]
-description = "Run hello-world example (DOTENV_PATH=path/to/.env)"
-run = "cargo run -p hello-world-sample"
+description = "Run hello-world example"
+run = "DOTENV_PATH=../dev/.env cargo run -p hello-world-sample"
 
 [tasks."example:ecommerce"]
-description = "Run ecommerce example (DOTENV_PATH=path/to/.env)"
-run = "cargo run -p ecommerce-sample"
+description = "Run ecommerce example"
+run = "DOTENV_PATH=../dev/.env cargo run -p ecommerce-sample"
 
 [tasks."example:pipeline"]
-description = "Run data-pipeline example (DOTENV_PATH=path/to/.env)"
-run = "cargo run -p data-pipeline-sample"
+description = "Run data-pipeline example"
+run = "DOTENV_PATH=../dev/.env cargo run -p data-pipeline-sample"
 
 [tasks."example:patterns"]
-description = "Run patterns example (DOTENV_PATH=path/to/.env)"
-run = "cargo run -p patterns-sample"
+description = "Run patterns example"
+run = "DOTENV_PATH=../dev/.env cargo run -p patterns-sample"
 
 [tasks."example:standalone"]
-description = "Run standalone-tasks example (DOTENV_PATH=path/to/.env)"
-run = "cargo run -p standalone-tasks-sample"
+description = "Run standalone-tasks example"
+run = "DOTENV_PATH=../dev/.env cargo run -p standalone-tasks-sample"
 
 [tasks."cleanup:containers"]
 description = "Cleanup test containers"
