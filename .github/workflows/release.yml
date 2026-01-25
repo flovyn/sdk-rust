@@ -319,13 +319,19 @@ jobs:
 
       - name: Package NAPI artifacts
         run: |
-          mkdir -p napi-combined
-          # Copy all .node files from napi artifacts
-          find napi-artifacts -name "*.node" -exec cp {} napi-combined/ \;
+          # Create per-platform NAPI archives with expected names
+          # napi-linux-x86_64 -> linux-x64-gnu
+          if [ -d "napi-artifacts/napi-linux-x86_64" ]; then
+            tar -czvf flovyn-worker-napi-linux-x64-gnu.tar.gz -C napi-artifacts/napi-linux-x86_64 .
+          fi
+          # napi-linux-aarch64 -> linux-arm64-gnu
+          if [ -d "napi-artifacts/napi-linux-aarch64" ]; then
+            tar -czvf flovyn-worker-napi-linux-arm64-gnu.tar.gz -C napi-artifacts/napi-linux-aarch64 .
+          fi
           # Copy type definitions
-          cp napi-artifacts/napi-types/*.js napi-artifacts/napi-types/*.d.ts napi-combined/ 2>/dev/null || true
-          cd napi-combined
-          tar -czvf ../flovyn-worker-napi.tar.gz .
+          if [ -d "napi-artifacts/napi-types" ]; then
+            tar -czvf flovyn-worker-napi-types.tar.gz -C napi-artifacts/napi-types .
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -339,4 +345,6 @@ jobs:
             libflovyn_worker_ffi-linux-aarch64.tar.gz
             libflovyn_worker_ffi-windows-x86_64.tar.gz
             flovyn-worker-ffi-bindings.tar.gz
-            flovyn-worker-napi.tar.gz
+            flovyn-worker-napi-linux-x64-gnu.tar.gz
+            flovyn-worker-napi-linux-arm64-gnu.tar.gz
+            flovyn-worker-napi-types.tar.gz
