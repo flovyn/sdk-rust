@@ -10,97 +10,6 @@ env:
   RUST_VERSION: "1.82.0"
 
 jobs:
-  # Build worker-napi for TypeScript SDK (NAPI-RS)
-  build-napi:
-    name: Build NAPI (${{ matrix.settings.target }})
-    runs-on: ${{ matrix.settings.host }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        settings:
-          - host: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: linux-x64-gnu
-          - host: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact: linux-arm64-gnu
-          # NOTE: macOS builds disabled to match build-native job
-          # - host: macos-latest
-          #   target: x86_64-apple-darwin
-          #   artifact: darwin-x64
-          # - host: macos-latest
-          #   target: aarch64-apple-darwin
-          #   artifact: darwin-arm64
-          - host: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: win32-x64-msvc
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          targets: ${{ matrix.settings.target }}
-
-      - name: Install protoc (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Install protoc (macOS)
-        if: runner.os == 'macOS'
-        run: brew install protobuf
-
-      - name: Install protoc (Windows)
-        if: runner.os == 'Windows'
-        run: choco install protoc
-
-      - name: Install cross-compilation tools (Linux aarch64)
-        if: matrix.settings.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
-      - name: Install dependencies
-        working-directory: worker-napi
-        run: pnpm install
-
-      - name: Build NAPI module
-        working-directory: worker-napi
-        run: |
-          pnpm build --target ${{ matrix.settings.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-
-      - name: Upload NAPI artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: napi-${{ matrix.settings.artifact }}
-          path: worker-napi/*.node
-          if-no-files-found: error
-
-      - name: Upload TypeScript definitions (only from linux-x64)
-        if: matrix.settings.artifact == 'linux-x64-gnu'
-        uses: actions/upload-artifact@v4
-        with:
-          name: napi-types
-          path: |
-            worker-napi/index.d.ts
-            worker-napi/index.js
-          if-no-files-found: error
-
   # Build native libraries for all platforms from a single Linux runner
   build-native:
     name: Build Native Libraries
@@ -113,7 +22,21 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+          sudo apt-get install -y protobuf-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install NAPI dependencies
+        working-directory: worker-napi
+        run: pnpm install
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -166,6 +89,28 @@ jobs:
       # NOTE: Windows ARM64 disabled - needs native runner or manual llvm-mingw setup
       # - name: Build Windows ARM64
       #   run: cargo cross build -p flovyn-worker-ffi --release --target aarch64-pc-windows-gnullvm
+
+      # Build NAPI modules for TypeScript SDK
+      - name: Build NAPI Linux x86_64
+        working-directory: worker-napi
+        run: pnpm build --target x86_64-unknown-linux-gnu
+
+      - name: Build NAPI Linux aarch64
+        working-directory: worker-napi
+        run: pnpm build --target aarch64-unknown-linux-gnu
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      # NOTE: macOS and Windows NAPI builds disabled - require native runners
+      # - name: Build NAPI macOS x86_64
+      #   working-directory: worker-napi
+      #   run: pnpm build --target x86_64-apple-darwin
+      # - name: Build NAPI macOS aarch64
+      #   working-directory: worker-napi
+      #   run: pnpm build --target aarch64-apple-darwin
+      # - name: Build NAPI Windows x86_64
+      #   working-directory: worker-napi
+      #   run: pnpm build --target x86_64-pc-windows-msvc
 
       # Generate language bindings
       - name: Generate Kotlin bindings
@@ -233,6 +178,20 @@ jobs:
           name: flovyn-worker-ffi-release
           path: artifacts/flovyn-worker-ffi-${{ github.ref_name }}.tar.gz
 
+      - name: Upload NAPI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: napi-artifacts
+          path: worker-napi/*.node
+
+      - name: Upload TypeScript definitions
+        uses: actions/upload-artifact@v4
+        with:
+          name: napi-types
+          path: |
+            worker-napi/index.d.ts
+            worker-napi/index.js
+
   # Validate the release
   validate:
     name: Validate Release
@@ -294,7 +253,7 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [validate, build-native, build-napi]
+    needs: [validate, build-native]
     permissions:
       contents: write
 
@@ -319,16 +278,13 @@ jobs:
           name: flovyn-worker-ffi-release
           path: ./
 
-      # Download NAPI artifacts for TypeScript SDK
       - name: Download NAPI artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: napi-*
+          name: napi-artifacts
           path: napi-artifacts/
-          merge-multiple: false
 
       # Create individual platform archives for direct download
-      # NOTE: macOS and Windows ARM64 disabled for FFI
       - name: Package individual platform archives
         run: |
           cd natives
@@ -338,16 +294,10 @@ jobs:
           cd ../bindings
           tar -czvf ../flovyn-worker-ffi-bindings.tar.gz .
 
-      # Package NAPI artifacts for TypeScript SDK
       - name: Package NAPI artifacts
         run: |
           cd napi-artifacts
-          # Package each platform
-          for dir in napi-*/; do
-            platform="${dir#napi-}"
-            platform="${platform%/}"
-            tar -czvf "../flovyn-worker-napi-${platform}.tar.gz" -C "$dir" .
-          done
+          tar -czvf ../flovyn-worker-napi-linux.tar.gz .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -361,6 +311,4 @@ jobs:
             libflovyn_worker_ffi-linux-aarch64.tar.gz
             libflovyn_worker_ffi-windows-x86_64.tar.gz
             flovyn-worker-ffi-bindings.tar.gz
-            flovyn-worker-napi-linux-x64-gnu.tar.gz
-            flovyn-worker-napi-linux-arm64-gnu.tar.gz
-            flovyn-worker-napi-win32-x64-msvc.tar.gz
+            flovyn-worker-napi-linux.tar.gz
