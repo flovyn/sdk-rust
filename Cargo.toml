@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "worker-core",
     "worker-ffi",
+    "worker-napi",
     "worker-sdk",
     "examples/hello-world",
     "examples/ecommerce",

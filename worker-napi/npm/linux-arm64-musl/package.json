@@ -1,0 +1,13 @@
+{
+  "name": "@flovyn/native-linux-arm64-musl",
+  "version": "0.1.0",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "libc": ["musl"],
+  "main": "flovyn-native.linux-arm64-musl.node",
+  "files": ["flovyn-native.linux-arm64-musl.node"],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  }
+}

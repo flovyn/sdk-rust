@@ -1,0 +1,12 @@
+{
+  "name": "@flovyn/native-win32-x64-msvc",
+  "version": "0.1.0",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "main": "flovyn-native.win32-x64-msvc.node",
+  "files": ["flovyn-native.win32-x64-msvc.node"],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  }
+}

@@ -1,0 +1,11 @@
+# Build artifacts
+target/
+*.node
+
+# Generated TypeScript definitions (from napi build)
+index.d.ts
+index.js
+
+# npm artifacts
+npm/*/flovyn-native.*.node
+node_modules/
