@@ -1,0 +1,51 @@
+{
+  "name": "@flovyn/native",
+  "version": "0.1.0",
+  "description": "Native NAPI bindings for the Flovyn workflow orchestration platform",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "flovyn-native",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-musl"
+      ]
+    }
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flovyn/sdk-rust.git"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "files": [
+    "index.d.ts",
+    "index.js"
+  ],
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm",
+    "universal": "napi universal",
+    "version": "napi version"
+  },
+  "optionalDependencies": {
+    "@flovyn/native-darwin-arm64": "0.1.0",
+    "@flovyn/native-darwin-x64": "0.1.0",
+    "@flovyn/native-linux-arm64-gnu": "0.1.0",
+    "@flovyn/native-linux-arm64-musl": "0.1.0",
+    "@flovyn/native-linux-x64-gnu": "0.1.0",
+    "@flovyn/native-linux-x64-musl": "0.1.0",
+    "@flovyn/native-win32-x64-msvc": "0.1.0"
+  }
+}

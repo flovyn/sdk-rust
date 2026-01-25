@@ -1,0 +1,13 @@
+{
+  "name": "@flovyn/native-linux-x64-gnu",
+  "version": "0.1.0",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["glibc"],
+  "main": "flovyn-native.linux-x64-gnu.node",
+  "files": ["flovyn-native.linux-x64-gnu.node"],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  }
+}
