@@ -10,11 +10,42 @@ env:
   RUST_VERSION: "1.82.0"
 
 jobs:
-  # Build native libraries for all platforms from a single Linux runner
+  # Build native libraries in parallel using matrix
   build-native:
-    name: Build Native Libraries
+    name: Build (${{ matrix.platform.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            use_cross: false
+            build_napi: true
+            ffi_artifact: libflovyn_worker_ffi.so
+          - name: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            use_cross: true
+            build_napi: true
+            ffi_artifact: libflovyn_worker_ffi.so
+            linker: aarch64-linux-gnu-gcc
+          # NOTE: macOS disabled - osxcross setup takes 10+ minutes
+          # - name: macos-x86_64
+          #   target: x86_64-apple-darwin
+          #   use_cross: true
+          #   build_napi: true
+          #   ffi_artifact: libflovyn_worker_ffi.dylib
+          # - name: macos-aarch64
+          #   target: aarch64-apple-darwin
+          #   use_cross: true
+          #   build_napi: true
+          #   ffi_artifact: libflovyn_worker_ffi.dylib
+          - name: windows-x86_64
+            target: x86_64-pc-windows-gnu
+            use_cross: true
+            build_napi: false  # Windows NAPI requires native MSVC runner
+            ffi_artifact: flovyn_worker_ffi.dll
 
     steps:
       - uses: actions/checkout@v4
@@ -22,19 +53,25 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          sudo apt-get install -y protobuf-compiler
+          if [ "${{ matrix.platform.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
 
       - name: Setup Node.js
+        if: matrix.platform.build_napi
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Setup pnpm
+        if: matrix.platform.build_napi
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
       - name: Install NAPI dependencies
+        if: matrix.platform.build_napi
         working-directory: worker-napi
         run: pnpm install
 
@@ -42,22 +79,11 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Add cross-compilation targets
-        run: |
-          rustup target add x86_64-unknown-linux-gnu
-          rustup target add aarch64-unknown-linux-gnu
-          rustup target add x86_64-pc-windows-gnu
+          targets: ${{ matrix.platform.target }}
 
       - name: Install cargo-cross
+        if: matrix.platform.use_cross
         run: cargo install cargo-cross
-
-      # NOTE: macOS cross-compilation disabled - osxcross setup takes 10+ minutes
-      # To re-enable, uncomment the following and add targets: x86_64-apple-darwin, aarch64-apple-darwin
-      # - name: Setup osxcross for macOS cross-compilation
-      #   uses: Timmmm/setup-osxcross@v3
-      #   with:
-      #     osx-version: "14.5"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -65,59 +91,86 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: release-cargo-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            release-cargo-
+            release-cargo-${{ matrix.platform.target }}-
 
-      # Build for all targets using cargo-cross for cross-compilation
-      - name: Build Linux x86_64
-        run: cargo build -p flovyn-worker-ffi --release --target x86_64-unknown-linux-gnu
+      - name: Build FFI
+        run: |
+          if [ "${{ matrix.platform.use_cross }}" = "true" ]; then
+            cargo cross build -p flovyn-worker-ffi --release --target ${{ matrix.platform.target }}
+          else
+            cargo build -p flovyn-worker-ffi --release --target ${{ matrix.platform.target }}
+          fi
 
-      - name: Build Linux aarch64
-        run: cargo cross build -p flovyn-worker-ffi --release --target aarch64-unknown-linux-gnu
-
-      # NOTE: macOS builds disabled - osxcross setup takes 10+ minutes
-      # - name: Build macOS x86_64
-      #   run: cargo cross build -p flovyn-worker-ffi --release --target x86_64-apple-darwin
-      #
-      # - name: Build macOS aarch64
-      #   run: cargo cross build -p flovyn-worker-ffi --release --target aarch64-apple-darwin
-
-      - name: Build Windows x86_64
-        run: cargo cross build -p flovyn-worker-ffi --release --target x86_64-pc-windows-gnu
-
-      # NOTE: Windows ARM64 disabled - needs native runner or manual llvm-mingw setup
-      # - name: Build Windows ARM64
-      #   run: cargo cross build -p flovyn-worker-ffi --release --target aarch64-pc-windows-gnullvm
-
-      # Build NAPI modules for TypeScript SDK
-      - name: Build NAPI Linux x86_64
+      - name: Build NAPI
+        if: matrix.platform.build_napi
         working-directory: worker-napi
-        run: pnpm build --target x86_64-unknown-linux-gnu
-
-      - name: Build NAPI Linux aarch64
-        working-directory: worker-napi
-        run: pnpm build --target aarch64-unknown-linux-gnu
+        run: pnpm build --target ${{ matrix.platform.target }}
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform.linker }}
 
-      # NOTE: macOS and Windows NAPI builds disabled - require native runners
-      # - name: Build NAPI macOS x86_64
-      #   working-directory: worker-napi
-      #   run: pnpm build --target x86_64-apple-darwin
-      # - name: Build NAPI macOS aarch64
-      #   working-directory: worker-napi
-      #   run: pnpm build --target aarch64-apple-darwin
-      # - name: Build NAPI Windows x86_64
-      #   working-directory: worker-napi
-      #   run: pnpm build --target x86_64-pc-windows-msvc
+      - name: Upload FFI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-${{ matrix.platform.name }}
+          path: target/${{ matrix.platform.target }}/release/${{ matrix.platform.ffi_artifact }}
 
-      # Generate language bindings
+      - name: Upload NAPI artifact
+        if: matrix.platform.build_napi
+        uses: actions/upload-artifact@v4
+        with:
+          name: napi-${{ matrix.platform.name }}
+          path: worker-napi/*.node
+
+      - name: Upload TypeScript definitions
+        if: matrix.platform.name == 'linux-x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: napi-types
+          path: |
+            worker-napi/index.d.ts
+            worker-napi/index.js
+
+  # Generate bindings and package all artifacts
+  package:
+    name: Package Artifacts
+    runs-on: ubuntu-latest
+    needs: build-native
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Download all FFI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ffi-*
+          path: ffi-artifacts/
+
+      - name: Download all NAPI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: napi-*
+          path: napi-artifacts/
+          merge-multiple: false
+
+      # Generate language bindings using the linux-x86_64 .so
       - name: Generate Kotlin bindings
         run: |
           mkdir -p bindings/kotlin
           cargo run -p flovyn-worker-ffi --bin uniffi-bindgen -- \
-            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
+            generate --library ffi-artifacts/ffi-linux-x86_64/libflovyn_worker_ffi.so \
             --language kotlin \
             --out-dir bindings/kotlin
 
@@ -125,48 +178,31 @@ jobs:
         run: |
           mkdir -p bindings/python
           cargo run -p flovyn-worker-ffi --bin uniffi-bindgen -- \
-            generate --library target/x86_64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
+            generate --library ffi-artifacts/ffi-linux-x86_64/libflovyn_worker_ffi.so \
             --language python \
             --out-dir bindings/python
 
-      # Package artifacts
-      - name: Package native libraries
+      # Package all artifacts
+      - name: Package artifacts
         run: |
           mkdir -p artifacts/natives/{linux-x86_64,linux-aarch64,windows-x86_64}
 
-          cp target/x86_64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
-             artifacts/natives/linux-x86_64/
+          cp ffi-artifacts/ffi-linux-x86_64/libflovyn_worker_ffi.so artifacts/natives/linux-x86_64/
+          cp ffi-artifacts/ffi-linux-aarch64/libflovyn_worker_ffi.so artifacts/natives/linux-aarch64/
+          cp ffi-artifacts/ffi-windows-x86_64/flovyn_worker_ffi.dll artifacts/natives/windows-x86_64/
 
-          cp target/aarch64-unknown-linux-gnu/release/libflovyn_worker_ffi.so \
-             artifacts/natives/linux-aarch64/
-
-          # NOTE: macOS disabled
-          # cp target/x86_64-apple-darwin/release/libflovyn_worker_ffi.dylib \
-          #    artifacts/natives/macos-x86_64/
-          # cp target/aarch64-apple-darwin/release/libflovyn_worker_ffi.dylib \
-          #    artifacts/natives/macos-aarch64/
-
-          cp target/x86_64-pc-windows-gnu/release/flovyn_worker_ffi.dll \
-             artifacts/natives/windows-x86_64/
-
-          # NOTE: Windows ARM64 disabled
-          # cp target/aarch64-pc-windows-gnullvm/release/flovyn_worker_ffi.dll \
-          #    artifacts/natives/windows-aarch64/
-
-          # Copy bindings
           cp -r bindings artifacts/
 
-          # Create combined archive for easy download
           cd artifacts
           tar -czvf flovyn-worker-ffi-${{ github.ref_name }}.tar.gz natives bindings
 
-      - name: Upload native libraries artifact
+      - name: Upload packaged natives
         uses: actions/upload-artifact@v4
         with:
           name: flovyn-worker-ffi-natives
           path: artifacts/natives/
 
-      - name: Upload bindings artifact
+      - name: Upload bindings
         uses: actions/upload-artifact@v4
         with:
           name: flovyn-worker-ffi-bindings
@@ -177,20 +213,6 @@ jobs:
         with:
           name: flovyn-worker-ffi-release
           path: artifacts/flovyn-worker-ffi-${{ github.ref_name }}.tar.gz
-
-      - name: Upload NAPI artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: napi-artifacts
-          path: worker-napi/*.node
-
-      - name: Upload TypeScript definitions
-        uses: actions/upload-artifact@v4
-        with:
-          name: napi-types
-          path: |
-            worker-napi/index.d.ts
-            worker-napi/index.js
 
   # Validate the release
   validate:
@@ -219,7 +241,7 @@ jobs:
   publish:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: [validate, build-native]
+    needs: [validate, package]
 
     steps:
       - uses: actions/checkout@v4
@@ -253,14 +275,14 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [validate, build-native]
+    needs: [validate, package]
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download native libraries
+      - name: Download packaged natives
         uses: actions/download-artifact@v4
         with:
           name: flovyn-worker-ffi-natives
@@ -281,10 +303,11 @@ jobs:
       - name: Download NAPI artifacts
         uses: actions/download-artifact@v4
         with:
-          name: napi-artifacts
+          pattern: napi-*
           path: napi-artifacts/
+          merge-multiple: false
 
-      # Create individual platform archives for direct download
+      # Create individual platform archives
       - name: Package individual platform archives
         run: |
           cd natives
@@ -296,8 +319,13 @@ jobs:
 
       - name: Package NAPI artifacts
         run: |
-          cd napi-artifacts
-          tar -czvf ../flovyn-worker-napi-linux.tar.gz .
+          mkdir -p napi-combined
+          # Copy all .node files from napi artifacts
+          find napi-artifacts -name "*.node" -exec cp {} napi-combined/ \;
+          # Copy type definitions
+          cp napi-artifacts/napi-types/*.js napi-artifacts/napi-types/*.d.ts napi-combined/ 2>/dev/null || true
+          cd napi-combined
+          tar -czvf ../flovyn-worker-napi.tar.gz .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -311,4 +339,4 @@ jobs:
             libflovyn_worker_ffi-linux-aarch64.tar.gz
             libflovyn_worker_ffi-windows-x86_64.tar.gz
             flovyn-worker-ffi-bindings.tar.gz
-            flovyn-worker-napi-linux.tar.gz
+            flovyn-worker-napi.tar.gz
