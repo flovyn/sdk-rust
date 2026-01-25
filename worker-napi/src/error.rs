@@ -63,9 +63,10 @@ pub fn from_core_error(err: CoreError) -> Error {
             NapiErrorCode::Grpc,
             format!("gRPC error: {} (code: {})", status.message(), status.code()),
         ),
-        CoreError::Serialization(err) => {
-            napi_error(NapiErrorCode::Serialization, format!("Serialization error: {}", err))
-        }
+        CoreError::Serialization(err) => napi_error(
+            NapiErrorCode::Serialization,
+            format!("Serialization error: {}", err),
+        ),
         CoreError::Io(err) => napi_error(NapiErrorCode::Other, format!("IO error: {}", err)),
         CoreError::InvalidConfiguration(msg) => {
             napi_error(NapiErrorCode::InvalidConfiguration, msg)
@@ -92,7 +93,10 @@ mod tests {
     #[test]
     fn test_error_code_string() {
         assert_eq!(NapiErrorCode::Grpc.as_str(), "GRPC_ERROR");
-        assert_eq!(NapiErrorCode::DeterminismViolation.as_str(), "DETERMINISM_VIOLATION");
+        assert_eq!(
+            NapiErrorCode::DeterminismViolation.as_str(),
+            "DETERMINISM_VIOLATION"
+        );
     }
 
     #[test]

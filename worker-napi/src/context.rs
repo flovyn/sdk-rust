@@ -243,9 +243,7 @@ impl NapiWorkflowContext {
             .iter()
             .filter_map(|(k, v)| {
                 use base64::Engine;
-                let decoded = base64::engine::general_purpose::STANDARD
-                    .decode(v)
-                    .ok()?;
+                let decoded = base64::engine::general_purpose::STANDARD.decode(v).ok()?;
                 Some((k.clone(), decoded))
             })
             .collect();
@@ -380,12 +378,8 @@ impl NapiWorkflowContext {
 
     /// Get commands as JSON array string.
     pub fn get_commands_json(&self) -> String {
-        let commands: Vec<serde_json::Value> = self
-            .commands
-            .lock()
-            .iter()
-            .map(|c| c.to_json())
-            .collect();
+        let commands: Vec<serde_json::Value> =
+            self.commands.lock().iter().map(|c| c.to_json()).collect();
         serde_json::to_string(&commands).unwrap_or_else(|_| "[]".to_string())
     }
 
@@ -485,17 +479,19 @@ impl NapiWorkflowContext {
         } else {
             let task_execution_id = self.generate_uuid().to_string();
 
-            self.commands.lock().push(NapiWorkflowCommand::ScheduleTask {
-                task_execution_id: task_execution_id.clone(),
-                kind,
-                input: input.into_bytes(),
-                priority_seconds: None,
-                max_retries: None,
-                timeout_ms,
-                queue,
-                idempotency_key: None,
-                idempotency_key_ttl_seconds: None,
-            });
+            self.commands
+                .lock()
+                .push(NapiWorkflowCommand::ScheduleTask {
+                    task_execution_id: task_execution_id.clone(),
+                    kind,
+                    input: input.into_bytes(),
+                    priority_seconds: None,
+                    max_retries: None,
+                    timeout_ms,
+                    queue,
+                    idempotency_key: None,
+                    idempotency_key_ttl_seconds: None,
+                });
 
             Ok(TaskResult {
                 status: "pending".to_string(),

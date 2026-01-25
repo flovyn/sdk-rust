@@ -43,6 +43,7 @@ pub struct NapiWorker {
     /// Server-assigned worker ID after registration
     worker_id: Mutex<Option<Uuid>>,
     /// Tokio runtime for async operations
+    #[allow(dead_code)]
     runtime: Arc<Runtime>,
     /// Shutdown flag
     shutdown_requested: std::sync::atomic::AtomicBool,
@@ -64,10 +65,12 @@ impl NapiWorker {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         // Create a Tokio runtime
-        let runtime = Arc::new(
-            Runtime::new()
-                .map_err(|e| napi_error(NapiErrorCode::Other, format!("Failed to create runtime: {}", e)))?,
-        );
+        let runtime = Arc::new(Runtime::new().map_err(|e| {
+            napi_error(
+                NapiErrorCode::Other,
+                format!("Failed to create runtime: {}", e),
+            )
+        })?);
 
         // Get start time in milliseconds
         let started_at_ms = SystemTime::now()
@@ -78,7 +81,12 @@ impl NapiWorker {
         // Connect to the server
         let channel: Channel = runtime.block_on(async {
             Channel::from_shared(config.server_url.clone())
-                .map_err(|e| napi_error(NapiErrorCode::InvalidConfiguration, format!("Invalid server URL: {}", e)))?
+                .map_err(|e| {
+                    napi_error(
+                        NapiErrorCode::InvalidConfiguration,
+                        format!("Invalid server URL: {}", e),
+                    )
+                })?
                 .connect()
                 .await
                 .map_err(|e| napi_error(NapiErrorCode::Grpc, format!("Failed to connect: {}", e)))
@@ -102,7 +110,12 @@ impl NapiWorker {
                 oauth2::fetch_access_token(&core_creds)
                     .await
                     .map(|r| r.access_token)
-                    .map_err(|e| napi_error(NapiErrorCode::Other, format!("OAuth2 token fetch failed: {}", e)))
+                    .map_err(|e| {
+                        napi_error(
+                            NapiErrorCode::Other,
+                            format!("OAuth2 token fetch failed: {}", e),
+                        )
+                    })
             })?
         } else if let Some(token) = &config.worker_token {
             token.clone()
@@ -208,7 +221,9 @@ impl NapiWorker {
         if !result.success {
             return Err(napi_error(
                 NapiErrorCode::Other,
-                result.error.unwrap_or_else(|| "Registration failed".to_string()),
+                result
+                    .error
+                    .unwrap_or_else(|| "Registration failed".to_string()),
             ));
         }
 
@@ -457,7 +472,9 @@ impl NapiWorker {
                     .map_err(from_core_error)?;
             }
             TaskCompletionStatusType::Failed => {
-                let error = completion.error.unwrap_or_else(|| "Unknown error".to_string());
+                let error = completion
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string());
                 task_client
                     .fail_task(task_execution_id, &error)
                     .await
@@ -510,7 +527,10 @@ impl NapiWorker {
     #[napi]
     pub fn pause(&self, reason: String) -> Result<()> {
         if self.paused.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(napi_error(NapiErrorCode::InvalidState, "Worker is already paused"));
+            return Err(napi_error(
+                NapiErrorCode::InvalidState,
+                "Worker is already paused",
+            ));
         }
 
         if self
@@ -543,7 +563,10 @@ impl NapiWorker {
     #[napi]
     pub fn resume(&self) -> Result<()> {
         if !self.paused.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(napi_error(NapiErrorCode::InvalidState, "Worker is not paused"));
+            return Err(napi_error(
+                NapiErrorCode::InvalidState,
+                "Worker is not paused",
+            ));
         }
 
         self.paused
@@ -798,7 +821,9 @@ fn parse_commands_from_json(
                     let key = cmd.get("key")?.as_str()?.to_string();
                     (
                         flovyn_v1::CommandType::ClearState as i32,
-                        Some(CommandData::ClearState(flovyn_v1::ClearStateCommand { key })),
+                        Some(CommandData::ClearState(flovyn_v1::ClearStateCommand {
+                            key,
+                        })),
                     )
                 }
                 "ScheduleTask" => {
@@ -847,8 +872,10 @@ fn parse_commands_from_json(
                         .and_then(|v| v.as_str())
                         .unwrap_or("default")
                         .to_string();
-                    let priority_seconds =
-                        cmd.get("prioritySeconds").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let priority_seconds = cmd
+                        .get("prioritySeconds")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0) as i32;
 
                     (
                         flovyn_v1::CommandType::ScheduleChildWorkflow as i32,

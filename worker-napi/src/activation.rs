@@ -25,10 +25,8 @@ pub struct WorkflowActivationJob {
 impl WorkflowActivationJob {
     /// Create an initialize job.
     pub fn initialize(input: Vec<u8>) -> Self {
-        let base64_input = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &input,
-        );
+        let base64_input =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &input);
         Self {
             job_type: "initialize".to_string(),
             data: serde_json::json!({ "input": base64_input }).to_string(),
@@ -53,10 +51,8 @@ impl WorkflowActivationJob {
 
     /// Create a signal job.
     pub fn signal(signal_name: &str, payload: Vec<u8>) -> Self {
-        let base64_payload = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &payload,
-        );
+        let base64_payload =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &payload);
         Self {
             job_type: "signal".to_string(),
             data: serde_json::json!({
