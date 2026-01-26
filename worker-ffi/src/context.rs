@@ -801,6 +801,16 @@ impl FfiWorkflowContext {
         self.ffi_state.read().keys().cloned().collect()
     }
 
+    /// Clear all workflow state.
+    ///
+    /// Generates ClearState commands for all keys and clears local state.
+    pub fn clear_all(&self) {
+        let keys: Vec<String> = self.ffi_state.read().keys().cloned().collect();
+        for key in keys {
+            self.clear_state(key);
+        }
+    }
+
     /// Check if cancellation has been requested.
     pub fn is_cancellation_requested(&self) -> bool {
         self.cancellation_requested.load(Ordering::SeqCst)
@@ -1018,6 +1028,32 @@ mod tests {
 
         ctx.clear_state("key1".to_string());
         assert!(ctx.get_state("key1".to_string()).is_none());
+    }
+
+    #[test]
+    fn test_clear_all_state() {
+        let ctx = create_test_context(vec![]);
+
+        // Set multiple state entries
+        ctx.set_state("key1".to_string(), b"value1".to_vec())
+            .unwrap();
+        ctx.set_state("key2".to_string(), b"value2".to_vec())
+            .unwrap();
+        ctx.set_state("key3".to_string(), b"value3".to_vec())
+            .unwrap();
+
+        // Verify all keys exist
+        let keys = ctx.state_keys();
+        assert_eq!(keys.len(), 3);
+
+        // Clear all state
+        ctx.clear_all();
+
+        // Verify all keys are cleared
+        assert!(ctx.get_state("key1".to_string()).is_none());
+        assert!(ctx.get_state("key2".to_string()).is_none());
+        assert!(ctx.get_state("key3".to_string()).is_none());
+        assert!(ctx.state_keys().is_empty());
     }
 
     #[test]

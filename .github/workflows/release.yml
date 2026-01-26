@@ -13,35 +13,39 @@ jobs:
   # Build native libraries in parallel using matrix
   build-native:
     name: Build (${{ matrix.platform.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         platform:
           - name: linux-x86_64
+            runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             use_cross: false
             build_napi: true
             ffi_artifact: libflovyn_worker_ffi.so
           - name: linux-aarch64
+            runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             use_cross: true
             build_napi: true
             ffi_artifact: libflovyn_worker_ffi.so
             linker: aarch64-linux-gnu-gcc
-          # NOTE: macOS disabled - osxcross setup takes 10+ minutes
-          # - name: macos-x86_64
-          #   target: x86_64-apple-darwin
-          #   use_cross: true
-          #   build_napi: true
-          #   ffi_artifact: libflovyn_worker_ffi.dylib
-          # - name: macos-aarch64
-          #   target: aarch64-apple-darwin
-          #   use_cross: true
-          #   build_napi: true
-          #   ffi_artifact: libflovyn_worker_ffi.dylib
+          - name: macos-x86_64
+            runner: macos-13
+            target: x86_64-apple-darwin
+            use_cross: false
+            build_napi: true
+            ffi_artifact: libflovyn_worker_ffi.dylib
+          - name: macos-aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            use_cross: false
+            build_napi: true
+            ffi_artifact: libflovyn_worker_ffi.dylib
           - name: windows-x86_64
+            runner: ubuntu-latest
             target: x86_64-pc-windows-gnu
             use_cross: true
             build_napi: false  # Windows NAPI requires native MSVC runner
@@ -50,13 +54,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
           if [ "${{ matrix.platform.target }}" = "aarch64-unknown-linux-gnu" ]; then
             sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
           fi
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
 
       - name: Setup Node.js
         if: matrix.platform.build_napi
@@ -91,9 +100,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: release-cargo-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: release-cargo-${{ runner.os }}-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            release-cargo-${{ matrix.platform.target }}-
+            release-cargo-${{ runner.os }}-${{ matrix.platform.target }}-
 
       - name: Build FFI
         run: |
@@ -185,10 +194,12 @@ jobs:
       # Package all artifacts
       - name: Package artifacts
         run: |
-          mkdir -p artifacts/natives/{linux-x86_64,linux-aarch64,windows-x86_64}
+          mkdir -p artifacts/natives/{linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,windows-x86_64}
 
           cp ffi-artifacts/ffi-linux-x86_64/libflovyn_worker_ffi.so artifacts/natives/linux-x86_64/
           cp ffi-artifacts/ffi-linux-aarch64/libflovyn_worker_ffi.so artifacts/natives/linux-aarch64/
+          cp ffi-artifacts/ffi-macos-x86_64/libflovyn_worker_ffi.dylib artifacts/natives/macos-x86_64/
+          cp ffi-artifacts/ffi-macos-aarch64/libflovyn_worker_ffi.dylib artifacts/natives/macos-aarch64/
           cp ffi-artifacts/ffi-windows-x86_64/flovyn_worker_ffi.dll artifacts/natives/windows-x86_64/
 
           cp -r bindings artifacts/
@@ -311,7 +322,7 @@ jobs:
       - name: Package individual platform archives
         run: |
           cd natives
-          for platform in linux-x86_64 linux-aarch64 windows-x86_64; do
+          for platform in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64; do
             tar -czvf ../libflovyn_worker_ffi-${platform}.tar.gz ${platform}/
           done
           cd ../bindings
@@ -328,6 +339,14 @@ jobs:
           if [ -d "napi-artifacts/napi-linux-aarch64" ]; then
             tar -czvf flovyn-worker-napi-linux-arm64-gnu.tar.gz -C napi-artifacts/napi-linux-aarch64 .
           fi
+          # napi-macos-x86_64 -> darwin-x64
+          if [ -d "napi-artifacts/napi-macos-x86_64" ]; then
+            tar -czvf flovyn-worker-napi-darwin-x64.tar.gz -C napi-artifacts/napi-macos-x86_64 .
+          fi
+          # napi-macos-aarch64 -> darwin-arm64
+          if [ -d "napi-artifacts/napi-macos-aarch64" ]; then
+            tar -czvf flovyn-worker-napi-darwin-arm64.tar.gz -C napi-artifacts/napi-macos-aarch64 .
+          fi
           # Copy type definitions
           if [ -d "napi-artifacts/napi-types" ]; then
             tar -czvf flovyn-worker-napi-types.tar.gz -C napi-artifacts/napi-types .
@@ -343,8 +362,12 @@ jobs:
             flovyn-worker-ffi-${{ github.ref_name }}.tar.gz
             libflovyn_worker_ffi-linux-x86_64.tar.gz
             libflovyn_worker_ffi-linux-aarch64.tar.gz
+            libflovyn_worker_ffi-macos-x86_64.tar.gz
+            libflovyn_worker_ffi-macos-aarch64.tar.gz
             libflovyn_worker_ffi-windows-x86_64.tar.gz
             flovyn-worker-ffi-bindings.tar.gz
             flovyn-worker-napi-linux-x64-gnu.tar.gz
             flovyn-worker-napi-linux-arm64-gnu.tar.gz
+            flovyn-worker-napi-darwin-x64.tar.gz
+            flovyn-worker-napi-darwin-arm64.tar.gz
             flovyn-worker-napi-types.tar.gz

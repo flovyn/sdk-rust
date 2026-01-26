@@ -801,6 +801,15 @@ impl NapiWorkflowContext {
         self.state.read().keys().cloned().collect()
     }
 
+    /// Clear all workflow state.
+    #[napi]
+    pub fn clear_all(&self) {
+        let keys: Vec<String> = self.state.read().keys().cloned().collect();
+        for key in keys {
+            self.clear_state(key);
+        }
+    }
+
     /// Check if cancellation has been requested.
     #[napi(getter)]
     pub fn is_cancellation_requested(&self) -> bool {
@@ -1095,5 +1104,40 @@ mod tests {
 
         ctx.clear_state("key1".to_string());
         assert!(ctx.get_state("key1".to_string()).is_none());
+    }
+
+    #[test]
+    fn test_clear_all_state() {
+        let ctx = NapiWorkflowContext::new_from_data(
+            "550e8400-e29b-41d4-a716-446655440000",
+            "550e8400-e29b-41d4-a716-446655440001",
+            1000,
+            "12345",
+            &[],
+            &[],
+            false,
+        )
+        .unwrap();
+
+        // Set multiple state entries
+        ctx.set_state("key1".to_string(), "value1".to_string())
+            .unwrap();
+        ctx.set_state("key2".to_string(), "value2".to_string())
+            .unwrap();
+        ctx.set_state("key3".to_string(), "value3".to_string())
+            .unwrap();
+
+        // Verify all keys exist
+        let keys = ctx.state_keys();
+        assert_eq!(keys.len(), 3);
+
+        // Clear all state
+        ctx.clear_all();
+
+        // Verify all keys are cleared
+        assert!(ctx.get_state("key1".to_string()).is_none());
+        assert!(ctx.get_state("key2".to_string()).is_none());
+        assert!(ctx.get_state("key3".to_string()).is_none());
+        assert!(ctx.state_keys().is_empty());
     }
 }
