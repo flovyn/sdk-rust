@@ -458,13 +458,11 @@ impl FlovynClientBuilder {
         // Create or use provided channel
         let channel = match self.custom_channel {
             Some(ch) => ch,
-            None => {
-                Channel::from_shared(self.server_url.clone())
-                    .map_err(|e| FlovynError::InvalidConfiguration(e.to_string()))?
-                    .connect()
-                    .await
-                    .map_err(|e| FlovynError::NetworkError(e.to_string()))?
-            }
+            None => Channel::from_shared(self.server_url.clone())
+                .map_err(|e| FlovynError::InvalidConfiguration(e.to_string()))?
+                .connect()
+                .await
+                .map_err(|e| FlovynError::NetworkError(e.to_string()))?,
         };
 
         // Create composite hook if there are hooks

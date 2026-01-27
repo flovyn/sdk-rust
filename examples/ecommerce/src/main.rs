@@ -18,7 +18,6 @@ use tasks::{InventoryTask, PaymentTask, ShipmentTask};
 use tracing::info;
 use workflows::OrderWorkflow;
 
-
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Load environment variables from .env file
@@ -48,7 +47,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let server_url = std::env::var("FLOVYN_GRPC_SERVER_URL")
         .unwrap_or_else(|_| "http://localhost:9090".to_string());
-    
+
     let worker_token = std::env::var("FLOVYN_WORKER_TOKEN")
         .expect("FLOVYN_WORKER_TOKEN environment variable is required");
     let queue = std::env::var("FLOVYN_QUEUE").unwrap_or_else(|_| "default".to_string());
