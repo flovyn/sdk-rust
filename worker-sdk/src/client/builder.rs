@@ -97,7 +97,7 @@ impl FlovynClientBuilder {
         }
     }
 
-    /// Set the server URL (e.g., "https://worker.flovyn.ai" or "http://localhost:9090")
+    /// Set the server URL (e.g., `https://worker.flovyn.ai` or `http://localhost:9090`)
     pub fn server_url(mut self, url: impl Into<String>) -> Self {
         self.server_url = url.into();
         self
