@@ -139,7 +139,7 @@ use flovyn_worker_sdk::prelude::*;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the client with fluent registration
     let client = FlovynClient::builder()
-        .server_address("localhost", 9090)
+        .server_url("http://localhost:9090")
         .org_id(Uuid::parse_str("your-org-id")?)
         .task_queue("default")
         .register_workflow(OrderWorkflow)
@@ -346,7 +346,7 @@ When `check_cancellation()` detects cancellation, it returns `Err(FlovynError::T
 
 ```rust
 let client = FlovynClient::builder()
-    .server_address("localhost", 9090)
+    .server_url("http://localhost:9090")
     .org_id(org_id)
     .worker_id("my-worker-1")
     .task_queue("gpu-workers")
@@ -398,7 +398,7 @@ impl WorkflowHook for MetricsHook {
 }
 
 let client = FlovynClient::builder()
-    .server_address("localhost", 9090)
+    .server_url("http://localhost:9090")
     .org_id(org_id)
     .register_workflow(MyWorkflow)
     .register_task(MyTask)

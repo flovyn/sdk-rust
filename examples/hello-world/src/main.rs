@@ -113,18 +113,6 @@ impl TaskDefinition for EchoTask {
     }
 }
 
-/// Parse a server URL into host and port components
-fn parse_server_url(url: &str) -> (String, u16) {
-    let url = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .unwrap_or(url);
-    let mut parts = url.split(':');
-    let host = parts.next().unwrap_or("localhost").to_string();
-    let port = parts.next().and_then(|p| p.parse().ok()).unwrap_or(9090);
-    (host, port)
-}
-
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Load environment variables from .env file
@@ -154,21 +142,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let server_url = std::env::var("FLOVYN_GRPC_SERVER_URL")
         .unwrap_or_else(|_| "http://localhost:9090".to_string());
-    let (server_host, server_port) = parse_server_url(&server_url);
     let worker_token = std::env::var("FLOVYN_WORKER_TOKEN")
         .expect("FLOVYN_WORKER_TOKEN environment variable is required");
     let queue = std::env::var("FLOVYN_QUEUE").unwrap_or_else(|_| "default".to_string());
 
     info!(
         org_id = %org_id,
-        server = %format!("{}:{}", server_host, server_port),
+        server = %server_url,
         queue = %queue,
         "Connecting to Flovyn server"
     );
 
     // Build the client with fluent registration
     let client = FlovynClient::builder()
-        .server_address(&server_host, server_port)
+        .server_url(&server_url)
         .org_id(org_id)
         .worker_token(worker_token)
         .queue(&queue)
