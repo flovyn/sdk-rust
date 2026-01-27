@@ -23,7 +23,7 @@ async fn test_worker_status_transitions() {
 
         // Build client manually to observe status transitions
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-status-test-worker")
@@ -79,7 +79,7 @@ async fn test_registration_info() {
         let harness = get_harness().await;
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-registration-test-worker")
@@ -132,7 +132,7 @@ async fn test_connection_info() {
 
         // Use short heartbeat interval so we can test heartbeat tracking
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-connection-test-worker")
@@ -245,7 +245,7 @@ async fn test_lifecycle_events() {
         let harness = get_harness().await;
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-events-test-worker")
@@ -373,7 +373,7 @@ async fn test_pause_resume() {
         let harness = get_harness().await;
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-pause-resume-worker")
@@ -449,7 +449,7 @@ async fn test_pause_invalid_state() {
         let harness = get_harness().await;
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-pause-invalid-worker")
@@ -488,7 +488,7 @@ async fn test_resume_invalid_state() {
         let harness = get_harness().await;
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-resume-invalid-worker")
@@ -519,7 +519,7 @@ async fn test_worker_uptime() {
         let harness = get_harness().await;
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-uptime-worker")
@@ -567,7 +567,7 @@ async fn test_client_config_accessors() {
         let harness = get_harness().await;
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_token(harness.worker_token())
             .worker_id("lifecycle-config-worker")

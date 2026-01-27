@@ -27,7 +27,7 @@ async fn test_basic_task_scheduling() {
 
         let queue = "task-basic-queue";
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id("e2e-task-worker")
             .worker_token(harness.worker_token())
@@ -91,7 +91,7 @@ async fn test_multiple_sequential_tasks() {
 
         let queue = "task-multi-queue";
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id("e2e-multi-task-worker")
             .worker_token(harness.worker_token())

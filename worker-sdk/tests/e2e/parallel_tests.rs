@@ -28,7 +28,7 @@ async fn test_e2e_parallel_tasks_join_all() {
         let workflow_kind = workflow.kind().to_string();
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
@@ -84,7 +84,7 @@ async fn test_e2e_fan_out_fan_in() {
         let workflow_kind = workflow.kind().to_string();
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
@@ -139,7 +139,7 @@ async fn test_e2e_racing_tasks_select() {
         let workflow_kind = workflow.kind().to_string();
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
@@ -193,7 +193,7 @@ async fn test_e2e_timeout_success() {
         let workflow_kind = workflow.kind().to_string();
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
@@ -243,7 +243,7 @@ async fn test_e2e_mixed_parallel_operations() {
         let workflow_kind = workflow.kind().to_string();
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())
@@ -308,7 +308,7 @@ async fn test_e2e_parallel_large_batch() {
         let workflow_kind = workflow.kind().to_string();
 
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id(format!("worker:{}", prefix))
             .worker_token(harness.worker_token())

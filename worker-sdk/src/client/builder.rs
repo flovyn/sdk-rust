@@ -26,7 +26,7 @@ pub const DEFAULT_TASK_QUEUE: &str = "default";
 /// Example:
 /// ```ignore
 /// let client = FlovynClient::builder()
-///     .server_address("localhost", 9090)
+///     .server_url("https://worker.flovyn.ai")
 ///     .org_id(org_id)
 ///     .queue("my-queue")
 ///     .register_workflow(MyWorkflow::new())
@@ -35,8 +35,7 @@ pub const DEFAULT_TASK_QUEUE: &str = "default";
 ///     .await?;
 /// ```
 pub struct FlovynClientBuilder {
-    server_host: String,
-    server_port: u16,
+    server_url: String,
     org_id: Uuid,
     worker_id: String,
     queue: String,
@@ -74,8 +73,7 @@ impl FlovynClientBuilder {
     /// Create a new builder with default values
     pub fn new() -> Self {
         Self {
-            server_host: "localhost".to_string(),
-            server_port: 9090,
+            server_url: "http://localhost:9090".to_string(),
             org_id: Uuid::new_v4(),
             worker_id: format!("worker-{}", Uuid::new_v4()),
             queue: DEFAULT_TASK_QUEUE.to_string(),
@@ -99,10 +97,9 @@ impl FlovynClientBuilder {
         }
     }
 
-    /// Set the server address
-    pub fn server_address(mut self, host: impl Into<String>, port: u16) -> Self {
-        self.server_host = host.into();
-        self.server_port = port;
+    /// Set the server URL (e.g., "https://worker.flovyn.ai" or "http://localhost:9090")
+    pub fn server_url(mut self, url: impl Into<String>) -> Self {
+        self.server_url = url.into();
         self
     }
 
@@ -140,7 +137,7 @@ impl FlovynClientBuilder {
 
     /// Set a custom gRPC channel
     ///
-    /// When set, server_address() is ignored.
+    /// When set, server_url() is ignored.
     pub fn custom_channel(mut self, channel: Channel) -> Self {
         self.custom_channel = Some(channel);
         self
@@ -212,7 +209,7 @@ impl FlovynClientBuilder {
     ///
     /// ```ignore
     /// let client = FlovynClient::builder()
-    ///     .server_address("localhost", 9090)
+    ///     .server_url("http://localhost:9090")
     ///     .org_id(org_id)
     ///     .oauth2_client_credentials(
     ///         "my-worker-client",
@@ -249,7 +246,7 @@ impl FlovynClientBuilder {
     ///
     /// ```ignore
     /// let client = FlovynClient::builder()
-    ///     .server_address("localhost", 9090)
+    ///     .server_url("http://localhost:9090")
     ///     .org_id(org_id)
     ///     .oauth2_client_credentials_with_scopes(
     ///         "my-worker-client",
@@ -389,7 +386,7 @@ impl FlovynClientBuilder {
     ///
     /// ```ignore
     /// let client = FlovynClient::builder()
-    ///     .server_address("localhost", 9090)
+    ///     .server_url("http://localhost:9090")
     ///     .org_id(org_id)
     ///     .register_workflow(MyWorkflow)
     ///     .build()
@@ -412,7 +409,7 @@ impl FlovynClientBuilder {
     ///
     /// ```ignore
     /// let client = FlovynClient::builder()
-    ///     .server_address("localhost", 9090)
+    ///     .server_url("http://localhost:9090")
     ///     .org_id(org_id)
     ///     .register_task(MyTask)
     ///     .build()
@@ -462,8 +459,7 @@ impl FlovynClientBuilder {
         let channel = match self.custom_channel {
             Some(ch) => ch,
             None => {
-                let endpoint = format!("http://{}:{}", self.server_host, self.server_port);
-                Channel::from_shared(endpoint)
+                Channel::from_shared(self.server_url.clone())
                     .map_err(|e| FlovynError::InvalidConfiguration(e.to_string()))?
                     .connect()
                     .await
@@ -520,17 +516,15 @@ mod tests {
     #[test]
     fn test_builder_default() {
         let builder = FlovynClientBuilder::new();
-        assert_eq!(builder.server_host, "localhost");
-        assert_eq!(builder.server_port, 9090);
+        assert_eq!(builder.server_url, "http://localhost:9090");
         assert_eq!(builder.queue, "default");
         assert_eq!(builder.poll_timeout, Duration::from_secs(60));
     }
 
     #[test]
-    fn test_builder_server_address() {
-        let builder = FlovynClientBuilder::new().server_address("example.com", 8080);
-        assert_eq!(builder.server_host, "example.com");
-        assert_eq!(builder.server_port, 8080);
+    fn test_builder_server_url() {
+        let builder = FlovynClientBuilder::new().server_url("https://worker.flovyn.ai");
+        assert_eq!(builder.server_url, "https://worker.flovyn.ai");
     }
 
     #[test]

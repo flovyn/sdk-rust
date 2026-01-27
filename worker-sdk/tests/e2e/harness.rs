@@ -272,6 +272,10 @@ impl TestHarness {
         self.server_grpc_port
     }
 
+    pub fn grpc_url(&self) -> String {
+        format!("http://{}:{}", self.grpc_host(), self.grpc_port())
+    }
+
     pub fn http_port(&self) -> u16 {
         self.server_http_port
     }

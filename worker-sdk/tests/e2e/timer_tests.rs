@@ -20,7 +20,7 @@ async fn test_durable_timer_sleep() {
 
         let queue = "timer-durable-queue";
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id("e2e-timer-worker")
             .worker_token(harness.worker_token())
@@ -86,7 +86,7 @@ async fn test_short_timer() {
 
         let queue = "timer-short-queue";
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id("e2e-short-timer-worker")
             .worker_token(harness.worker_token())

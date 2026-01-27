@@ -18,7 +18,7 @@ async fn test_state_set_get() {
 
         let queue = "state-tests-queue";
         let client = FlovynClient::builder()
-            .server_address(harness.grpc_host(), harness.grpc_port())
+            .server_url(harness.grpc_url())
             .org_id(harness.org_id())
             .worker_id("e2e-state-worker")
             .worker_token(harness.worker_token())
