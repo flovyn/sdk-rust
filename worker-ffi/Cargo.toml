@@ -13,7 +13,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 flovyn-worker-core = { path = "../worker-core" }
 uniffi = { version = "0.28", features = ["cli"] }
 tokio = { version = "1.37", features = ["rt-multi-thread", "sync"] }
-tonic = "0.11"
+tonic = { version = "0.11", features = ["tls-roots"] }
 async-trait = "0.1"
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }

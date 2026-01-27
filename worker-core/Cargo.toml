@@ -8,7 +8,7 @@ repository = "https://github.com/flovyn/sdk-rust"
 
 [dependencies]
 # gRPC
-tonic = "0.11"
+tonic = { version = "0.11", features = ["tls-roots"] }
 prost = "0.12"
 prost-types = "0.12"
 
