@@ -32,14 +32,14 @@ jobs:
             build_napi: true
             ffi_artifact: libflovyn_worker_ffi.so
             linker: aarch64-linux-gnu-gcc
-          - name: macos-x86_64
-            runner: macos-13
-            target: x86_64-apple-darwin
-            use_cross: false
-            build_napi: true
-            ffi_artifact: libflovyn_worker_ffi.dylib
+          # - name: macos-x86_64
+          #   runner: macos-13
+          #   target: x86_64-apple-darwin
+          #   use_cross: false
+          #   build_napi: true
+          #   ffi_artifact: libflovyn_worker_ffi.dylib
           - name: macos-aarch64
-            runner: macos-14
+            runner: macos-latest
             target: aarch64-apple-darwin
             use_cross: false
             build_napi: true
