@@ -543,6 +543,7 @@ impl WorkflowExecutorWorker {
             "TIMER_STARTED" => EventType::TimerStarted,
             "TIMER_FIRED" => EventType::TimerFired,
             "TIMER_CANCELLED" => EventType::TimerCancelled,
+            "SIGNAL_RECEIVED" => EventType::SignalReceived,
             _ => EventType::WorkflowStarted, // Default fallback
         }
     }

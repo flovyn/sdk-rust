@@ -5,7 +5,7 @@ use crate::task::definition::TaskDefinition;
 use crate::workflow::definition::WorkflowDefinition;
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFutureRaw, PromiseFuture,
-    PromiseFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+    PromiseFutureRaw, SignalFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
 };
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -262,6 +262,39 @@ pub trait WorkflowContext: Send + Sync {
 
     /// Get all keys in workflow state
     async fn state_keys(&self) -> Result<Vec<String>>;
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    /// Wait for the next signal in the queue.
+    ///
+    /// Signals are consumed in order. If no signal is available, the workflow
+    /// will suspend until a signal is received.
+    ///
+    /// Returns a tuple of (signal_name, signal_value).
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Wait for any signal
+    /// let (name, value) = ctx.wait_for_signal_raw().await?;
+    /// println!("Received signal '{}': {:?}", name, value);
+    /// ```
+    fn wait_for_signal_raw(&self) -> SignalFutureRaw;
+
+    /// Check if any signals are pending in the queue.
+    ///
+    /// This does not consume any signals.
+    fn has_signal(&self) -> bool;
+
+    /// Get the number of pending signals.
+    fn pending_signal_count(&self) -> usize;
+
+    /// Drain all pending signals from the queue.
+    ///
+    /// Returns a vector of (signal_name, signal_value) tuples.
+    /// This consumes all signals currently in the queue.
+    fn drain_signals_raw(&self) -> Vec<(String, Value)>;
 
     // =========================================================================
     // Cancellation

@@ -35,6 +35,12 @@ service WorkflowDispatch {
   // Reject a durable promise
   rpc RejectPromise(RejectPromiseRequest) returns (google.protobuf.Empty);
 
+  // Atomically start a workflow (if not exists) and send a signal
+  rpc SignalWithStartWorkflow(SignalWithStartWorkflowRequest) returns (SignalWithStartWorkflowResponse);
+
+  // Send a signal to an existing workflow
+  rpc SignalWorkflow(SignalWorkflowRequest) returns (SignalWorkflowResponse);
+
   // Get workflow events (for replay)
   rpc GetEvents(GetEventsRequest) returns (GetEventsResponse);
 
@@ -232,6 +238,49 @@ message ResolvePromiseRequest {
 message RejectPromiseRequest {
   string promise_id = 1;
   string error = 2;
+}
+
+// ============================================================================
+// Signal Messages
+// ============================================================================
+
+message SignalWithStartWorkflowRequest {
+  string org_id = 1;
+
+  // === Workflow Identity ===
+  string workflow_id = 2;  // Used as idempotency key for workflow creation
+
+  // === Workflow Parameters (used only when creating) ===
+  string workflow_kind = 3;
+  bytes workflow_input = 4;
+  string queue = 5;
+  int32 priority_seconds = 6;
+  optional string workflow_version = 7;
+  map<string, string> metadata = 8;
+
+  // === Signal Parameters (always applied) ===
+  string signal_name = 9;
+  bytes signal_value = 10;
+
+  // === Options ===
+  optional int64 idempotency_key_ttl_seconds = 11;
+}
+
+message SignalWithStartWorkflowResponse {
+  string workflow_execution_id = 1;
+  bool workflow_created = 2;
+  int64 signal_event_sequence = 3;
+}
+
+message SignalWorkflowRequest {
+  string org_id = 1;
+  string workflow_execution_id = 2;
+  string signal_name = 3;
+  bytes signal_value = 4;
+}
+
+message SignalWorkflowResponse {
+  int64 signal_event_sequence = 1;
 }
 
 message GetEventsRequest {

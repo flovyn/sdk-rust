@@ -48,6 +48,7 @@ pub struct ReplayEngine {
     child_workflow_events: Vec<ReplayEvent>,
     operation_events: Vec<ReplayEvent>,
     state_events: Vec<ReplayEvent>,
+    signal_events: Vec<ReplayEvent>,
 
     // All events for terminal event lookup
     all_events: Vec<ReplayEvent>,
@@ -59,6 +60,7 @@ pub struct ReplayEngine {
     next_child_workflow_seq: AtomicU32,
     next_operation_seq: AtomicU32,
     next_state_seq: AtomicU32,
+    next_signal_seq: AtomicU32,
 
     // Caches built from events
     operation_cache: HashMap<String, Value>,
@@ -113,6 +115,12 @@ impl ReplayEngine {
             .cloned()
             .collect();
 
+        let signal_events: Vec<ReplayEvent> = events
+            .iter()
+            .filter(|e| e.event_type() == EventType::SignalReceived)
+            .cloned()
+            .collect();
+
         // Build operation cache from OperationCompleted events
         let operation_cache = crate::workflow::execution::build_operation_cache(&events);
 
@@ -126,6 +134,7 @@ impl ReplayEngine {
             child_workflow_events,
             operation_events,
             state_events,
+            signal_events,
             all_events: events,
             next_task_seq: AtomicU32::new(0),
             next_timer_seq: AtomicU32::new(0),
@@ -133,6 +142,7 @@ impl ReplayEngine {
             next_child_workflow_seq: AtomicU32::new(0),
             next_operation_seq: AtomicU32::new(0),
             next_state_seq: AtomicU32::new(0),
+            next_signal_seq: AtomicU32::new(0),
             operation_cache,
             state: RwLock::new(state),
         }
@@ -172,6 +182,16 @@ impl ReplayEngine {
         self.next_state_seq.fetch_add(1, Ordering::SeqCst)
     }
 
+    /// Get next signal sequence number and increment.
+    pub fn next_signal_seq(&self) -> u32 {
+        self.next_signal_seq.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Peek at the current signal sequence without incrementing.
+    pub fn peek_signal_seq(&self) -> u32 {
+        self.next_signal_seq.load(Ordering::SeqCst)
+    }
+
     // =========================================================================
     // Event Lookup (for replay validation)
     // =========================================================================
@@ -206,6 +226,11 @@ impl ReplayEngine {
         self.state_events.get(seq as usize)
     }
 
+    /// Get the signal event at the given sequence index (if replaying).
+    pub fn get_signal_event(&self, seq: u32) -> Option<&ReplayEvent> {
+        self.signal_events.get(seq as usize)
+    }
+
     /// Check if currently replaying for tasks (seq < task_event_count).
     pub fn is_replaying_task(&self, seq: u32) -> bool {
         (seq as usize) < self.task_events.len()
@@ -229,6 +254,21 @@ impl ReplayEngine {
     /// Check if currently replaying for operations.
     pub fn is_replaying_operation(&self, seq: u32) -> bool {
         (seq as usize) < self.operation_events.len()
+    }
+
+    /// Check if there are pending signals.
+    pub fn has_pending_signal(&self) -> bool {
+        (self.next_signal_seq.load(Ordering::SeqCst) as usize) < self.signal_events.len()
+    }
+
+    /// Get the number of pending signals (total signals - consumed signals).
+    pub fn pending_signal_count(&self) -> usize {
+        let current = self.next_signal_seq.load(Ordering::SeqCst) as usize;
+        if current < self.signal_events.len() {
+            self.signal_events.len() - current
+        } else {
+            0
+        }
     }
 
     // =========================================================================
@@ -325,6 +365,11 @@ impl ReplayEngine {
     /// Get the number of state events.
     pub fn state_event_count(&self) -> usize {
         self.state_events.len()
+    }
+
+    /// Get the number of signal events.
+    pub fn signal_event_count(&self) -> usize {
+        self.signal_events.len()
     }
 
     /// Get the total number of events.

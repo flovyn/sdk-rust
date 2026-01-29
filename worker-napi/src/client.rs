@@ -57,6 +57,26 @@ pub struct StartWorkflowOptions {
     pub idempotency_key: Option<String>,
 }
 
+/// Result of signaling a workflow.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct SignalWorkflowResult {
+    /// Sequence number of the signal event.
+    pub signal_event_sequence: i64,
+}
+
+/// Result of signal-with-start operation.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct SignalWithStartResult {
+    /// The workflow execution ID.
+    pub workflow_execution_id: String,
+    /// Whether the workflow was created (vs already existed).
+    pub workflow_created: bool,
+    /// Sequence number of the signal event.
+    pub signal_event_sequence: i64,
+}
+
 #[napi]
 impl NapiClient {
     /// Create a new NapiClient with the given configuration.
@@ -212,6 +232,68 @@ impl NapiClient {
             .map_err(from_core_error)?;
 
         Ok(())
+    }
+
+    /// Send a signal to an existing workflow.
+    #[napi]
+    pub async fn signal_workflow(
+        &self,
+        workflow_execution_id: String,
+        signal_name: String,
+        signal_value: String,
+    ) -> Result<SignalWorkflowResult> {
+        let value_bytes = signal_value.into_bytes();
+
+        let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.client_token);
+
+        let result = dispatch_client
+            .signal_workflow(&self.config.org_id, &workflow_execution_id, &signal_name, value_bytes)
+            .await
+            .map_err(from_core_error)?;
+
+        Ok(SignalWorkflowResult {
+            signal_event_sequence: result.signal_event_sequence,
+        })
+    }
+
+    /// Send a signal to an existing workflow, or create a new workflow and send the signal.
+    #[napi]
+    pub async fn signal_with_start_workflow(
+        &self,
+        workflow_id: String,
+        workflow_kind: String,
+        workflow_input: String,
+        queue: Option<String>,
+        signal_name: String,
+        signal_value: String,
+    ) -> Result<SignalWithStartResult> {
+        let input_bytes = workflow_input.into_bytes();
+        let signal_bytes = signal_value.into_bytes();
+
+        let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.client_token);
+
+        let result = dispatch_client
+            .signal_with_start_workflow(
+                &self.config.org_id,
+                &workflow_id,
+                &workflow_kind,
+                input_bytes,
+                queue.as_deref().unwrap_or("default"),
+                &signal_name,
+                signal_bytes,
+                None, // priority_seconds
+                None, // workflow_version
+                None, // metadata
+                None, // idempotency_key_ttl_seconds
+            )
+            .await
+            .map_err(from_core_error)?;
+
+        Ok(SignalWithStartResult {
+            workflow_execution_id: result.workflow_execution_id.to_string(),
+            workflow_created: result.workflow_created,
+            signal_event_sequence: result.signal_event_sequence,
+        })
     }
 
     /// Get the server URL.
