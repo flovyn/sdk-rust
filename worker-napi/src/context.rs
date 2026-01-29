@@ -94,6 +94,28 @@ pub struct OperationResult {
     pub operation_seq: Option<u32>,
 }
 
+/// Result of waiting for a signal.
+#[napi(object)]
+#[derive(Clone)]
+pub struct SignalResult {
+    /// Status: "received" or "pending"
+    pub status: String,
+    /// Signal name (if received).
+    pub signal_name: Option<String>,
+    /// Serialized value as JSON string (if received).
+    pub value: Option<String>,
+}
+
+/// A signal event from the signal queue.
+#[napi(object)]
+#[derive(Clone)]
+pub struct SignalEvent {
+    /// Signal name.
+    pub signal_name: String,
+    /// Serialized value as JSON string.
+    pub value: String,
+}
+
 // ============================================================================
 // Internal Result Types
 // ============================================================================
@@ -568,6 +590,71 @@ impl NapiWorkflowContext {
                 promise_id: name,
             })
         }
+    }
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    /// Wait for the next signal in the queue.
+    #[napi]
+    pub fn wait_for_signal(&self) -> SignalResult {
+        let signal_seq = self.replay_engine.next_signal_seq();
+
+        if let Some(event) = self.replay_engine.get_signal_event(signal_seq) {
+            let signal_name = event
+                .get_string("signalName")
+                .unwrap_or_default()
+                .to_string();
+            let signal_value = event.get("signalValue").cloned().unwrap_or_default();
+            let value = serde_json::to_string(&signal_value).unwrap_or_default();
+
+            SignalResult {
+                status: "received".to_string(),
+                signal_name: Some(signal_name),
+                value: Some(value),
+            }
+        } else {
+            SignalResult {
+                status: "pending".to_string(),
+                signal_name: None,
+                value: None,
+            }
+        }
+    }
+
+    /// Check if any signals are pending in the queue.
+    #[napi]
+    pub fn has_signal(&self) -> bool {
+        self.replay_engine.has_pending_signal()
+    }
+
+    /// Get the number of pending signals.
+    #[napi]
+    pub fn pending_signal_count(&self) -> u32 {
+        self.replay_engine.pending_signal_count() as u32
+    }
+
+    /// Drain all pending signals from the queue.
+    #[napi]
+    pub fn drain_signals(&self) -> Vec<SignalEvent> {
+        let mut signals = Vec::new();
+
+        while self.replay_engine.has_pending_signal() {
+            let signal_seq = self.replay_engine.next_signal_seq();
+            if let Some(event) = self.replay_engine.get_signal_event(signal_seq) {
+                let signal_name = event
+                    .get_string("signalName")
+                    .unwrap_or_default()
+                    .to_string();
+                let signal_value = event.get("signalValue").cloned().unwrap_or_default();
+                let value = serde_json::to_string(&signal_value).unwrap_or_default();
+
+                signals.push(SignalEvent { signal_name, value });
+            }
+        }
+
+        signals
     }
 
     /// Start a timer.

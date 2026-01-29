@@ -43,6 +43,103 @@ pub struct StartWorkflowResult {
     pub idempotency_key_new: bool,
 }
 
+/// Options for signal-with-start operation
+#[derive(Debug, Clone)]
+pub struct SignalWithStartOptions {
+    /// Workflow ID (used as idempotency key for workflow creation)
+    pub workflow_id: String,
+    /// Workflow kind/type
+    pub workflow_kind: String,
+    /// Workflow input data
+    pub workflow_input: Value,
+    /// Task queue
+    pub queue: String,
+    /// Signal name
+    pub signal_name: String,
+    /// Signal value
+    pub signal_value: Value,
+    /// Priority in seconds (higher = lower priority)
+    pub priority_seconds: Option<i32>,
+    /// Specific workflow version to use
+    pub workflow_version: Option<String>,
+    /// Metadata for tracking, filtering, and analytics
+    pub metadata: std::collections::HashMap<String, String>,
+    /// TTL for the idempotency key in seconds
+    pub idempotency_key_ttl_seconds: Option<i64>,
+}
+
+impl SignalWithStartOptions {
+    /// Create new options with required parameters
+    pub fn new(
+        workflow_id: impl Into<String>,
+        workflow_kind: impl Into<String>,
+        workflow_input: Value,
+        signal_name: impl Into<String>,
+        signal_value: Value,
+    ) -> Self {
+        Self {
+            workflow_id: workflow_id.into(),
+            workflow_kind: workflow_kind.into(),
+            workflow_input,
+            queue: "default".to_string(),
+            signal_name: signal_name.into(),
+            signal_value,
+            priority_seconds: None,
+            workflow_version: None,
+            metadata: std::collections::HashMap::new(),
+            idempotency_key_ttl_seconds: None,
+        }
+    }
+
+    /// Set the task queue
+    pub fn queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = queue.into();
+        self
+    }
+
+    /// Set the priority in seconds
+    pub fn priority_seconds(mut self, priority: i32) -> Self {
+        self.priority_seconds = Some(priority);
+        self
+    }
+
+    /// Set the workflow version
+    pub fn workflow_version(mut self, version: impl Into<String>) -> Self {
+        self.workflow_version = Some(version.into());
+        self
+    }
+
+    /// Set metadata
+    pub fn metadata(mut self, metadata: std::collections::HashMap<String, String>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    /// Set idempotency key TTL
+    pub fn idempotency_key_ttl_seconds(mut self, ttl: i64) -> Self {
+        self.idempotency_key_ttl_seconds = Some(ttl);
+        self
+    }
+}
+
+/// Result of signal-with-start operation
+#[derive(Debug, Clone)]
+pub struct SignalWithStartResult {
+    /// The workflow execution ID
+    pub workflow_execution_id: Uuid,
+    /// Whether the workflow was created (vs already existed)
+    pub workflow_created: bool,
+    /// Sequence number of the signal event
+    pub signal_event_sequence: i64,
+}
+
+/// Result of sending a signal to a workflow
+#[derive(Debug, Clone)]
+pub struct SignalResult {
+    /// Sequence number of the signal event
+    pub signal_event_sequence: i64,
+}
+
 /// Options for starting a workflow
 #[derive(Debug, Clone, Default)]
 pub struct StartWorkflowOptions {
@@ -510,6 +607,85 @@ impl FlovynClient {
             .map_err(FlovynError::Grpc)?;
 
         Ok(())
+    }
+
+    /// Atomically start a workflow (if not exists) and send a signal.
+    ///
+    /// This operation is atomic: either the workflow is created and signal sent,
+    /// or the signal is sent to the existing workflow.
+    ///
+    /// # Arguments
+    /// * `options` - Signal with start options including workflow and signal parameters
+    ///
+    /// # Returns
+    /// Result containing workflow execution ID, whether it was created, and signal sequence
+    pub async fn signal_with_start_workflow(
+        &self,
+        options: SignalWithStartOptions,
+    ) -> Result<SignalWithStartResult> {
+        let mut client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
+
+        let workflow_input = serde_json::to_vec(&options.workflow_input)?;
+        let signal_value = serde_json::to_vec(&options.signal_value)?;
+
+        let result = client
+            .signal_with_start_workflow(
+                &self.org_id.to_string(),
+                &options.workflow_id,
+                &options.workflow_kind,
+                workflow_input,
+                &options.queue,
+                &options.signal_name,
+                signal_value,
+                options.priority_seconds,
+                options.workflow_version.as_deref(),
+                if options.metadata.is_empty() {
+                    None
+                } else {
+                    Some(options.metadata)
+                },
+                options.idempotency_key_ttl_seconds,
+            )
+            .await?;
+
+        Ok(SignalWithStartResult {
+            workflow_execution_id: result.workflow_execution_id,
+            workflow_created: result.workflow_created,
+            signal_event_sequence: result.signal_event_sequence,
+        })
+    }
+
+    /// Send a signal to an existing workflow.
+    ///
+    /// # Arguments
+    /// * `workflow_execution_id` - The workflow execution ID to signal
+    /// * `signal_name` - Name of the signal
+    /// * `signal_value` - Value to send with the signal
+    ///
+    /// # Returns
+    /// Result containing the signal event sequence number
+    pub async fn signal_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+        signal_value: Value,
+    ) -> Result<SignalResult> {
+        let mut client = WorkflowDispatch::new(self.channel.clone(), &self.worker_token);
+
+        let signal_value_bytes = serde_json::to_vec(&signal_value)?;
+
+        let result = client
+            .signal_workflow(
+                &self.org_id.to_string(),
+                &workflow_execution_id.to_string(),
+                signal_name,
+                signal_value_bytes,
+            )
+            .await?;
+
+        Ok(SignalResult {
+            signal_event_sequence: result.signal_event_sequence,
+        })
     }
 
     /// Get workflow events

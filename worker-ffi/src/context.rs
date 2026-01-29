@@ -128,6 +128,29 @@ pub enum FfiOperationResult {
     },
 }
 
+/// Result of waiting for a signal.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum FfiSignalResult {
+    /// Signal received - return the signal data.
+    Received {
+        /// Signal name.
+        signal_name: String,
+        /// Serialized value as JSON bytes.
+        value: Vec<u8>,
+    },
+    /// No signal available - workflow should suspend.
+    Pending,
+}
+
+/// A signal event from the signal queue.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiSignalEvent {
+    /// Signal name.
+    pub signal_name: String,
+    /// Serialized value as JSON bytes.
+    pub value: Vec<u8>,
+}
+
 // ============================================================================
 // Internal Result Types - For storing parsed terminal events
 // ============================================================================
@@ -558,6 +581,67 @@ impl FfiWorkflowContext {
 
             Ok(FfiPromiseResult::Pending { promise_id: name })
         }
+    }
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    /// Wait for the next signal in the queue.
+    ///
+    /// Returns:
+    /// - `Received` if a signal is available
+    /// - `Pending` if no signal available - workflow should suspend
+    pub fn wait_for_signal(&self) -> FfiSignalResult {
+        let signal_seq = self.replay_engine.next_signal_seq();
+
+        if let Some(event) = self.replay_engine.get_signal_event(signal_seq) {
+            // Signal found - extract name and value
+            let signal_name = event
+                .get_string("signalName")
+                .unwrap_or_default()
+                .to_string();
+
+            // Get the signal value and convert to bytes
+            let signal_value = event.get("signalValue").cloned().unwrap_or_default();
+            let value = serde_json::to_vec(&signal_value).unwrap_or_default();
+
+            FfiSignalResult::Received { signal_name, value }
+        } else {
+            // No signal available
+            FfiSignalResult::Pending
+        }
+    }
+
+    /// Check if any signals are pending in the queue.
+    pub fn has_signal(&self) -> bool {
+        self.replay_engine.has_pending_signal()
+    }
+
+    /// Get the number of pending signals.
+    pub fn pending_signal_count(&self) -> u32 {
+        self.replay_engine.pending_signal_count() as u32
+    }
+
+    /// Drain all pending signals from the queue.
+    pub fn drain_signals(&self) -> Vec<FfiSignalEvent> {
+        let mut signals = Vec::new();
+
+        while self.replay_engine.has_pending_signal() {
+            let signal_seq = self.replay_engine.next_signal_seq();
+            if let Some(event) = self.replay_engine.get_signal_event(signal_seq) {
+                let signal_name = event
+                    .get_string("signalName")
+                    .unwrap_or_default()
+                    .to_string();
+                let signal_value = event.get("signalValue").cloned().unwrap_or_default();
+                let value = serde_json::to_vec(&signal_value).unwrap_or_default();
+
+                signals.push(FfiSignalEvent { signal_name, value });
+            }
+        }
+
+        signals
     }
 
     /// Start a timer.

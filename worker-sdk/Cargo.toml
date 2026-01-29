@@ -55,6 +55,9 @@ hostname = "0.4"
 sha2 = "0.10"
 hex = "0.4"
 
+# Base64 encoding/decoding
+base64 = "0.22"
+
 # Futures traits
 futures = "0.3"
 

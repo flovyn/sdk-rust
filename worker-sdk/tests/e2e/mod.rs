@@ -28,6 +28,7 @@ mod parallel_tests;
 mod promise_tests;
 mod replay_tests;
 mod replay_utils;
+mod signal_tests;
 mod state_tests;
 mod streaming_tests;
 mod task_tests;

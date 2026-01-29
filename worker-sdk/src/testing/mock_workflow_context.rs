@@ -6,7 +6,8 @@ use crate::workflow::context::{
 };
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFuture, OperationFutureRaw,
-    PromiseFuture, PromiseFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+    PromiseFuture, PromiseFutureRaw, SignalFuture, SignalFutureRaw, TaskFuture, TaskFutureRaw,
+    TimerFuture,
 };
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -64,6 +65,8 @@ struct MockWorkflowContextInner {
     scheduled_tasks: RwLock<Vec<ScheduledTask>>,
     scheduled_workflows: RwLock<Vec<ScheduledWorkflow>>,
     created_promises: RwLock<Vec<String>>,
+    // Signal queue for mock signals
+    signal_queue: RwLock<Vec<(String, Value)>>,
     cancellation_requested: AtomicBool,
     uuid_counter: AtomicU64,
     rng_seed: u64,
@@ -73,6 +76,7 @@ struct MockWorkflowContextInner {
     next_child_workflow_seq: AtomicU32,
     next_promise_seq: AtomicU32,
     next_operation_seq: AtomicU32,
+    next_signal_seq: AtomicU32,
 }
 
 impl Clone for MockWorkflowContext {
@@ -231,6 +235,7 @@ pub struct MockWorkflowContextBuilder {
     task_results: HashMap<String, Value>,
     promise_results: HashMap<String, Value>,
     child_workflow_results: HashMap<String, Value>,
+    signal_queue: Vec<(String, Value)>,
     rng_seed: Option<u64>,
 }
 
@@ -283,6 +288,14 @@ impl MockWorkflowContextBuilder {
         self
     }
 
+    /// Add a mock signal to the signal queue.
+    ///
+    /// Signals are consumed in order by `wait_for_signal_raw()`.
+    pub fn mock_signal(mut self, name: &str, value: Value) -> Self {
+        self.signal_queue.push((name.to_string(), value));
+        self
+    }
+
     /// Set the RNG seed for deterministic random generation.
     pub fn rng_seed(mut self, seed: u64) -> Self {
         self.rng_seed = Some(seed);
@@ -310,6 +323,7 @@ impl MockWorkflowContextBuilder {
                 scheduled_tasks: RwLock::new(Vec::new()),
                 scheduled_workflows: RwLock::new(Vec::new()),
                 created_promises: RwLock::new(Vec::new()),
+                signal_queue: RwLock::new(self.signal_queue),
                 cancellation_requested: AtomicBool::new(false),
                 uuid_counter: AtomicU64::new(0),
                 rng_seed: self.rng_seed.unwrap_or(12345),
@@ -318,6 +332,7 @@ impl MockWorkflowContextBuilder {
                 next_child_workflow_seq: AtomicU32::new(0),
                 next_promise_seq: AtomicU32::new(0),
                 next_operation_seq: AtomicU32::new(0),
+                next_signal_seq: AtomicU32::new(0),
             }),
         }
     }
@@ -424,6 +439,43 @@ impl WorkflowContext for MockWorkflowContext {
         } else {
             Ok(())
         }
+    }
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    fn wait_for_signal_raw(&self) -> SignalFutureRaw {
+        use crate::workflow::context_impl::SuspensionCell;
+
+        let _seq = self.inner.next_signal_seq.fetch_add(1, Ordering::SeqCst);
+        let mut queue = self.inner.signal_queue.write();
+
+        if queue.is_empty() {
+            // No signal available - create a future that will suspend
+            SignalFuture::new_with_cell(SuspensionCell::new())
+        } else {
+            // Pop the first signal from the queue
+            let (name, value) = queue.remove(0);
+            let result_value = serde_json::json!({
+                "signalName": name,
+                "signalValue": value
+            });
+            SignalFuture::from_replay_with_cell(SuspensionCell::new(), Ok(result_value))
+        }
+    }
+
+    fn has_signal(&self) -> bool {
+        !self.inner.signal_queue.read().is_empty()
+    }
+
+    fn pending_signal_count(&self) -> usize {
+        self.inner.signal_queue.read().len()
+    }
+
+    fn drain_signals_raw(&self) -> Vec<(String, Value)> {
+        let mut queue = self.inner.signal_queue.write();
+        std::mem::take(&mut *queue)
     }
 
     // =========================================================================

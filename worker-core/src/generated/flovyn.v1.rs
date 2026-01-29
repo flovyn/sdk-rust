@@ -238,6 +238,67 @@ pub struct RejectPromiseRequest {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalWithStartWorkflowRequest {
+    #[prost(string, tag = "1")]
+    pub org_id: ::prost::alloc::string::String,
+    /// === Workflow Identity ===
+    ///
+    /// Used as idempotency key for workflow creation
+    #[prost(string, tag = "2")]
+    pub workflow_id: ::prost::alloc::string::String,
+    /// === Workflow Parameters (used only when creating) ===
+    #[prost(string, tag = "3")]
+    pub workflow_kind: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub workflow_input: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "5")]
+    pub queue: ::prost::alloc::string::String,
+    #[prost(int32, tag = "6")]
+    pub priority_seconds: i32,
+    #[prost(string, optional, tag = "7")]
+    pub workflow_version: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(map = "string, string", tag = "8")]
+    pub metadata:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    /// === Signal Parameters (always applied) ===
+    #[prost(string, tag = "9")]
+    pub signal_name: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "10")]
+    pub signal_value: ::prost::alloc::vec::Vec<u8>,
+    /// === Options ===
+    #[prost(int64, optional, tag = "11")]
+    pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalWithStartWorkflowResponse {
+    #[prost(string, tag = "1")]
+    pub workflow_execution_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub workflow_created: bool,
+    #[prost(int64, tag = "3")]
+    pub signal_event_sequence: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalWorkflowRequest {
+    #[prost(string, tag = "1")]
+    pub org_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub workflow_execution_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub signal_name: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub signal_value: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalWorkflowResponse {
+    #[prost(int64, tag = "1")]
+    pub signal_event_sequence: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetEventsRequest {
     /// Workflow execution ID
     #[prost(string, tag = "1")]
@@ -1301,6 +1362,53 @@ pub mod workflow_dispatch_client {
             req.extensions_mut().insert(GrpcMethod::new(
                 "flovyn.v1.WorkflowDispatch",
                 "RejectPromise",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Atomically start a workflow (if not exists) and send a signal
+        pub async fn signal_with_start_workflow(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SignalWithStartWorkflowRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SignalWithStartWorkflowResponse>,
+            tonic::Status,
+        > {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/flovyn.v1.WorkflowDispatch/SignalWithStartWorkflow",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "SignalWithStartWorkflow",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Send a signal to an existing workflow
+        pub async fn signal_workflow(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SignalWorkflowRequest>,
+        ) -> std::result::Result<tonic::Response<super::SignalWorkflowResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.WorkflowDispatch/SignalWorkflow");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.WorkflowDispatch",
+                "SignalWorkflow",
             ));
             self.inner.unary(req, path, codec).await
         }

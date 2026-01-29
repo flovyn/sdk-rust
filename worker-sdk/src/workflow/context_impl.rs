@@ -8,8 +8,9 @@ use crate::workflow::context::{
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
-    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SuspensionContext,
-    TaskFuture, TaskFutureContext, TaskFutureRaw, TimerFuture, TimerFutureContext,
+    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SignalFuture,
+    SignalFutureRaw, SuspensionContext, TaskFuture, TaskFutureContext, TaskFutureRaw, TimerFuture,
+    TimerFutureContext,
 };
 use crate::workflow::recorder::CommandRecorder;
 use async_trait::async_trait;
@@ -446,6 +447,89 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
     async fn state_keys(&self) -> Result<Vec<String>> {
         Ok(self.replay_engine.state_keys())
+    }
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    fn wait_for_signal_raw(&self) -> SignalFutureRaw {
+        // Get next signal sequence and check if we have a signal
+        let signal_seq = self.replay_engine.next_signal_seq();
+
+        if let Some(signal_event) = self.replay_engine.get_signal_event(signal_seq) {
+            // Signal found - return it
+            let signal_name = signal_event
+                .get_string("signalName")
+                .unwrap_or("")
+                .to_string();
+            let signal_value = signal_event.get("signalValue").cloned().unwrap_or(Value::Null);
+
+            // Decode base64 signal value if it's a string (base64 encoded bytes)
+            let decoded_value = if let Some(base64_str) = signal_value.as_str() {
+                use base64::Engine;
+                match base64::engine::general_purpose::STANDARD.decode(base64_str) {
+                    Ok(bytes) => {
+                        // Try to parse as JSON
+                        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+                    }
+                    Err(_) => {
+                        // Not valid base64, treat as raw string
+                        Value::String(base64_str.to_string())
+                    }
+                }
+            } else {
+                signal_value
+            };
+
+            let result_value = serde_json::json!({
+                "signalName": signal_name,
+                "signalValue": decoded_value
+            });
+
+            SignalFuture::from_replay_with_cell(self.suspension_cell.clone(), Ok(result_value))
+        } else {
+            // No signal available - this will suspend
+            SignalFuture::new_with_cell(self.suspension_cell.clone())
+        }
+    }
+
+    fn has_signal(&self) -> bool {
+        self.replay_engine.has_pending_signal()
+    }
+
+    fn pending_signal_count(&self) -> usize {
+        self.replay_engine.pending_signal_count()
+    }
+
+    fn drain_signals_raw(&self) -> Vec<(String, Value)> {
+        let mut signals = Vec::new();
+
+        while self.replay_engine.has_pending_signal() {
+            let signal_seq = self.replay_engine.next_signal_seq();
+            if let Some(signal_event) = self.replay_engine.get_signal_event(signal_seq) {
+                let signal_name = signal_event
+                    .get_string("signalName")
+                    .unwrap_or("")
+                    .to_string();
+                let signal_value = signal_event.get("signalValue").cloned().unwrap_or(Value::Null);
+
+                // Decode base64 signal value if it's a string
+                let decoded_value = if let Some(base64_str) = signal_value.as_str() {
+                    use base64::Engine;
+                    match base64::engine::general_purpose::STANDARD.decode(base64_str) {
+                        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+                        Err(_) => Value::String(base64_str.to_string()),
+                    }
+                } else {
+                    signal_value
+                };
+
+                signals.push((signal_name, decoded_value));
+            }
+        }
+
+        signals
     }
 
     fn is_cancellation_requested(&self) -> bool {
