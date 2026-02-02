@@ -629,7 +629,8 @@ impl NapiWorkflowContext {
     /// Get the number of pending signals with the specified name.
     #[napi]
     pub fn pending_signal_count(&self, signal_name: String) -> u32 {
-        self.replay_engine.pending_signal_count_for_name(&signal_name) as u32
+        self.replay_engine
+            .pending_signal_count_for_name(&signal_name) as u32
     }
 
     /// Drain all pending signals with the specified name.

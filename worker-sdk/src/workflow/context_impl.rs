@@ -457,7 +457,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         // Try to pop a signal with the given name from the queue
         if let Some(signal_event) = self.replay_engine.pop_signal(signal_name) {
             // Signal found - return it directly (server stores as JSON, no base64)
-            let signal_value = signal_event.get("signalValue").cloned().unwrap_or(Value::Null);
+            let signal_value = signal_event
+                .get("signalValue")
+                .cloned()
+                .unwrap_or(Value::Null);
 
             let result_value = serde_json::json!({
                 "signalName": signal_name,
@@ -467,7 +470,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             SignalFuture::from_replay_with_cell(self.suspension_cell.clone(), Ok(result_value))
         } else {
             // No signal available - this will suspend and wait for signal with this name
-            SignalFuture::new_waiting_for_signal(self.suspension_cell.clone(), signal_name.to_string())
+            SignalFuture::new_waiting_for_signal(
+                self.suspension_cell.clone(),
+                signal_name.to_string(),
+            )
         }
     }
 
@@ -476,7 +482,8 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     }
 
     fn pending_signal_count(&self, signal_name: &str) -> usize {
-        self.replay_engine.pending_signal_count_for_name(signal_name)
+        self.replay_engine
+            .pending_signal_count_for_name(signal_name)
     }
 
     fn drain_signals_raw(&self, signal_name: &str) -> Vec<Value> {
@@ -485,7 +492,10 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             .drain_signals(signal_name)
             .into_iter()
             .map(|signal_event| {
-                signal_event.get("signalValue").cloned().unwrap_or(Value::Null)
+                signal_event
+                    .get("signalValue")
+                    .cloned()
+                    .unwrap_or(Value::Null)
             })
             .collect()
     }

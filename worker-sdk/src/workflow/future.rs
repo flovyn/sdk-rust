@@ -1164,7 +1164,10 @@ impl SignalFuture {
     /// The signal name is used for documentation/debugging purposes.
     /// When the workflow resumes, it will replay and call wait_for_signal_raw again,
     /// at which point the signal should be available in the replay engine's queue.
-    pub(crate) fn new_waiting_for_signal(suspension_cell: SuspensionCell, _signal_name: String) -> Self {
+    pub(crate) fn new_waiting_for_signal(
+        suspension_cell: SuspensionCell,
+        _signal_name: String,
+    ) -> Self {
         // The signal name doesn't need to be stored - when the workflow resumes,
         // it replays from the beginning and will call wait_for_signal_raw with
         // the same name, which will then find the signal in the queue.
@@ -1175,7 +1178,10 @@ impl SignalFuture {
     }
 
     /// Create for replay with result already known
-    pub(crate) fn from_replay_with_cell(suspension_cell: SuspensionCell, result: Result<Value>) -> Self {
+    pub(crate) fn from_replay_with_cell(
+        suspension_cell: SuspensionCell,
+        result: Result<Value>,
+    ) -> Self {
         Self {
             suspension_cell,
             state: Arc::new(FutureState::with_result(result)),

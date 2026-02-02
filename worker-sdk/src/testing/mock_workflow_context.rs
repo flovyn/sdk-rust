@@ -462,7 +462,10 @@ impl WorkflowContext for MockWorkflowContext {
                     "signalName": signal_name,
                     "signalValue": value
                 });
-                return SignalFuture::from_replay_with_cell(SuspensionCell::new(), Ok(result_value));
+                return SignalFuture::from_replay_with_cell(
+                    SuspensionCell::new(),
+                    Ok(result_value),
+                );
             }
         }
 

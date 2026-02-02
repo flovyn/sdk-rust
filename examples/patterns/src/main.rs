@@ -176,7 +176,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("Example: Start a conversation workflow with SignalWithStart:");
     info!("  curl -X POST http://localhost:8000/api/orgs/dev/workflow-executions/signal-with-start \\");
     info!("    -H 'Content-Type: application/json' \\");
-    info!("    -d '{{\"workflowKind\": \"conversation-workflow\", \"workflowId\": \"chat-123\", \\");
+    info!(
+        "    -d '{{\"workflowKind\": \"conversation-workflow\", \"workflowId\": \"chat-123\", \\"
+    );
     info!("         \"workflowInput\": {{}}, \"signalName\": \"message\", \\");
     info!("         \"signalValue\": {{\"content\": \"Hello!\"}}}}'");
 

@@ -600,10 +600,7 @@ impl FfiWorkflowContext {
             let signal_value = event.get("signalValue").cloned().unwrap_or_default();
             let value = serde_json::to_vec(&signal_value).unwrap_or_default();
 
-            FfiSignalResult::Received {
-                signal_name,
-                value,
-            }
+            FfiSignalResult::Received { signal_name, value }
         } else {
             // No signal available
             FfiSignalResult::Pending
@@ -617,7 +614,8 @@ impl FfiWorkflowContext {
 
     /// Get the number of pending signals with the specified name.
     pub fn pending_signal_count(&self, signal_name: String) -> u32 {
-        self.replay_engine.pending_signal_count_for_name(&signal_name) as u32
+        self.replay_engine
+            .pending_signal_count_for_name(&signal_name) as u32
     }
 
     /// Drain all pending signals with the specified name.

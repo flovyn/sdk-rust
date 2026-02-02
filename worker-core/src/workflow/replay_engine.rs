@@ -119,7 +119,10 @@ impl ReplayEngine {
 
         // Build signal queues per signal name (FIFO order preserved)
         let mut signal_queues: HashMap<String, VecDeque<ReplayEvent>> = HashMap::new();
-        for event in events.iter().filter(|e| e.event_type() == EventType::SignalReceived) {
+        for event in events
+            .iter()
+            .filter(|e| e.event_type() == EventType::SignalReceived)
+        {
             let signal_name = event
                 .get_string("signalName")
                 .unwrap_or("__default__")

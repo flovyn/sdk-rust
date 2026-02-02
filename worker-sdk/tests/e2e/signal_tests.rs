@@ -52,7 +52,10 @@ async fn test_signal_with_start_new_workflow() {
         // Verify the output contains the signal
         let output = workflow_result.output.as_ref().expect("Expected output");
         assert_eq!(output["signalName"], json!("signal"));
-        assert_eq!(output["signalValue"]["message"], json!("Hello from signal!"));
+        assert_eq!(
+            output["signalValue"]["message"],
+            json!("Hello from signal!")
+        );
     })
     .await;
 }
@@ -68,16 +71,15 @@ async fn test_signal_with_start_new_workflow() {
 #[ignore] // Enable when Docker is available
 async fn test_signal_existing_workflow() {
     with_timeout(TEST_TIMEOUT, "test_signal_existing_workflow", async {
-        let env = E2ETestEnvBuilder::with_queue("e2e-signal-existing-worker", "signal-existing-queue")
-            .await
-            .register_workflow(SignalWorkflow)
-            .build_and_start()
-            .await;
+        let env =
+            E2ETestEnvBuilder::with_queue("e2e-signal-existing-worker", "signal-existing-queue")
+                .await
+                .register_workflow(SignalWorkflow)
+                .build_and_start()
+                .await;
 
         // Start the workflow (it will suspend waiting for signal)
-        let workflow_id = env
-            .start_workflow("signal-workflow", json!({}))
-            .await;
+        let workflow_id = env.start_workflow("signal-workflow", json!({})).await;
 
         // Wait for workflow to suspend
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -154,7 +156,9 @@ async fn test_multiple_signals() {
         let output = result.output.as_ref().expect("Expected output");
         assert_eq!(output["count"], json!(3));
 
-        let signals = output["signals"].as_array().expect("Expected signals array");
+        let signals = output["signals"]
+            .as_array()
+            .expect("Expected signals array");
         assert_eq!(signals.len(), 3);
         // All signals have the same name "signal"
         assert_eq!(signals[0]["name"], json!("signal"));
@@ -178,11 +182,14 @@ async fn test_multiple_signals() {
 #[ignore] // Enable when Docker is available
 async fn test_signal_with_start_existing() {
     with_timeout(TEST_TIMEOUT, "test_signal_with_start_existing", async {
-        let env = E2ETestEnvBuilder::with_queue("e2e-signal-existing-start-worker", "signal-existing-start-queue")
-            .await
-            .register_workflow(MultiSignalWorkflow)
-            .build_and_start()
-            .await;
+        let env = E2ETestEnvBuilder::with_queue(
+            "e2e-signal-existing-start-worker",
+            "signal-existing-start-queue",
+        )
+        .await
+        .register_workflow(MultiSignalWorkflow)
+        .build_and_start()
+        .await;
 
         let workflow_id = "signal-existing-test-workflow";
 
@@ -202,7 +209,10 @@ async fn test_signal_with_start_existing() {
             .await
             .expect("Failed to signal with start (first)");
 
-        assert!(result1.workflow_created, "First call should create workflow");
+        assert!(
+            result1.workflow_created,
+            "First call should create workflow"
+        );
         let execution_id = result1.workflow_execution_id;
 
         // Small delay
@@ -224,8 +234,14 @@ async fn test_signal_with_start_existing() {
             .await
             .expect("Failed to signal with start (second)");
 
-        assert!(!result2.workflow_created, "Second call should NOT create new workflow");
-        assert_eq!(result2.workflow_execution_id, execution_id, "Should be same execution");
+        assert!(
+            !result2.workflow_created,
+            "Second call should NOT create new workflow"
+        );
+        assert_eq!(
+            result2.workflow_execution_id, execution_id,
+            "Should be same execution"
+        );
 
         // Wait for workflow to complete (it expects 2 signals)
         let result = env.await_completion(execution_id).await;
@@ -233,7 +249,9 @@ async fn test_signal_with_start_existing() {
 
         // Verify both signals were received
         let output = result.output.as_ref().expect("Expected output");
-        let signals = output["signals"].as_array().expect("Expected signals array");
+        let signals = output["signals"]
+            .as_array()
+            .expect("Expected signals array");
         assert_eq!(signals.len(), 2);
     })
     .await;
@@ -292,7 +310,9 @@ async fn test_signal_check_and_drain() {
         assert_eq!(output["hasSignal"], json!(true));
 
         // Should have drained both signals
-        let signals = output["signals"].as_array().expect("Expected signals array");
+        let signals = output["signals"]
+            .as_array()
+            .expect("Expected signals array");
         assert!(!signals.is_empty(), "Should have at least 1 signal");
     })
     .await;

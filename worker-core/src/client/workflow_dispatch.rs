@@ -338,7 +338,11 @@ impl WorkflowDispatch {
             idempotency_key_ttl_seconds,
         };
 
-        let response = self.inner.signal_with_start_workflow(request).await?.into_inner();
+        let response = self
+            .inner
+            .signal_with_start_workflow(request)
+            .await?
+            .into_inner();
 
         let workflow_execution_id = Uuid::parse_str(&response.workflow_execution_id)
             .map_err(|e| CoreError::Other(format!("Invalid workflow execution ID: {}", e)))?;

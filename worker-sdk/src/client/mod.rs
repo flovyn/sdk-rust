@@ -18,8 +18,8 @@ pub use flovyn_worker_core::worker::{TaskConflict, WorkflowConflict};
 // Re-export high-level client types
 pub use builder::{FlovynClientBuilder, DEFAULT_TASK_QUEUE};
 pub use flovyn_client::{
-    FlovynClient, SignalResult, SignalWithStartOptions, SignalWithStartResult, StartWorkflowOptions,
-    StartWorkflowResult, WorkerHandle,
+    FlovynClient, SignalResult, SignalWithStartOptions, SignalWithStartResult,
+    StartWorkflowOptions, StartWorkflowResult, WorkerHandle,
 };
 pub use hook::{CompositeWorkflowHook, LoggingHook, NoOpHook, WorkflowHook};
 

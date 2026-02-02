@@ -1504,7 +1504,10 @@ impl DynamicWorkflow for SignalCheckWorkflow {
 
         let mut output = DynamicOutput::new();
         output.insert("hasSignal".to_string(), Value::Bool(has_signal));
-        output.insert("pendingCount".to_string(), Value::Number(pending_count.into()));
+        output.insert(
+            "pendingCount".to_string(),
+            Value::Number(pending_count.into()),
+        );
         output.insert("signals".to_string(), Value::Array(signals));
         Ok(output)
     }

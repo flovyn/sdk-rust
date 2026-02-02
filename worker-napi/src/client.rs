@@ -247,7 +247,12 @@ impl NapiClient {
         let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.client_token);
 
         let result = dispatch_client
-            .signal_workflow(&self.config.org_id, &workflow_execution_id, &signal_name, value_bytes)
+            .signal_workflow(
+                &self.config.org_id,
+                &workflow_execution_id,
+                &signal_name,
+                value_bytes,
+            )
             .await
             .map_err(from_core_error)?;
 

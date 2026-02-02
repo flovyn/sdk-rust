@@ -300,7 +300,10 @@ fn generate_response(user_message: &str, _history: &[ChatMessage]) -> String {
     } else if lower.contains("thank") {
         "You're welcome! Is there anything else I can help with?".to_string()
     } else {
-        format!("I received your message: \"{}\". How can I assist further?", user_message)
+        format!(
+            "I received your message: \"{}\". How can I assist further?",
+            user_message
+        )
     }
 }
 
