@@ -1152,7 +1152,22 @@ pub struct SignalFuture {
 
 impl SignalFuture {
     /// Create a new SignalFuture with a suspension cell
+    #[allow(dead_code)]
     pub(crate) fn new_with_cell(suspension_cell: SuspensionCell) -> Self {
+        Self {
+            suspension_cell,
+            state: Arc::new(FutureState::new()),
+        }
+    }
+
+    /// Create a SignalFuture waiting for a specific signal name.
+    /// The signal name is used for documentation/debugging purposes.
+    /// When the workflow resumes, it will replay and call wait_for_signal_raw again,
+    /// at which point the signal should be available in the replay engine's queue.
+    pub(crate) fn new_waiting_for_signal(suspension_cell: SuspensionCell, _signal_name: String) -> Self {
+        // The signal name doesn't need to be stored - when the workflow resumes,
+        // it replays from the beginning and will call wait_for_signal_raw with
+        // the same name, which will then find the signal in the queue.
         Self {
             suspension_cell,
             state: Arc::new(FutureState::new()),
@@ -1168,6 +1183,7 @@ impl SignalFuture {
     }
 
     /// Create with an error
+    #[allow(dead_code)]
     pub(crate) fn with_error(error: FlovynError) -> Self {
         Self {
             suspension_cell: SuspensionCell::new(),

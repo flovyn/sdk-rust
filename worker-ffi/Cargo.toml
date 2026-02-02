@@ -22,6 +22,7 @@ uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 chrono = "0.4"
 tracing = "0.1"
+base64 = "0.22"
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }

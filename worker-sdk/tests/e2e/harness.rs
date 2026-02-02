@@ -163,10 +163,7 @@ impl TestHarness {
         );
 
         // Start the Flovyn server container with labels
-        // Image name can be overridden via FLOVYN_SERVER_IMAGE env var
-        let image_name = std::env::var("FLOVYN_SERVER_IMAGE")
-            .unwrap_or_else(|_| "rg.fr-par.scw.cloud/flovyn/flovyn-server".to_string());
-        let server_image = GenericImage::new(image_name, "latest".to_string())
+        let server_image = GenericImage::new("rg.fr-par.scw.cloud/flovyn/flovyn-server", "latest")
             .with_exposed_port(ContainerPort::Tcp(8000))
             .with_exposed_port(ContainerPort::Tcp(9090))
             .with_label("flovyn-test", "true")

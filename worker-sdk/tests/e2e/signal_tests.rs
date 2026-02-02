@@ -27,11 +27,12 @@ async fn test_signal_with_start_new_workflow() {
             .await;
 
         // Use signal_with_start to create workflow and send initial signal
+        // NOTE: Signal name must match what the workflow expects ("signal")
         let options = SignalWithStartOptions::new(
             "signal-test-workflow-1",
             "signal-workflow",
             json!({}),
-            "greeting",
+            "signal", // Must match the signal name the workflow waits for
             json!({"message": "Hello from signal!"}),
         )
         .queue("signal-start-queue");
@@ -50,7 +51,7 @@ async fn test_signal_with_start_new_workflow() {
 
         // Verify the output contains the signal
         let output = workflow_result.output.as_ref().expect("Expected output");
-        assert_eq!(output["signalName"], json!("greeting"));
+        assert_eq!(output["signalName"], json!("signal"));
         assert_eq!(output["signalValue"]["message"], json!("Hello from signal!"));
     })
     .await;
@@ -81,12 +82,12 @@ async fn test_signal_existing_workflow() {
         // Wait for workflow to suspend
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Send signal to the workflow
+        // Send signal to the workflow (must use "signal" name that workflow expects)
         let signal_result = env
             .client()
             .signal_workflow(
                 workflow_id,
-                "user-action",
+                "signal", // Must match the signal name the workflow waits for
                 json!({"action": "approve", "user": "admin"}),
             )
             .await
@@ -100,7 +101,7 @@ async fn test_signal_existing_workflow() {
 
         // Verify the output contains the signal
         let output = result.output.as_ref().expect("Expected output");
-        assert_eq!(output["signalName"], json!("user-action"));
+        assert_eq!(output["signalName"], json!("signal"));
         assert_eq!(output["signalValue"]["action"], json!("approve"));
     })
     .await;
@@ -130,13 +131,13 @@ async fn test_multiple_signals() {
         // Wait for workflow to start and suspend
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Send 3 signals
+        // Send 3 signals (all with same name "signal" - per-name FIFO queue)
         for i in 1..=3 {
             env.client()
                 .signal_workflow(
                     workflow_id,
-                    &format!("message-{}", i),
-                    json!({"content": format!("Message {}", i)}),
+                    "signal", // Must match the signal name the workflow waits for
+                    json!({"content": format!("Message {}", i), "seq": i}),
                 )
                 .await
                 .expect("Failed to send signal");
@@ -149,15 +150,20 @@ async fn test_multiple_signals() {
         let result = env.await_completion(workflow_id).await;
         env.assert_completed(&result);
 
-        // Verify all signals were received
+        // Verify all signals were received in FIFO order
         let output = result.output.as_ref().expect("Expected output");
         assert_eq!(output["count"], json!(3));
 
         let signals = output["signals"].as_array().expect("Expected signals array");
         assert_eq!(signals.len(), 3);
-        assert_eq!(signals[0]["name"], json!("message-1"));
-        assert_eq!(signals[1]["name"], json!("message-2"));
-        assert_eq!(signals[2]["name"], json!("message-3"));
+        // All signals have the same name "signal"
+        assert_eq!(signals[0]["name"], json!("signal"));
+        assert_eq!(signals[1]["name"], json!("signal"));
+        assert_eq!(signals[2]["name"], json!("signal"));
+        // Verify FIFO ordering via seq field
+        assert_eq!(signals[0]["value"]["seq"], json!(1));
+        assert_eq!(signals[1]["value"]["seq"], json!(2));
+        assert_eq!(signals[2]["value"]["seq"], json!(3));
     })
     .await;
 }
@@ -180,12 +186,12 @@ async fn test_signal_with_start_existing() {
 
         let workflow_id = "signal-existing-test-workflow";
 
-        // First signal_with_start creates the workflow
+        // First signal_with_start creates the workflow (use "signal" name)
         let options1 = SignalWithStartOptions::new(
             workflow_id,
             "multi-signal-workflow",
             json!({"signalCount": 2}),
-            "signal-1",
+            "signal", // Must match the signal name the workflow waits for
             json!({"seq": 1}),
         )
         .queue("signal-existing-start-queue");
@@ -202,12 +208,12 @@ async fn test_signal_with_start_existing() {
         // Small delay
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Second signal_with_start to same workflow_id
+        // Second signal_with_start to same workflow_id (same signal name)
         let options2 = SignalWithStartOptions::new(
             workflow_id,
             "multi-signal-workflow",
             json!({"signalCount": 2}),
-            "signal-2",
+            "signal", // Must match the signal name the workflow waits for
             json!({"seq": 2}),
         )
         .queue("signal-existing-start-queue");
@@ -249,11 +255,12 @@ async fn test_signal_check_and_drain() {
             .await;
 
         // Use signal_with_start to create workflow with initial signal
+        // NOTE: Signal name must match what the workflow expects ("test")
         let options = SignalWithStartOptions::new(
             "signal-check-workflow-1",
             "signal-check-workflow",
             json!({}),
-            "initial",
+            "test", // Must match the signal name the workflow checks
             json!({"data": "first"}),
         )
         .queue("signal-check-queue");
@@ -264,11 +271,11 @@ async fn test_signal_check_and_drain() {
             .await
             .expect("Failed to signal with start");
 
-        // Send another signal immediately
+        // Send another signal immediately with the same name
         env.client()
             .signal_workflow(
                 result.workflow_execution_id,
-                "second",
+                "test", // Must match the signal name the workflow checks
                 json!({"data": "second"}),
             )
             .await
@@ -286,7 +293,7 @@ async fn test_signal_check_and_drain() {
 
         // Should have drained both signals
         let signals = output["signals"].as_array().expect("Expected signals array");
-        assert!(signals.len() >= 1, "Should have at least 1 signal");
+        assert!(!signals.is_empty(), "Should have at least 1 signal");
     })
     .await;
 }

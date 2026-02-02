@@ -453,83 +453,41 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
     // Signals
     // =========================================================================
 
-    fn wait_for_signal_raw(&self) -> SignalFutureRaw {
-        // Get next signal sequence and check if we have a signal
-        let signal_seq = self.replay_engine.next_signal_seq();
-
-        if let Some(signal_event) = self.replay_engine.get_signal_event(signal_seq) {
-            // Signal found - return it
-            let signal_name = signal_event
-                .get_string("signalName")
-                .unwrap_or("")
-                .to_string();
+    fn wait_for_signal_raw(&self, signal_name: &str) -> SignalFutureRaw {
+        // Try to pop a signal with the given name from the queue
+        if let Some(signal_event) = self.replay_engine.pop_signal(signal_name) {
+            // Signal found - return it directly (server stores as JSON, no base64)
             let signal_value = signal_event.get("signalValue").cloned().unwrap_or(Value::Null);
-
-            // Decode base64 signal value if it's a string (base64 encoded bytes)
-            let decoded_value = if let Some(base64_str) = signal_value.as_str() {
-                use base64::Engine;
-                match base64::engine::general_purpose::STANDARD.decode(base64_str) {
-                    Ok(bytes) => {
-                        // Try to parse as JSON
-                        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-                    }
-                    Err(_) => {
-                        // Not valid base64, treat as raw string
-                        Value::String(base64_str.to_string())
-                    }
-                }
-            } else {
-                signal_value
-            };
 
             let result_value = serde_json::json!({
                 "signalName": signal_name,
-                "signalValue": decoded_value
+                "signalValue": signal_value
             });
 
             SignalFuture::from_replay_with_cell(self.suspension_cell.clone(), Ok(result_value))
         } else {
-            // No signal available - this will suspend
-            SignalFuture::new_with_cell(self.suspension_cell.clone())
+            // No signal available - this will suspend and wait for signal with this name
+            SignalFuture::new_waiting_for_signal(self.suspension_cell.clone(), signal_name.to_string())
         }
     }
 
-    fn has_signal(&self) -> bool {
-        self.replay_engine.has_pending_signal()
+    fn has_signal(&self, signal_name: &str) -> bool {
+        self.replay_engine.has_signal(signal_name)
     }
 
-    fn pending_signal_count(&self) -> usize {
-        self.replay_engine.pending_signal_count()
+    fn pending_signal_count(&self, signal_name: &str) -> usize {
+        self.replay_engine.pending_signal_count_for_name(signal_name)
     }
 
-    fn drain_signals_raw(&self) -> Vec<(String, Value)> {
-        let mut signals = Vec::new();
-
-        while self.replay_engine.has_pending_signal() {
-            let signal_seq = self.replay_engine.next_signal_seq();
-            if let Some(signal_event) = self.replay_engine.get_signal_event(signal_seq) {
-                let signal_name = signal_event
-                    .get_string("signalName")
-                    .unwrap_or("")
-                    .to_string();
-                let signal_value = signal_event.get("signalValue").cloned().unwrap_or(Value::Null);
-
-                // Decode base64 signal value if it's a string
-                let decoded_value = if let Some(base64_str) = signal_value.as_str() {
-                    use base64::Engine;
-                    match base64::engine::general_purpose::STANDARD.decode(base64_str) {
-                        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-                        Err(_) => Value::String(base64_str.to_string()),
-                    }
-                } else {
-                    signal_value
-                };
-
-                signals.push((signal_name, decoded_value));
-            }
-        }
-
-        signals
+    fn drain_signals_raw(&self, signal_name: &str) -> Vec<Value> {
+        // Signal values are stored as direct JSON by the server (no base64)
+        self.replay_engine
+            .drain_signals(signal_name)
+            .into_iter()
+            .map(|signal_event| {
+                signal_event.get("signalValue").cloned().unwrap_or(Value::Null)
+            })
+            .collect()
     }
 
     fn is_cancellation_requested(&self) -> bool {

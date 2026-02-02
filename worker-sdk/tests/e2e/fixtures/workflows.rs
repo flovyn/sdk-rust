@@ -1425,8 +1425,8 @@ impl DynamicWorkflow for SignalWorkflow {
         ctx: &dyn WorkflowContext,
         _input: DynamicInput,
     ) -> Result<DynamicOutput> {
-        // Wait for a signal
-        let signal = ctx.wait_for_signal_raw().await?;
+        // Wait for a signal named "signal"
+        let signal = ctx.wait_for_signal_raw("signal").await?;
 
         let mut output = DynamicOutput::new();
         output.insert("signalName".to_string(), Value::String(signal.name));
@@ -1456,8 +1456,9 @@ impl DynamicWorkflow for MultiSignalWorkflow {
 
         let mut signals = Vec::new();
 
+        // All signals use the name "signal"
         for _ in 0..count {
-            let signal = ctx.wait_for_signal_raw().await?;
+            let signal = ctx.wait_for_signal_raw("signal").await?;
             signals.push(serde_json::json!({
                 "name": signal.name,
                 "value": signal.value
@@ -1485,17 +1486,17 @@ impl DynamicWorkflow for SignalCheckWorkflow {
         ctx: &dyn WorkflowContext,
         _input: DynamicInput,
     ) -> Result<DynamicOutput> {
-        // Check if any signals are pending
-        let has_signal = ctx.has_signal();
-        let pending_count = ctx.pending_signal_count();
+        // Check if any signals are pending for signal name "test"
+        let has_signal = ctx.has_signal("test");
+        let pending_count = ctx.pending_signal_count("test");
 
-        // Drain all signals
+        // Drain all signals with name "test"
         let signals: Vec<Value> = ctx
-            .drain_signals_raw()
+            .drain_signals_raw("test")
             .into_iter()
-            .map(|(name, value)| {
+            .map(|value| {
                 serde_json::json!({
-                    "name": name,
+                    "name": "test",
                     "value": value
                 })
             })

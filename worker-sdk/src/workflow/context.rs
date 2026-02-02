@@ -267,34 +267,37 @@ pub trait WorkflowContext: Send + Sync {
     // Signals
     // =========================================================================
 
-    /// Wait for the next signal in the queue.
+    /// Wait for the next signal with the specified name.
     ///
-    /// Signals are consumed in order. If no signal is available, the workflow
-    /// will suspend until a signal is received.
-    ///
-    /// Returns a tuple of (signal_name, signal_value).
+    /// Each signal name has its own FIFO queue. Signals are consumed in order
+    /// within each queue. If no signal with the given name is available, the
+    /// workflow will suspend until one is received.
     ///
     /// # Example
     /// ```ignore
-    /// // Wait for any signal
-    /// let (name, value) = ctx.wait_for_signal_raw().await?;
-    /// println!("Received signal '{}': {:?}", name, value);
+    /// // Wait for an "approve" signal
+    /// let signal = ctx.wait_for_signal_raw("approve").await?;
+    /// println!("Received approval: {:?}", signal.value);
+    ///
+    /// // Wait for a "message" signal
+    /// let signal = ctx.wait_for_signal_raw("message").await?;
+    /// println!("Received message: {:?}", signal.value);
     /// ```
-    fn wait_for_signal_raw(&self) -> SignalFutureRaw;
+    fn wait_for_signal_raw(&self, signal_name: &str) -> SignalFutureRaw;
 
-    /// Check if any signals are pending in the queue.
+    /// Check if any signals with the specified name are pending.
     ///
     /// This does not consume any signals.
-    fn has_signal(&self) -> bool;
+    fn has_signal(&self, signal_name: &str) -> bool;
 
-    /// Get the number of pending signals.
-    fn pending_signal_count(&self) -> usize;
+    /// Get the number of pending signals with the specified name.
+    fn pending_signal_count(&self, signal_name: &str) -> usize;
 
-    /// Drain all pending signals from the queue.
+    /// Drain all pending signals with the specified name.
     ///
-    /// Returns a vector of (signal_name, signal_value) tuples.
-    /// This consumes all signals currently in the queue.
-    fn drain_signals_raw(&self) -> Vec<(String, Value)>;
+    /// Returns a vector of signal values.
+    /// This consumes all signals with the given name currently in the queue.
+    fn drain_signals_raw(&self, signal_name: &str) -> Vec<Value>;
 
     // =========================================================================
     // Cancellation

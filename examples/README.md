@@ -142,19 +142,57 @@ Demonstrations of advanced workflow patterns:
 - `reminder-workflow`: Schedule reminders that survive restarts
 - `multi-step-timer-workflow`: Multiple checkpoint timers
 
-**2. Promises (External Signals)**
+**2. Signals (External Events)**
+- `wait-for-signal-workflow`: Wait for a single external signal
+- `conversation-workflow`: Multi-turn conversational pattern (chatbot)
+- `event-collector-workflow`: Collect multiple events before processing
+
+Use the **SignalWithStart** API to atomically start a workflow and send the first signal:
+```bash
+# Start a conversation with SignalWithStart
+curl -X POST http://localhost:8000/api/orgs/dev/workflow-executions/signal-with-start \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "workflowKind": "conversation-workflow",
+    "workflowId": "chat-user-123",
+    "workflowInput": {"system_prompt": "You are a helpful assistant"},
+    "signalName": "message",
+    "signalValue": {"content": "Hello!"}
+  }'
+
+# Send follow-up signals to an existing workflow
+curl -X POST http://localhost:8000/api/orgs/dev/workflow-executions/{workflowId}/signal \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "signalName": "message",
+    "signalValue": {"content": "What can you do?"}
+  }'
+
+# End the conversation (send "end" as message content or use command field)
+curl -X POST http://localhost:8000/api/orgs/dev/workflow-executions/{workflowId}/signal \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "signalName": "message",
+    "signalValue": {"command": "end"}
+  }'
+```
+
+**3. Promises (Legacy - prefer Signals)**
 - `approval-workflow`: Human-in-the-loop approval
 - `multi-approval-workflow`: Multiple approver requirements
 
-**3. Child Workflows**
+**4. Child Workflows**
 - `batch-processing-workflow`: Fan-out/fan-in pattern
 - `controlled-parallel-workflow`: Controlled parallelism
 
-**4. Retry Patterns**
+**5. Retry Patterns**
 - `retry-workflow`: Exponential backoff
 - `circuit-breaker-workflow`: Circuit breaker pattern
 
-**5. Parallel Execution**
+**6. Parallel Execution**
 - `fan-out-fan-in-workflow`: Process items in parallel, aggregate results using `join_all`
 - `racing-workflow`: Race multiple operations, take first result using `select`
 - `timeout-workflow`: Add timeouts to operations using `with_timeout`

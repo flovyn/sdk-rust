@@ -65,8 +65,8 @@ struct MockWorkflowContextInner {
     scheduled_tasks: RwLock<Vec<ScheduledTask>>,
     scheduled_workflows: RwLock<Vec<ScheduledWorkflow>>,
     created_promises: RwLock<Vec<String>>,
-    // Signal queue for mock signals
-    signal_queue: RwLock<Vec<(String, Value)>>,
+    // Signal queues per signal name (FIFO order)
+    signal_queues: RwLock<HashMap<String, std::collections::VecDeque<Value>>>,
     cancellation_requested: AtomicBool,
     uuid_counter: AtomicU64,
     rng_seed: u64,
@@ -235,7 +235,7 @@ pub struct MockWorkflowContextBuilder {
     task_results: HashMap<String, Value>,
     promise_results: HashMap<String, Value>,
     child_workflow_results: HashMap<String, Value>,
-    signal_queue: Vec<(String, Value)>,
+    signal_queues: HashMap<String, std::collections::VecDeque<Value>>,
     rng_seed: Option<u64>,
 }
 
@@ -288,11 +288,15 @@ impl MockWorkflowContextBuilder {
         self
     }
 
-    /// Add a mock signal to the signal queue.
+    /// Add a mock signal to the signal queue for a specific signal name.
     ///
-    /// Signals are consumed in order by `wait_for_signal_raw()`.
+    /// Signals with the same name are consumed in FIFO order by
+    /// `wait_for_signal_raw(name)`.
     pub fn mock_signal(mut self, name: &str, value: Value) -> Self {
-        self.signal_queue.push((name.to_string(), value));
+        self.signal_queues
+            .entry(name.to_string())
+            .or_default()
+            .push_back(value);
         self
     }
 
@@ -323,7 +327,7 @@ impl MockWorkflowContextBuilder {
                 scheduled_tasks: RwLock::new(Vec::new()),
                 scheduled_workflows: RwLock::new(Vec::new()),
                 created_promises: RwLock::new(Vec::new()),
-                signal_queue: RwLock::new(self.signal_queue),
+                signal_queues: RwLock::new(self.signal_queues),
                 cancellation_requested: AtomicBool::new(false),
                 uuid_counter: AtomicU64::new(0),
                 rng_seed: self.rng_seed.unwrap_or(12345),
@@ -445,37 +449,51 @@ impl WorkflowContext for MockWorkflowContext {
     // Signals
     // =========================================================================
 
-    fn wait_for_signal_raw(&self) -> SignalFutureRaw {
+    fn wait_for_signal_raw(&self, signal_name: &str) -> SignalFutureRaw {
         use crate::workflow::context_impl::SuspensionCell;
 
         let _seq = self.inner.next_signal_seq.fetch_add(1, Ordering::SeqCst);
-        let mut queue = self.inner.signal_queue.write();
+        let mut queues = self.inner.signal_queues.write();
 
-        if queue.is_empty() {
-            // No signal available - create a future that will suspend
-            SignalFuture::new_with_cell(SuspensionCell::new())
-        } else {
-            // Pop the first signal from the queue
-            let (name, value) = queue.remove(0);
-            let result_value = serde_json::json!({
-                "signalName": name,
-                "signalValue": value
-            });
-            SignalFuture::from_replay_with_cell(SuspensionCell::new(), Ok(result_value))
+        if let Some(queue) = queues.get_mut(signal_name) {
+            if let Some(value) = queue.pop_front() {
+                // Signal found - return it
+                let result_value = serde_json::json!({
+                    "signalName": signal_name,
+                    "signalValue": value
+                });
+                return SignalFuture::from_replay_with_cell(SuspensionCell::new(), Ok(result_value));
+            }
         }
+
+        // No signal available - create a future that will suspend
+        SignalFuture::new_waiting_for_signal(SuspensionCell::new(), signal_name.to_string())
     }
 
-    fn has_signal(&self) -> bool {
-        !self.inner.signal_queue.read().is_empty()
+    fn has_signal(&self, signal_name: &str) -> bool {
+        self.inner
+            .signal_queues
+            .read()
+            .get(signal_name)
+            .is_some_and(|q| !q.is_empty())
     }
 
-    fn pending_signal_count(&self) -> usize {
-        self.inner.signal_queue.read().len()
+    fn pending_signal_count(&self, signal_name: &str) -> usize {
+        self.inner
+            .signal_queues
+            .read()
+            .get(signal_name)
+            .map(|q| q.len())
+            .unwrap_or(0)
     }
 
-    fn drain_signals_raw(&self) -> Vec<(String, Value)> {
-        let mut queue = self.inner.signal_queue.write();
-        std::mem::take(&mut *queue)
+    fn drain_signals_raw(&self, signal_name: &str) -> Vec<Value> {
+        self.inner
+            .signal_queues
+            .write()
+            .get_mut(signal_name)
+            .map(|q| q.drain(..).collect())
+            .unwrap_or_default()
     }
 
     // =========================================================================
