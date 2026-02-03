@@ -5,7 +5,7 @@ use crate::task::definition::TaskDefinition;
 use crate::workflow::definition::WorkflowDefinition;
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFutureRaw, PromiseFuture,
-    PromiseFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+    PromiseFutureRaw, SignalFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
 };
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -262,6 +262,42 @@ pub trait WorkflowContext: Send + Sync {
 
     /// Get all keys in workflow state
     async fn state_keys(&self) -> Result<Vec<String>>;
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    /// Wait for the next signal with the specified name.
+    ///
+    /// Each signal name has its own FIFO queue. Signals are consumed in order
+    /// within each queue. If no signal with the given name is available, the
+    /// workflow will suspend until one is received.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Wait for an "approve" signal
+    /// let signal = ctx.wait_for_signal_raw("approve").await?;
+    /// println!("Received approval: {:?}", signal.value);
+    ///
+    /// // Wait for a "message" signal
+    /// let signal = ctx.wait_for_signal_raw("message").await?;
+    /// println!("Received message: {:?}", signal.value);
+    /// ```
+    fn wait_for_signal_raw(&self, signal_name: &str) -> SignalFutureRaw;
+
+    /// Check if any signals with the specified name are pending.
+    ///
+    /// This does not consume any signals.
+    fn has_signal(&self, signal_name: &str) -> bool;
+
+    /// Get the number of pending signals with the specified name.
+    fn pending_signal_count(&self, signal_name: &str) -> usize;
+
+    /// Drain all pending signals with the specified name.
+    ///
+    /// Returns a vector of signal values.
+    /// This consumes all signals with the given name currently in the queue.
+    fn drain_signals_raw(&self, signal_name: &str) -> Vec<Value>;
 
     // =========================================================================
     // Cancellation

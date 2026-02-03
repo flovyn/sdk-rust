@@ -3,16 +3,18 @@
 //! This sample demonstrates various workflow patterns:
 //!
 //! 1. **Durable Timers** - Timers that survive worker restarts
-//! 2. **Promises** - External signals and human-in-the-loop workflows
-//! 3. **Child Workflows** - Parent-child workflow orchestration
-//! 4. **Retry Patterns** - Exponential backoff and circuit breaker
-//! 5. **Parallel Execution** - Fan-out/fan-in, racing, timeouts, batch processing
+//! 2. **Signals** - External events and conversational workflows
+//! 3. **Promises** - External signals and human-in-the-loop workflows (legacy)
+//! 4. **Child Workflows** - Parent-child workflow orchestration
+//! 5. **Retry Patterns** - Exponential backoff and circuit breaker
+//! 6. **Parallel Execution** - Fan-out/fan-in, racing, timeouts, batch processing
 
 pub mod child_workflow;
 pub mod parallel_tasks;
 pub mod parallel_workflow;
 pub mod promise_workflow;
 pub mod retry_workflow;
+pub mod signal_workflow;
 pub mod timer_workflow;
 
 use child_workflow::{BatchProcessingWorkflow, ControlledParallelWorkflow, ItemProcessorWorkflow};
@@ -26,6 +28,7 @@ use parallel_workflow::{
 };
 use promise_workflow::{ApprovalWorkflow, MultiApprovalWorkflow};
 use retry_workflow::{CircuitBreakerWorkflow, RetryWorkflow};
+use signal_workflow::{ConversationWorkflow, EventCollectorWorkflow, WaitForSignalWorkflow};
 use timer_workflow::{MultiStepTimerWorkflow, ReminderWorkflow};
 use tracing::info;
 
@@ -80,7 +83,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Timer workflows
         .register_workflow(ReminderWorkflow)
         .register_workflow(MultiStepTimerWorkflow)
-        // Promise workflows
+        // Signal workflows
+        .register_workflow(WaitForSignalWorkflow)
+        .register_workflow(ConversationWorkflow)
+        .register_workflow(EventCollectorWorkflow)
+        // Promise workflows (legacy, prefer signals)
         .register_workflow(ApprovalWorkflow)
         .register_workflow(MultiApprovalWorkflow)
         // Child workflow patterns
@@ -110,6 +117,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         workflows = ?[
             "reminder-workflow",
             "multi-step-timer-workflow",
+            "wait-for-signal-workflow",
+            "conversation-workflow",
+            "event-collector-workflow",
             "approval-workflow",
             "multi-approval-workflow",
             "batch-processing-workflow",
@@ -138,19 +148,24 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("   - reminder-workflow: Schedule a reminder with delay");
     info!("   - multi-step-timer-workflow: Multiple checkpoints with timers");
     info!("");
-    info!("2. PROMISES (External Signals)");
+    info!("2. SIGNALS (External Events)");
+    info!("   - wait-for-signal-workflow: Wait for a single external signal");
+    info!("   - conversation-workflow: Multi-turn conversational pattern (chatbot)");
+    info!("   - event-collector-workflow: Collect multiple events before processing");
+    info!("");
+    info!("3. PROMISES (Legacy - prefer Signals)");
     info!("   - approval-workflow: Wait for external approval");
     info!("   - multi-approval-workflow: Require multiple approvers");
     info!("");
-    info!("3. CHILD WORKFLOWS");
+    info!("4. CHILD WORKFLOWS");
     info!("   - batch-processing-workflow: Fan-out/fan-in pattern");
     info!("   - controlled-parallel-workflow: Controlled parallelism");
     info!("");
-    info!("4. RETRY PATTERNS");
+    info!("5. RETRY PATTERNS");
     info!("   - retry-workflow: Exponential backoff retry");
     info!("   - circuit-breaker-workflow: Circuit breaker pattern");
     info!("");
-    info!("5. PARALLEL EXECUTION");
+    info!("6. PARALLEL EXECUTION");
     info!("   - fan-out-fan-in-workflow: Process items in parallel, aggregate results");
     info!("   - racing-workflow: Race multiple operations, take first result");
     info!("   - timeout-workflow: Add timeouts to operations");
@@ -158,10 +173,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("   - partial-completion-workflow: Wait for N of M to complete");
     info!("   - dynamic-parallelism-workflow: Runtime-determined parallelism");
     info!("");
-    info!("Example: Start a reminder workflow:");
-    info!("  curl -X POST http://localhost:8080/api/workflows/reminder-workflow \\");
+    info!("Example: Start a conversation workflow with SignalWithStart:");
+    info!("  curl -X POST http://localhost:8000/api/orgs/dev/workflow-executions/signal-with-start \\");
     info!("    -H 'Content-Type: application/json' \\");
-    info!("    -d '{{\"message\": \"Time to take a break!\", \"delay_seconds\": 60}}'");
+    info!(
+        "    -d '{{\"workflowKind\": \"conversation-workflow\", \"workflowId\": \"chat-123\", \\"
+    );
+    info!("         \"workflowInput\": {{}}, \"signalName\": \"message\", \\");
+    info!("         \"signalValue\": {{\"content\": \"Hello!\"}}}}'");
 
     // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;

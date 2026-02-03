@@ -903,6 +903,7 @@ fn parse_event_type(event_type: &str) -> FfiEventType {
         "TIMER_STARTED" => FfiEventType::TimerStarted,
         "TIMER_FIRED" => FfiEventType::TimerFired,
         "TIMER_CANCELLED" => FfiEventType::TimerCancelled,
+        "SIGNAL_RECEIVED" => FfiEventType::SignalReceived,
         // Default to OperationCompleted for unknown types
         _ => FfiEventType::OperationCompleted,
     }

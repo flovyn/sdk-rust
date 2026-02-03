@@ -1406,3 +1406,109 @@ impl DynamicWorkflow for StreamingAllTypesWorkflow {
         Ok(output)
     }
 }
+
+// ============================================================================
+// Signal Workflows
+// ============================================================================
+
+/// Workflow that waits for a single signal and returns its value.
+pub struct SignalWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for SignalWorkflow {
+    fn kind(&self) -> &str {
+        "signal-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // Wait for a signal named "signal"
+        let signal = ctx.wait_for_signal_raw("signal").await?;
+
+        let mut output = DynamicOutput::new();
+        output.insert("signalName".to_string(), Value::String(signal.name));
+        output.insert("signalValue".to_string(), signal.value);
+        Ok(output)
+    }
+}
+
+/// Workflow that waits for multiple signals and collects them.
+pub struct MultiSignalWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for MultiSignalWorkflow {
+    fn kind(&self) -> &str {
+        "multi-signal-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        let count = input
+            .get("signalCount")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(2) as usize;
+
+        let mut signals = Vec::new();
+
+        // All signals use the name "signal"
+        for _ in 0..count {
+            let signal = ctx.wait_for_signal_raw("signal").await?;
+            signals.push(serde_json::json!({
+                "name": signal.name,
+                "value": signal.value
+            }));
+        }
+
+        let mut output = DynamicOutput::new();
+        output.insert("signals".to_string(), Value::Array(signals));
+        output.insert("count".to_string(), Value::Number(count.into()));
+        Ok(output)
+    }
+}
+
+/// Workflow that checks for signals without blocking.
+pub struct SignalCheckWorkflow;
+
+#[async_trait]
+impl DynamicWorkflow for SignalCheckWorkflow {
+    fn kind(&self) -> &str {
+        "signal-check-workflow"
+    }
+
+    async fn execute(
+        &self,
+        ctx: &dyn WorkflowContext,
+        _input: DynamicInput,
+    ) -> Result<DynamicOutput> {
+        // Check if any signals are pending for signal name "test"
+        let has_signal = ctx.has_signal("test");
+        let pending_count = ctx.pending_signal_count("test");
+
+        // Drain all signals with name "test"
+        let signals: Vec<Value> = ctx
+            .drain_signals_raw("test")
+            .into_iter()
+            .map(|value| {
+                serde_json::json!({
+                    "name": "test",
+                    "value": value
+                })
+            })
+            .collect();
+
+        let mut output = DynamicOutput::new();
+        output.insert("hasSignal".to_string(), Value::Bool(has_signal));
+        output.insert(
+            "pendingCount".to_string(),
+            Value::Number(pending_count.into()),
+        );
+        output.insert("signals".to_string(), Value::Array(signals));
+        Ok(output)
+    }
+}

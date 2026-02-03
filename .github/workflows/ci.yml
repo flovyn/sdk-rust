@@ -79,5 +79,3 @@ jobs:
 
       - name: Run E2E tests
         run: cargo test --test e2e -- --ignored --nocapture
-        env:
-          FLOVYN_SERVER_IMAGE: rg.fr-par.scw.cloud/flovyn/flovyn-server

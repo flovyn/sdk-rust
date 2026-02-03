@@ -6,7 +6,8 @@ use crate::workflow::context::{
 };
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFuture, OperationFutureRaw,
-    PromiseFuture, PromiseFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+    PromiseFuture, PromiseFutureRaw, SignalFuture, SignalFutureRaw, TaskFuture, TaskFutureRaw,
+    TimerFuture,
 };
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -64,6 +65,8 @@ struct MockWorkflowContextInner {
     scheduled_tasks: RwLock<Vec<ScheduledTask>>,
     scheduled_workflows: RwLock<Vec<ScheduledWorkflow>>,
     created_promises: RwLock<Vec<String>>,
+    // Signal queues per signal name (FIFO order)
+    signal_queues: RwLock<HashMap<String, std::collections::VecDeque<Value>>>,
     cancellation_requested: AtomicBool,
     uuid_counter: AtomicU64,
     rng_seed: u64,
@@ -73,6 +76,7 @@ struct MockWorkflowContextInner {
     next_child_workflow_seq: AtomicU32,
     next_promise_seq: AtomicU32,
     next_operation_seq: AtomicU32,
+    next_signal_seq: AtomicU32,
 }
 
 impl Clone for MockWorkflowContext {
@@ -231,6 +235,7 @@ pub struct MockWorkflowContextBuilder {
     task_results: HashMap<String, Value>,
     promise_results: HashMap<String, Value>,
     child_workflow_results: HashMap<String, Value>,
+    signal_queues: HashMap<String, std::collections::VecDeque<Value>>,
     rng_seed: Option<u64>,
 }
 
@@ -283,6 +288,18 @@ impl MockWorkflowContextBuilder {
         self
     }
 
+    /// Add a mock signal to the signal queue for a specific signal name.
+    ///
+    /// Signals with the same name are consumed in FIFO order by
+    /// `wait_for_signal_raw(name)`.
+    pub fn mock_signal(mut self, name: &str, value: Value) -> Self {
+        self.signal_queues
+            .entry(name.to_string())
+            .or_default()
+            .push_back(value);
+        self
+    }
+
     /// Set the RNG seed for deterministic random generation.
     pub fn rng_seed(mut self, seed: u64) -> Self {
         self.rng_seed = Some(seed);
@@ -310,6 +327,7 @@ impl MockWorkflowContextBuilder {
                 scheduled_tasks: RwLock::new(Vec::new()),
                 scheduled_workflows: RwLock::new(Vec::new()),
                 created_promises: RwLock::new(Vec::new()),
+                signal_queues: RwLock::new(self.signal_queues),
                 cancellation_requested: AtomicBool::new(false),
                 uuid_counter: AtomicU64::new(0),
                 rng_seed: self.rng_seed.unwrap_or(12345),
@@ -318,6 +336,7 @@ impl MockWorkflowContextBuilder {
                 next_child_workflow_seq: AtomicU32::new(0),
                 next_promise_seq: AtomicU32::new(0),
                 next_operation_seq: AtomicU32::new(0),
+                next_signal_seq: AtomicU32::new(0),
             }),
         }
     }
@@ -424,6 +443,60 @@ impl WorkflowContext for MockWorkflowContext {
         } else {
             Ok(())
         }
+    }
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    fn wait_for_signal_raw(&self, signal_name: &str) -> SignalFutureRaw {
+        use crate::workflow::context_impl::SuspensionCell;
+
+        let _seq = self.inner.next_signal_seq.fetch_add(1, Ordering::SeqCst);
+        let mut queues = self.inner.signal_queues.write();
+
+        if let Some(queue) = queues.get_mut(signal_name) {
+            if let Some(value) = queue.pop_front() {
+                // Signal found - return it
+                let result_value = serde_json::json!({
+                    "signalName": signal_name,
+                    "signalValue": value
+                });
+                return SignalFuture::from_replay_with_cell(
+                    SuspensionCell::new(),
+                    Ok(result_value),
+                );
+            }
+        }
+
+        // No signal available - create a future that will suspend
+        SignalFuture::new_waiting_for_signal(SuspensionCell::new(), signal_name.to_string())
+    }
+
+    fn has_signal(&self, signal_name: &str) -> bool {
+        self.inner
+            .signal_queues
+            .read()
+            .get(signal_name)
+            .is_some_and(|q| !q.is_empty())
+    }
+
+    fn pending_signal_count(&self, signal_name: &str) -> usize {
+        self.inner
+            .signal_queues
+            .read()
+            .get(signal_name)
+            .map(|q| q.len())
+            .unwrap_or(0)
+    }
+
+    fn drain_signals_raw(&self, signal_name: &str) -> Vec<Value> {
+        self.inner
+            .signal_queues
+            .write()
+            .get_mut(signal_name)
+            .map(|q| q.drain(..).collect())
+            .unwrap_or_default()
     }
 
     // =========================================================================

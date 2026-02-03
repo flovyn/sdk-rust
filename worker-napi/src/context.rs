@@ -94,6 +94,28 @@ pub struct OperationResult {
     pub operation_seq: Option<u32>,
 }
 
+/// Result of waiting for a signal.
+#[napi(object)]
+#[derive(Clone)]
+pub struct SignalResult {
+    /// Status: "received" or "pending"
+    pub status: String,
+    /// Signal name (if received).
+    pub signal_name: Option<String>,
+    /// Serialized value as JSON string (if received).
+    pub value: Option<String>,
+}
+
+/// A signal event from the signal queue.
+#[napi(object)]
+#[derive(Clone)]
+pub struct SignalEvent {
+    /// Signal name.
+    pub signal_name: String,
+    /// Serialized value as JSON string.
+    pub value: String,
+}
+
 // ============================================================================
 // Internal Result Types
 // ============================================================================
@@ -570,6 +592,69 @@ impl NapiWorkflowContext {
         }
     }
 
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    /// Wait for the next signal with the specified name.
+    ///
+    /// Each signal name has its own FIFO queue.
+    #[napi]
+    pub fn wait_for_signal(&self, signal_name: String) -> SignalResult {
+        if let Some(event) = self.replay_engine.pop_signal(&signal_name) {
+            // Signal values are stored as direct JSON by the server (no base64)
+            let signal_value = event.get("signalValue").cloned().unwrap_or_default();
+            let value = serde_json::to_string(&signal_value).unwrap_or_default();
+
+            SignalResult {
+                status: "received".to_string(),
+                signal_name: Some(signal_name),
+                value: Some(value),
+            }
+        } else {
+            SignalResult {
+                status: "pending".to_string(),
+                signal_name: None,
+                value: None,
+            }
+        }
+    }
+
+    /// Check if any signals with the specified name are pending.
+    #[napi]
+    pub fn has_signal(&self, signal_name: String) -> bool {
+        self.replay_engine.has_signal(&signal_name)
+    }
+
+    /// Get the number of pending signals with the specified name.
+    #[napi]
+    pub fn pending_signal_count(&self, signal_name: String) -> u32 {
+        self.replay_engine
+            .pending_signal_count_for_name(&signal_name) as u32
+    }
+
+    /// Drain all pending signals with the specified name.
+    #[napi]
+    pub fn drain_signals(&self, signal_name: String) -> Vec<SignalEvent> {
+        // Signal values are stored as direct JSON by the server (no base64)
+        self.replay_engine
+            .drain_signals(&signal_name)
+            .into_iter()
+            .map(|event| {
+                let name = event
+                    .get_string("signalName")
+                    .unwrap_or_default()
+                    .to_string();
+                let signal_value = event.get("signalValue").cloned().unwrap_or_default();
+                let value = serde_json::to_string(&signal_value).unwrap_or_default();
+                SignalEvent {
+                    signal_name: name,
+                    value,
+                }
+            })
+            .collect()
+    }
+
     /// Start a timer.
     #[napi]
     pub fn start_timer(&self, duration_ms: i64) -> Result<TimerResult> {
@@ -1034,6 +1119,7 @@ fn parse_event_type_str(s: &str) -> Option<flovyn_worker_core::EventType> {
         "TIMER_STARTED" | "TimerStarted" => Some(EventType::TimerStarted),
         "TIMER_FIRED" | "TimerFired" => Some(EventType::TimerFired),
         "TIMER_CANCELLED" | "TimerCancelled" => Some(EventType::TimerCancelled),
+        "SIGNAL_RECEIVED" | "SignalReceived" => Some(EventType::SignalReceived),
         _ => None,
     }
 }

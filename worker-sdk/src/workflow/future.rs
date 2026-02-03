@@ -1107,6 +1107,163 @@ impl<T: DeserializeOwned> CancellableFuture for OperationFuture<T> {
 }
 
 // ============================================================================
+// SignalFuture
+// ============================================================================
+
+/// A signal received by the workflow.
+///
+/// Contains the signal name and its value (as JSON).
+#[derive(Debug, Clone)]
+pub struct Signal {
+    /// The name of the signal
+    pub name: String,
+    /// The signal value
+    pub value: Value,
+}
+
+impl Signal {
+    /// Create a new Signal
+    pub fn new(name: String, value: Value) -> Self {
+        Self { name, value }
+    }
+
+    /// Deserialize the signal value to a specific type
+    pub fn value_as<T: DeserializeOwned>(&self) -> Result<T> {
+        serde_json::from_value(self.value.clone()).map_err(FlovynError::Serialization)
+    }
+}
+
+/// Future for receiving the next signal.
+///
+/// Created by `WorkflowContext::wait_for_signal_raw()`.
+/// Signals are consumed in order from the signal queue.
+/// If no signal is available, the workflow suspends until one arrives.
+///
+/// # Cancellation
+///
+/// Signal futures cannot be cancelled. Calling `cancel()` has no effect.
+#[allow(dead_code)]
+pub struct SignalFuture {
+    /// Suspension cell for signaling suspension to the workflow context
+    pub(crate) suspension_cell: SuspensionCell,
+    /// Shared state
+    pub(crate) state: Arc<FutureState>,
+}
+
+impl SignalFuture {
+    /// Create a new SignalFuture with a suspension cell
+    #[allow(dead_code)]
+    pub(crate) fn new_with_cell(suspension_cell: SuspensionCell) -> Self {
+        Self {
+            suspension_cell,
+            state: Arc::new(FutureState::new()),
+        }
+    }
+
+    /// Create a SignalFuture waiting for a specific signal name.
+    /// The signal name is used for documentation/debugging purposes.
+    /// When the workflow resumes, it will replay and call wait_for_signal_raw again,
+    /// at which point the signal should be available in the replay engine's queue.
+    pub(crate) fn new_waiting_for_signal(
+        suspension_cell: SuspensionCell,
+        _signal_name: String,
+    ) -> Self {
+        // The signal name doesn't need to be stored - when the workflow resumes,
+        // it replays from the beginning and will call wait_for_signal_raw with
+        // the same name, which will then find the signal in the queue.
+        Self {
+            suspension_cell,
+            state: Arc::new(FutureState::new()),
+        }
+    }
+
+    /// Create for replay with result already known
+    pub(crate) fn from_replay_with_cell(
+        suspension_cell: SuspensionCell,
+        result: Result<Value>,
+    ) -> Self {
+        Self {
+            suspension_cell,
+            state: Arc::new(FutureState::with_result(result)),
+        }
+    }
+
+    /// Create with an error
+    #[allow(dead_code)]
+    pub(crate) fn with_error(error: FlovynError) -> Self {
+        Self {
+            suspension_cell: SuspensionCell::new(),
+            state: Arc::new(FutureState::with_error(error)),
+        }
+    }
+}
+
+impl WorkflowFuturePoll for SignalFuture {
+    type Output = Signal;
+
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<Signal>> {
+        // Check for pre-computed error (e.g., determinism violation)
+        if let Some(error) = self.state.error.lock().take() {
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
+        }
+
+        // Check for pre-computed result
+        if let Some(result) = self.state.result.lock().take() {
+            return Poll::Ready(match result {
+                Ok(value) => {
+                    // Value should be a JSON object with signalName and signalValue
+                    let name = value
+                        .get("signalName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let signal_value = value.get("signalValue").cloned().unwrap_or(Value::Null);
+                    WorkflowOutcome::ok(Signal::new(name, signal_value))
+                }
+                Err(e) => WorkflowOutcome::err(e),
+            });
+        }
+
+        // Not ready yet - signal workflow suspension
+        Poll::Ready(WorkflowOutcome::suspended("Waiting for signal".to_string()))
+    }
+}
+
+impl Future for SignalFuture {
+    type Output = Result<Signal>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Get suspension cell before poll_outcome
+        let suspension_cell = self.suspension_cell.clone();
+
+        match self.as_mut().poll_outcome(cx) {
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { reason }) => {
+                suspension_cell.signal(reason);
+                Poll::Pending
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl CancellableFuture for SignalFuture {
+    fn cancel(&self) {
+        // Signals cannot be cancelled - no-op
+    }
+
+    fn is_cancelled(&self) -> bool {
+        false // Never cancelled
+    }
+}
+
+// ============================================================================
 // Type aliases for Value-typed futures (raw versions)
 // ============================================================================
 
@@ -1121,6 +1278,9 @@ pub type PromiseFutureRaw = PromiseFuture<Value>;
 
 /// Raw operation future returning JSON Value
 pub type OperationFutureRaw = OperationFuture<Value>;
+
+/// Raw signal future returning Signal
+pub type SignalFutureRaw = SignalFuture;
 
 #[cfg(test)]
 mod tests {

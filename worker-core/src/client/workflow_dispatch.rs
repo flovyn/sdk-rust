@@ -1,7 +1,7 @@
 //! WorkflowDispatch client wrapper
 
 use crate::client::auth::AuthInterceptor;
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient;
 use serde_json::Value;
@@ -305,6 +305,94 @@ impl WorkflowDispatch {
 
         Ok(())
     }
+
+    /// Atomically start a workflow (if not exists) and send a signal.
+    ///
+    /// This operation is atomic: either the workflow is created and signal sent,
+    /// or the signal is sent to the existing workflow.
+    pub async fn signal_with_start_workflow(
+        &mut self,
+        org_id: &str,
+        workflow_id: &str,
+        workflow_kind: &str,
+        workflow_input: Vec<u8>,
+        queue: &str,
+        signal_name: &str,
+        signal_value: Vec<u8>,
+        priority_seconds: Option<i32>,
+        workflow_version: Option<&str>,
+        metadata: Option<std::collections::HashMap<String, String>>,
+        idempotency_key_ttl_seconds: Option<i64>,
+    ) -> CoreResult<SignalWithStartResult> {
+        let request = flovyn_v1::SignalWithStartWorkflowRequest {
+            org_id: org_id.to_string(),
+            workflow_id: workflow_id.to_string(),
+            workflow_kind: workflow_kind.to_string(),
+            workflow_input,
+            queue: queue.to_string(),
+            signal_name: signal_name.to_string(),
+            signal_value,
+            priority_seconds: priority_seconds.unwrap_or(0),
+            workflow_version: workflow_version.map(|s| s.to_string()),
+            metadata: metadata.unwrap_or_default(),
+            idempotency_key_ttl_seconds,
+        };
+
+        let response = self
+            .inner
+            .signal_with_start_workflow(request)
+            .await?
+            .into_inner();
+
+        let workflow_execution_id = Uuid::parse_str(&response.workflow_execution_id)
+            .map_err(|e| CoreError::Other(format!("Invalid workflow execution ID: {}", e)))?;
+
+        Ok(SignalWithStartResult {
+            workflow_execution_id,
+            workflow_created: response.workflow_created,
+            signal_event_sequence: response.signal_event_sequence,
+        })
+    }
+
+    /// Send a signal to an existing workflow.
+    pub async fn signal_workflow(
+        &mut self,
+        org_id: &str,
+        workflow_execution_id: &str,
+        signal_name: &str,
+        signal_value: Vec<u8>,
+    ) -> CoreResult<SignalResult> {
+        let request = flovyn_v1::SignalWorkflowRequest {
+            org_id: org_id.to_string(),
+            workflow_execution_id: workflow_execution_id.to_string(),
+            signal_name: signal_name.to_string(),
+            signal_value,
+        };
+
+        let response = self.inner.signal_workflow(request).await?.into_inner();
+
+        Ok(SignalResult {
+            signal_event_sequence: response.signal_event_sequence,
+        })
+    }
+}
+
+/// Result of signal-with-start operation
+#[derive(Debug, Clone)]
+pub struct SignalWithStartResult {
+    /// The workflow execution ID
+    pub workflow_execution_id: Uuid,
+    /// Whether the workflow was created (vs already existed)
+    pub workflow_created: bool,
+    /// Sequence number of the signal event
+    pub signal_event_sequence: i64,
+}
+
+/// Result of signal operation
+#[derive(Debug, Clone)]
+pub struct SignalResult {
+    /// Sequence number of the signal event
+    pub signal_event_sequence: i64,
 }
 
 /// Information about a workflow execution received from polling

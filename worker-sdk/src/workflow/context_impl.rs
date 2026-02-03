@@ -8,8 +8,9 @@ use crate::workflow::context::{
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
-    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SuspensionContext,
-    TaskFuture, TaskFutureContext, TaskFutureRaw, TimerFuture, TimerFutureContext,
+    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SignalFuture,
+    SignalFutureRaw, SuspensionContext, TaskFuture, TaskFutureContext, TaskFutureRaw, TimerFuture,
+    TimerFutureContext,
 };
 use crate::workflow::recorder::CommandRecorder;
 use async_trait::async_trait;
@@ -446,6 +447,57 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
 
     async fn state_keys(&self) -> Result<Vec<String>> {
         Ok(self.replay_engine.state_keys())
+    }
+
+    // =========================================================================
+    // Signals
+    // =========================================================================
+
+    fn wait_for_signal_raw(&self, signal_name: &str) -> SignalFutureRaw {
+        // Try to pop a signal with the given name from the queue
+        if let Some(signal_event) = self.replay_engine.pop_signal(signal_name) {
+            // Signal found - return it directly (server stores as JSON, no base64)
+            let signal_value = signal_event
+                .get("signalValue")
+                .cloned()
+                .unwrap_or(Value::Null);
+
+            let result_value = serde_json::json!({
+                "signalName": signal_name,
+                "signalValue": signal_value
+            });
+
+            SignalFuture::from_replay_with_cell(self.suspension_cell.clone(), Ok(result_value))
+        } else {
+            // No signal available - this will suspend and wait for signal with this name
+            SignalFuture::new_waiting_for_signal(
+                self.suspension_cell.clone(),
+                signal_name.to_string(),
+            )
+        }
+    }
+
+    fn has_signal(&self, signal_name: &str) -> bool {
+        self.replay_engine.has_signal(signal_name)
+    }
+
+    fn pending_signal_count(&self, signal_name: &str) -> usize {
+        self.replay_engine
+            .pending_signal_count_for_name(signal_name)
+    }
+
+    fn drain_signals_raw(&self, signal_name: &str) -> Vec<Value> {
+        // Signal values are stored as direct JSON by the server (no base64)
+        self.replay_engine
+            .drain_signals(signal_name)
+            .into_iter()
+            .map(|signal_event| {
+                signal_event
+                    .get("signalValue")
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            })
+            .collect()
     }
 
     fn is_cancellation_requested(&self) -> bool {

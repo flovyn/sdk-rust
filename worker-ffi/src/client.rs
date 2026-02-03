@@ -24,6 +24,24 @@ pub struct StartWorkflowResponse {
     pub idempotency_key_new: bool,
 }
 
+/// Result of signal-with-start operation.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SignalWithStartResponse {
+    /// The workflow execution ID.
+    pub workflow_execution_id: String,
+    /// Whether the workflow was created (vs already existed).
+    pub workflow_created: bool,
+    /// Sequence number of the signal event.
+    pub signal_event_sequence: i64,
+}
+
+/// Result of signaling a workflow.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SignalWorkflowResponse {
+    /// Sequence number of the signal event.
+    pub signal_event_sequence: i64,
+}
+
 /// The client object for FFI, used for workflow operations.
 ///
 /// CoreClient provides:
@@ -226,6 +244,91 @@ impl CoreClient {
             .block_on(async { dispatch_client.reject_promise(&promise_id, &error).await })?;
 
         Ok(())
+    }
+
+    /// Send a signal to an existing workflow, or create a new workflow and send the signal.
+    ///
+    /// This is an atomic operation - either the workflow exists and receives the signal,
+    /// or a new workflow is created with the signal. This prevents race conditions
+    /// where a workflow might be created between checking for existence and signaling.
+    ///
+    /// # Arguments
+    /// * `workflow_id` - The workflow ID (used as idempotency key)
+    /// * `workflow_kind` - The type/kind of workflow to create if it doesn't exist
+    /// * `workflow_input` - Serialized input for the workflow (JSON bytes)
+    /// * `queue` - The task queue
+    /// * `signal_name` - The name of the signal
+    /// * `signal_value` - Serialized signal value (JSON bytes)
+    ///
+    /// # Returns
+    /// Information about whether the workflow was created and the signal event sequence.
+    pub fn signal_with_start_workflow(
+        &self,
+        workflow_id: String,
+        workflow_kind: String,
+        workflow_input: Vec<u8>,
+        queue: Option<String>,
+        signal_name: String,
+        signal_value: Vec<u8>,
+    ) -> Result<SignalWithStartResponse, FfiError> {
+        let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.client_token);
+
+        let result = self.runtime.block_on(async {
+            dispatch_client
+                .signal_with_start_workflow(
+                    &self.config.org_id,
+                    &workflow_id,
+                    &workflow_kind,
+                    workflow_input,
+                    queue.as_deref().unwrap_or("default"),
+                    &signal_name,
+                    signal_value,
+                    None, // priority_seconds
+                    None, // workflow_version
+                    None, // metadata
+                    None, // idempotency_key_ttl_seconds
+                )
+                .await
+        })?;
+
+        Ok(SignalWithStartResponse {
+            workflow_execution_id: result.workflow_execution_id.to_string(),
+            workflow_created: result.workflow_created,
+            signal_event_sequence: result.signal_event_sequence,
+        })
+    }
+
+    /// Send a signal to an existing workflow.
+    ///
+    /// # Arguments
+    /// * `workflow_execution_id` - The workflow execution ID
+    /// * `signal_name` - The name of the signal
+    /// * `signal_value` - Serialized signal value (JSON bytes)
+    ///
+    /// # Returns
+    /// The sequence number of the signal event.
+    pub fn signal_workflow(
+        &self,
+        workflow_execution_id: String,
+        signal_name: String,
+        signal_value: Vec<u8>,
+    ) -> Result<SignalWorkflowResponse, FfiError> {
+        let mut dispatch_client = WorkflowDispatch::new(self.channel.clone(), &self.client_token);
+
+        let result = self.runtime.block_on(async {
+            dispatch_client
+                .signal_workflow(
+                    &self.config.org_id,
+                    &workflow_execution_id,
+                    &signal_name,
+                    signal_value,
+                )
+                .await
+        })?;
+
+        Ok(SignalWorkflowResponse {
+            signal_event_sequence: result.signal_event_sequence,
+        })
     }
 }
 

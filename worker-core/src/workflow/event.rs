@@ -45,6 +45,9 @@ pub enum EventType {
     TimerStarted,
     TimerFired,
     TimerCancelled,
+
+    // Signal events
+    SignalReceived,
 }
 
 impl EventType {
@@ -107,7 +110,13 @@ impl EventType {
             Self::TimerStarted => "TIMER_STARTED",
             Self::TimerFired => "TIMER_FIRED",
             Self::TimerCancelled => "TIMER_CANCELLED",
+            Self::SignalReceived => "SIGNAL_RECEIVED",
         }
+    }
+
+    /// Check if this event type is a signal event
+    pub fn is_signal_event(&self) -> bool {
+        matches!(self, Self::SignalReceived)
     }
 }
 
@@ -262,6 +271,14 @@ impl ReplayEvent {
         }
         self
     }
+
+    /// Set the signal name in the event data
+    pub fn with_signal_name(mut self, name: String) -> Self {
+        if let Value::Object(ref mut map) = self.data {
+            map.insert("signalName".to_string(), Value::String(name));
+        }
+        self
+    }
 }
 
 #[cfg(test)]
@@ -345,6 +362,7 @@ mod tests {
             EventType::TimerStarted,
             EventType::TimerFired,
             EventType::TimerCancelled,
+            EventType::SignalReceived,
         ];
 
         for event_type in event_types {

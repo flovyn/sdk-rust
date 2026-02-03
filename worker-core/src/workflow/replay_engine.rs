@@ -33,7 +33,7 @@ use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::execution::EventLookup;
 use parking_lot::RwLock;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Language-agnostic replay engine for workflow execution.
@@ -48,6 +48,10 @@ pub struct ReplayEngine {
     child_workflow_events: Vec<ReplayEvent>,
     operation_events: Vec<ReplayEvent>,
     state_events: Vec<ReplayEvent>,
+
+    // Signal queues: per signal name, FIFO order
+    // Key: signal name, Value: queue of signals with that name
+    signal_queues: RwLock<HashMap<String, VecDeque<ReplayEvent>>>,
 
     // All events for terminal event lookup
     all_events: Vec<ReplayEvent>,
@@ -113,6 +117,22 @@ impl ReplayEngine {
             .cloned()
             .collect();
 
+        // Build signal queues per signal name (FIFO order preserved)
+        let mut signal_queues: HashMap<String, VecDeque<ReplayEvent>> = HashMap::new();
+        for event in events
+            .iter()
+            .filter(|e| e.event_type() == EventType::SignalReceived)
+        {
+            let signal_name = event
+                .get_string("signalName")
+                .unwrap_or("__default__")
+                .to_string();
+            signal_queues
+                .entry(signal_name)
+                .or_default()
+                .push_back(event.clone());
+        }
+
         // Build operation cache from OperationCompleted events
         let operation_cache = crate::workflow::execution::build_operation_cache(&events);
 
@@ -126,6 +146,7 @@ impl ReplayEngine {
             child_workflow_events,
             operation_events,
             state_events,
+            signal_queues: RwLock::new(signal_queues),
             all_events: events,
             next_task_seq: AtomicU32::new(0),
             next_timer_seq: AtomicU32::new(0),
@@ -170,6 +191,72 @@ impl ReplayEngine {
     /// Get next state sequence number and increment.
     pub fn next_state_seq(&self) -> u32 {
         self.next_state_seq.fetch_add(1, Ordering::SeqCst)
+    }
+
+    // =========================================================================
+    // Signal Queue Management (per signal name)
+    // =========================================================================
+
+    /// Pop and return the next signal with the given name (FIFO).
+    /// Returns None if no signals with that name are available.
+    pub fn pop_signal(&self, signal_name: &str) -> Option<ReplayEvent> {
+        self.signal_queues
+            .write()
+            .get_mut(signal_name)
+            .and_then(|queue| queue.pop_front())
+    }
+
+    /// Check if there are any pending signals with the given name.
+    pub fn has_signal(&self, signal_name: &str) -> bool {
+        self.signal_queues
+            .read()
+            .get(signal_name)
+            .is_some_and(|queue| !queue.is_empty())
+    }
+
+    /// Get the number of pending signals with the given name.
+    pub fn pending_signal_count_for_name(&self, signal_name: &str) -> usize {
+        self.signal_queues
+            .read()
+            .get(signal_name)
+            .map(|queue| queue.len())
+            .unwrap_or(0)
+    }
+
+    /// Check if there are any pending signals (any name).
+    pub fn has_any_pending_signal(&self) -> bool {
+        self.signal_queues
+            .read()
+            .values()
+            .any(|queue| !queue.is_empty())
+    }
+
+    /// Get total count of pending signals across all names.
+    pub fn total_pending_signal_count(&self) -> usize {
+        self.signal_queues
+            .read()
+            .values()
+            .map(|queue| queue.len())
+            .sum()
+    }
+
+    /// Get all signal names that have pending signals.
+    pub fn pending_signal_names(&self) -> Vec<String> {
+        self.signal_queues
+            .read()
+            .iter()
+            .filter(|(_, queue)| !queue.is_empty())
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// Drain all signals with the given name.
+    pub fn drain_signals(&self, signal_name: &str) -> Vec<ReplayEvent> {
+        self.signal_queues
+            .write()
+            .get_mut(signal_name)
+            .map(|queue| queue.drain(..).collect())
+            .unwrap_or_default()
     }
 
     // =========================================================================
@@ -325,6 +412,16 @@ impl ReplayEngine {
     /// Get the number of state events.
     pub fn state_event_count(&self) -> usize {
         self.state_events.len()
+    }
+
+    /// Get the total number of signal events (across all names).
+    /// Note: This includes already-consumed signals from initial load.
+    /// Use `total_pending_signal_count()` for unconsumed signals.
+    pub fn signal_event_count(&self) -> usize {
+        self.all_events
+            .iter()
+            .filter(|e| e.event_type() == EventType::SignalReceived)
+            .count()
     }
 
     /// Get the total number of events.
