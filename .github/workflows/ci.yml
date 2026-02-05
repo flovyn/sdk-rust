@@ -51,31 +51,36 @@ jobs:
         env:
           RUSTDOCFLAGS: -Dwarnings
 
-  e2e:
-    name: E2E Tests
+  # E2E tests moved to workspace CI (dev repo)
+
+  trigger-workspace:
+    name: Trigger Workspace CI
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true  # E2E tests can be flaky, don't block the workflow
+    needs: [build]
+    if: github.event_name == 'push' && github.ref_name != 'main'
     steps:
-      - uses: actions/checkout@v4
+      - name: Check for matching branches
+        id: check
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          MATCHING_REPOS=""
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          for repo in flovyn-server sdk-python sdk-kotlin sdk-typescript; do
+            if git ls-remote --exit-code --heads "https://github.com/flovyn/$repo" "$BRANCH" 2>/dev/null; then
+              MATCHING_REPOS="$MATCHING_REPOS $repo"
+            fi
+          done
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.92.0"
+          if [ -n "$MATCHING_REPOS" ]; then
+            echo "trigger=true" >> $GITHUB_OUTPUT
+            echo "Found matching branches in:$MATCHING_REPOS"
+          else
+            echo "trigger=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Login to Scaleway Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: rg.fr-par.scw.cloud/flovyn
-          username: nologin
-          password: ${{ secrets.SCW_SECRET_KEY }}
-
-      - name: Pull Flovyn Server image
-        run: docker pull rg.fr-par.scw.cloud/flovyn/flovyn-server:latest
-
-      - name: Run E2E tests
-        run: cargo test --test e2e -- --ignored --nocapture
+      - name: Trigger workspace CI
+        if: steps.check.outputs.trigger == 'true'
+        run: |
+          gh workflow run integration.yml -R flovyn/dev -f branch="${GITHUB_REF_NAME}"
+        env:
+          GH_TOKEN: ${{ secrets.WORKSPACE_PAT }}
