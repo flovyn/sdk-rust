@@ -310,6 +310,7 @@ impl WorkflowDispatch {
     ///
     /// This operation is atomic: either the workflow is created and signal sent,
     /// or the signal is sent to the existing workflow.
+    #[allow(clippy::too_many_arguments)]
     pub async fn signal_with_start_workflow(
         &mut self,
         org_id: &str,
