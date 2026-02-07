@@ -460,6 +460,9 @@ impl FlovynClientBuilder {
             Some(ch) => ch,
             None => Channel::from_shared(self.server_url.clone())
                 .map_err(|e| FlovynError::InvalidConfiguration(e.to_string()))?
+                .http2_keep_alive_interval(Duration::from_secs(30))
+                .keep_alive_timeout(Duration::from_secs(10))
+                .keep_alive_while_idle(true)
                 .connect()
                 .await
                 .map_err(|e| FlovynError::NetworkError(e.to_string()))?,

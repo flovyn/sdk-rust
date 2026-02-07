@@ -368,10 +368,20 @@ impl WorkflowExecutorWorker {
                 ) => {
                     if let Err(e) = result {
                         // Check if it's a connection error
-                        let is_connection_error = e.to_string().contains("UNAVAILABLE")
-                            || e.to_string().contains("Connection refused");
+                        let err_str = e.to_string();
+                        let is_h2_reset = err_str.contains("h2 protocol error")
+                            || err_str.contains("connection error received: not a result of an error")
+                            || (err_str.contains("transport error") && err_str.contains("Unknown"));
+                        let is_connection_error = !is_h2_reset
+                            && (err_str.contains("UNAVAILABLE")
+                                || err_str.contains("Connection refused")
+                                || err_str.contains("connection error"));
 
-                        if is_connection_error {
+                        if is_h2_reset {
+                            // HTTP/2 connection recycled by proxy — transient, retry immediately
+                            debug!("HTTP/2 connection reset, retrying: {}", e);
+                            continue;
+                        } else if is_connection_error {
                             warn!("Server unavailable (attempt {}), will retry: {}", reconnect_attempt + 1, e);
 
                             // Record disconnected state on first failure
