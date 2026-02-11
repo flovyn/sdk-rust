@@ -1,0 +1,481 @@
+syntax = "proto3";
+
+package flovyn.v1;
+
+option java_package = "ai.flovyn.protocol";
+option java_multiple_files = true;
+
+import "google/protobuf/empty.proto";
+
+// ============================================================================
+// Agent Dispatch Service
+// ============================================================================
+//
+// Service for agent execution workers. Agents are long-running conversational
+// processes with checkpoint-based recovery instead of event-sourced replay.
+//
+
+service AgentDispatch {
+  // Poll for available agent work (unary with long polling)
+  // Returns lightweight metadata - entries are loaded separately
+  rpc PollAgent(PollAgentRequest) returns (PollAgentResponse);
+
+  // Load conversation entries (SERVER-SIDE STREAMING)
+  // Streams entries one by one to handle large conversations (4MB gRPC limit)
+  rpc GetEntries(GetEntriesRequest) returns (stream AgentEntryChunk);
+
+  // Persist a single conversation entry (unary)
+  rpc AppendEntry(AppendEntryRequest) returns (AppendEntryResponse);
+
+  // Checkpoint management (unary)
+  rpc GetLatestCheckpoint(GetCheckpointRequest) returns (GetCheckpointResponse);
+  rpc SubmitCheckpoint(SubmitCheckpointRequest) returns (SubmitCheckpointResponse);
+
+  // Task scheduling (CLIENT-SIDE STREAMING for large inputs)
+  // First chunk: header with task kind, options
+  // Subsequent chunks: serialized input data (~64KB each)
+  rpc ScheduleAgentTask(stream ScheduleAgentTaskChunk) returns (ScheduleAgentTaskResponse);
+
+  // Agent completion (unary)
+  rpc CompleteAgent(CompleteAgentRequest) returns (google.protobuf.Empty);
+  rpc FailAgent(FailAgentRequest) returns (google.protobuf.Empty);
+
+  // Suspension for multi-turn interaction (unary)
+  rpc SuspendAgent(SuspendAgentRequest) returns (google.protobuf.Empty);
+
+  // Signal management (unary)
+  rpc SignalAgent(SignalAgentRequest) returns (SignalAgentResponse);
+  rpc ConsumeSignals(ConsumeSignalsRequest) returns (ConsumeSignalsResponse);
+  rpc HasSignal(HasSignalRequest) returns (HasSignalResponse);
+
+  // Query task execution result
+  rpc GetAgentTaskResult(GetAgentTaskResultRequest) returns (GetAgentTaskResultResponse);
+
+  // Real-time data streaming (CLIENT-SIDE STREAMING)
+  // Used for streaming tokens, tool outputs, events to SSE subscribers
+  rpc StreamAgentData(stream StreamAgentDataRequest) returns (StreamAgentDataResponse);
+}
+
+// ============================================================================
+// Poll Messages
+// ============================================================================
+
+message PollAgentRequest {
+  // Unique identifier for this worker
+  string worker_id = 1;
+
+  // Organization ID to poll agents from
+  string org_id = 2;
+
+  // Queue to poll from (e.g., "default", "gpu-workers")
+  string queue = 3;
+
+  // Long polling timeout in seconds (e.g., 60)
+  int64 timeout_seconds = 4;
+
+  // Agent kinds this worker can handle (empty = all kinds)
+  repeated string agent_capabilities = 5;
+
+  // Worker pool ID for tenant isolation (empty = any pool)
+  optional string worker_pool_id = 6;
+}
+
+message PollAgentResponse {
+  // Agent execution info (null if no work available)
+  AgentExecutionInfo agent_execution = 1;
+
+  // W3C Trace Context traceparent for distributed tracing
+  string traceparent = 2;
+}
+
+message AgentExecutionInfo {
+  // Unique agent execution ID
+  string id = 1;
+
+  // Agent kind/type
+  string kind = 2;
+
+  // Organization ID
+  string org_id = 3;
+
+  // Input data (serialized bytes)
+  bytes input = 4;
+
+  // Queue for worker routing
+  string queue = 5;
+
+  // Creation timestamp (milliseconds since epoch)
+  int64 created_at_ms = 6;
+
+  // Current checkpoint sequence (-1 if no checkpoint yet)
+  int32 current_checkpoint_seq = 7;
+
+  // Persistence mode: "REMOTE" or "LOCAL"
+  string persistence_mode = 8;
+
+  // Agent definition ID (if created from a definition)
+  optional string agent_definition_id = 9;
+
+  // Worker pool ID (denormalized for dispatch)
+  optional string worker_pool_id = 10;
+
+  // Arbitrary metadata (JSON)
+  bytes metadata = 11;
+}
+
+// ============================================================================
+// Entry Messages
+// ============================================================================
+
+message GetEntriesRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Load entries after this entry ID (for incremental loads)
+  // If empty, loads all entries
+  optional string after_entry_id = 2;
+}
+
+// Server-side streaming response - one entry per message
+message AgentEntryChunk {
+  AgentEntry entry = 1;
+}
+
+message AgentEntry {
+  // Entry ID
+  string id = 1;
+
+  // Parent entry ID (null for root entries)
+  optional string parent_id = 2;
+
+  // Entry type: "message", "llm_call", "injection"
+  string entry_type = 3;
+
+  // Role (for message type): "system", "user", "assistant", "tool_result"
+  optional string role = 4;
+
+  // Content (serialized, format depends on type)
+  bytes content = 5;
+
+  // Turn ID for grouping related entries
+  optional string turn_id = 6;
+
+  // Token usage (for llm_call entries)
+  optional TokenUsage token_usage = 7;
+
+  // Creation timestamp (milliseconds since epoch)
+  int64 created_at_ms = 8;
+}
+
+message TokenUsage {
+  int64 input_tokens = 1;
+  int64 output_tokens = 2;
+  optional int64 cache_read_tokens = 3;
+  optional int64 cache_write_tokens = 4;
+}
+
+message AppendEntryRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Parent entry ID (null for root entries)
+  optional string parent_id = 2;
+
+  // Entry type: "message", "llm_call", "injection"
+  string entry_type = 3;
+
+  // Role (for message type): "system", "user", "assistant", "tool_result"
+  optional string role = 4;
+
+  // Content (serialized)
+  bytes content = 5;
+
+  // Turn ID for grouping related entries
+  optional string turn_id = 6;
+
+  // Token usage (for llm_call entries)
+  optional TokenUsage token_usage = 7;
+}
+
+message AppendEntryResponse {
+  // Created entry ID
+  string entry_id = 1;
+}
+
+// ============================================================================
+// Checkpoint Messages
+// ============================================================================
+
+message GetCheckpointRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+}
+
+message GetCheckpointResponse {
+  // Latest checkpoint (null if no checkpoint yet)
+  AgentCheckpoint checkpoint = 1;
+}
+
+message AgentCheckpoint {
+  // Checkpoint ID
+  string id = 1;
+
+  // Sequence number (1, 2, 3, ...)
+  int32 sequence = 2;
+
+  // Leaf entry ID at checkpoint time
+  optional string leaf_entry_id = 3;
+
+  // Serialized state (JSON)
+  bytes state = 4;
+
+  // Creation timestamp (milliseconds since epoch)
+  int64 created_at_ms = 5;
+}
+
+message SubmitCheckpointRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Leaf entry ID at checkpoint time
+  optional string leaf_entry_id = 2;
+
+  // Serialized state (JSON)
+  bytes state = 3;
+
+  // Token usage snapshot for this checkpoint
+  optional TokenUsage cumulative_token_usage = 4;
+}
+
+message SubmitCheckpointResponse {
+  // Created checkpoint ID
+  string checkpoint_id = 1;
+
+  // Assigned sequence number
+  int32 sequence = 2;
+}
+
+// ============================================================================
+// Task Scheduling Messages (Client-Side Streaming)
+// ============================================================================
+
+// First message in stream: task header with metadata
+message ScheduleAgentTaskHeader {
+  // Agent execution ID (parent)
+  string agent_execution_id = 1;
+
+  // Task kind
+  string task_kind = 2;
+
+  // Queue for task routing (default: inherit from agent)
+  optional string queue = 3;
+
+  // Max retries (default: 3)
+  optional int32 max_retries = 4;
+
+  // Timeout in milliseconds
+  optional int64 timeout_ms = 5;
+
+  // Idempotency key for preventing duplicate tasks
+  // Format: {agent_execution_id}:{checkpoint_seq}:{task_index}
+  optional string idempotency_key = 6;
+
+  // TTL for idempotency key in seconds (default: 86400)
+  optional int64 idempotency_key_ttl_seconds = 7;
+
+  // Arbitrary metadata
+  map<string, string> metadata = 8;
+}
+
+// Client-side streaming message
+message ScheduleAgentTaskChunk {
+  oneof chunk {
+    // First message: task metadata
+    ScheduleAgentTaskHeader header = 1;
+
+    // Subsequent messages: input data chunks (~64KB each)
+    bytes input_chunk = 2;
+  }
+}
+
+message ScheduleAgentTaskResponse {
+  // Created task execution ID
+  string task_execution_id = 1;
+
+  // Whether idempotency key was used
+  bool idempotency_key_used = 2;
+
+  // Whether a new task was created (false if existing returned)
+  bool idempotency_key_new = 3;
+}
+
+// ============================================================================
+// Completion Messages
+// ============================================================================
+
+message CompleteAgentRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Output data (serialized)
+  bytes output = 2;
+}
+
+message FailAgentRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Error message
+  string error = 2;
+
+  // Stack trace (optional)
+  optional string stack_trace = 3;
+
+  // Failure type: "CODE_BUG", "TRANSIENT_ERROR", "BUSINESS_LOGIC", etc.
+  optional string failure_type = 4;
+}
+
+message SuspendAgentRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Wait condition - exactly one must be set
+  oneof wait_condition {
+    // Wait for external signal (e.g., "userMessage")
+    string wait_for_signal = 2;
+
+    // Wait for task completion (task execution ID)
+    string wait_for_task = 4;
+  }
+
+  // Optional reason for suspension
+  optional string reason = 3;
+}
+
+// ============================================================================
+// Signal Messages
+// ============================================================================
+
+message SignalAgentRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Signal name (e.g., "userMessage", "cancel")
+  string signal_name = 2;
+
+  // Signal value (serialized, optional)
+  bytes signal_value = 3;
+}
+
+message SignalAgentResponse {
+  // Created signal ID
+  string signal_id = 1;
+
+  // Whether agent transitioned from WAITING to PENDING
+  bool agent_resumed = 2;
+}
+
+message ConsumeSignalsRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Signal name to consume (empty = all signals)
+  optional string signal_name = 2;
+}
+
+message ConsumeSignalsResponse {
+  // Consumed signals
+  repeated AgentSignal signals = 1;
+}
+
+message AgentSignal {
+  // Signal ID
+  string id = 1;
+
+  // Signal name
+  string signal_name = 2;
+
+  // Signal value (serialized, optional)
+  bytes signal_value = 3;
+
+  // Creation timestamp (milliseconds since epoch)
+  int64 created_at_ms = 4;
+}
+
+message HasSignalRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Signal name to check
+  string signal_name = 2;
+}
+
+message HasSignalResponse {
+  // Whether unconsumed signal exists
+  bool has_signal = 1;
+}
+
+// ============================================================================
+// Task Result Query Messages
+// ============================================================================
+
+message GetAgentTaskResultRequest {
+  // Agent execution ID (for authorization)
+  string agent_execution_id = 1;
+
+  // Task execution ID to query
+  string task_execution_id = 2;
+}
+
+message GetAgentTaskResultResponse {
+  // Task status: "PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"
+  string status = 1;
+
+  // Output (if COMPLETED)
+  optional bytes output = 2;
+
+  // Error message (if FAILED)
+  optional string error = 3;
+}
+
+// ============================================================================
+// Streaming Messages (Client-Side Streaming)
+// ============================================================================
+
+enum AgentStreamEventType {
+  AGENT_STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  // Tokens from LLM response
+  AGENT_TOKEN = 1;
+  // Progress update
+  AGENT_PROGRESS = 2;
+  // Arbitrary data event
+  AGENT_DATA = 3;
+  // Error event
+  AGENT_ERROR = 4;
+  // Tool invocation started
+  AGENT_TOOL_START = 5;
+  // Tool invocation completed
+  AGENT_TOOL_END = 6;
+}
+
+message StreamAgentDataRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+
+  // Sequence number for ordering
+  int32 sequence = 2;
+
+  // Event type
+  AgentStreamEventType event_type = 3;
+
+  // Event payload (JSON-encoded)
+  string payload = 4;
+
+  // Timestamp (milliseconds since epoch)
+  int64 timestamp_ms = 5;
+}
+
+message StreamAgentDataResponse {
+  // Whether event was acknowledged
+  bool acknowledged = 1;
+}

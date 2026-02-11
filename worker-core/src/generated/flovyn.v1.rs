@@ -2059,3 +2059,876 @@ pub mod worker_lifecycle_client {
         }
     }
 }
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PollAgentRequest {
+    /// Unique identifier for this worker
+    #[prost(string, tag = "1")]
+    pub worker_id: ::prost::alloc::string::String,
+    /// Organization ID to poll agents from
+    #[prost(string, tag = "2")]
+    pub org_id: ::prost::alloc::string::String,
+    /// Queue to poll from (e.g., "default", "gpu-workers")
+    #[prost(string, tag = "3")]
+    pub queue: ::prost::alloc::string::String,
+    /// Long polling timeout in seconds (e.g., 60)
+    #[prost(int64, tag = "4")]
+    pub timeout_seconds: i64,
+    /// Agent kinds this worker can handle (empty = all kinds)
+    #[prost(string, repeated, tag = "5")]
+    pub agent_capabilities: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Worker pool ID for tenant isolation (empty = any pool)
+    #[prost(string, optional, tag = "6")]
+    pub worker_pool_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PollAgentResponse {
+    /// Agent execution info (null if no work available)
+    #[prost(message, optional, tag = "1")]
+    pub agent_execution: ::core::option::Option<AgentExecutionInfo>,
+    /// W3C Trace Context traceparent for distributed tracing
+    #[prost(string, tag = "2")]
+    pub traceparent: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AgentExecutionInfo {
+    /// Unique agent execution ID
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Agent kind/type
+    #[prost(string, tag = "2")]
+    pub kind: ::prost::alloc::string::String,
+    /// Organization ID
+    #[prost(string, tag = "3")]
+    pub org_id: ::prost::alloc::string::String,
+    /// Input data (serialized bytes)
+    #[prost(bytes = "vec", tag = "4")]
+    pub input: ::prost::alloc::vec::Vec<u8>,
+    /// Queue for worker routing
+    #[prost(string, tag = "5")]
+    pub queue: ::prost::alloc::string::String,
+    /// Creation timestamp (milliseconds since epoch)
+    #[prost(int64, tag = "6")]
+    pub created_at_ms: i64,
+    /// Current checkpoint sequence (-1 if no checkpoint yet)
+    #[prost(int32, tag = "7")]
+    pub current_checkpoint_seq: i32,
+    /// Persistence mode: "REMOTE" or "LOCAL"
+    #[prost(string, tag = "8")]
+    pub persistence_mode: ::prost::alloc::string::String,
+    /// Agent definition ID (if created from a definition)
+    #[prost(string, optional, tag = "9")]
+    pub agent_definition_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Worker pool ID (denormalized for dispatch)
+    #[prost(string, optional, tag = "10")]
+    pub worker_pool_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Arbitrary metadata (JSON)
+    #[prost(bytes = "vec", tag = "11")]
+    pub metadata: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetEntriesRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Load entries after this entry ID (for incremental loads)
+    /// If empty, loads all entries
+    #[prost(string, optional, tag = "2")]
+    pub after_entry_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Server-side streaming response - one entry per message
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AgentEntryChunk {
+    #[prost(message, optional, tag = "1")]
+    pub entry: ::core::option::Option<AgentEntry>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AgentEntry {
+    /// Entry ID
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Parent entry ID (null for root entries)
+    #[prost(string, optional, tag = "2")]
+    pub parent_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Entry type: "message", "llm_call", "injection"
+    #[prost(string, tag = "3")]
+    pub entry_type: ::prost::alloc::string::String,
+    /// Role (for message type): "system", "user", "assistant", "tool_result"
+    #[prost(string, optional, tag = "4")]
+    pub role: ::core::option::Option<::prost::alloc::string::String>,
+    /// Content (serialized, format depends on type)
+    #[prost(bytes = "vec", tag = "5")]
+    pub content: ::prost::alloc::vec::Vec<u8>,
+    /// Turn ID for grouping related entries
+    #[prost(string, optional, tag = "6")]
+    pub turn_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Token usage (for llm_call entries)
+    #[prost(message, optional, tag = "7")]
+    pub token_usage: ::core::option::Option<TokenUsage>,
+    /// Creation timestamp (milliseconds since epoch)
+    #[prost(int64, tag = "8")]
+    pub created_at_ms: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TokenUsage {
+    #[prost(int64, tag = "1")]
+    pub input_tokens: i64,
+    #[prost(int64, tag = "2")]
+    pub output_tokens: i64,
+    #[prost(int64, optional, tag = "3")]
+    pub cache_read_tokens: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "4")]
+    pub cache_write_tokens: ::core::option::Option<i64>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AppendEntryRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Parent entry ID (null for root entries)
+    #[prost(string, optional, tag = "2")]
+    pub parent_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Entry type: "message", "llm_call", "injection"
+    #[prost(string, tag = "3")]
+    pub entry_type: ::prost::alloc::string::String,
+    /// Role (for message type): "system", "user", "assistant", "tool_result"
+    #[prost(string, optional, tag = "4")]
+    pub role: ::core::option::Option<::prost::alloc::string::String>,
+    /// Content (serialized)
+    #[prost(bytes = "vec", tag = "5")]
+    pub content: ::prost::alloc::vec::Vec<u8>,
+    /// Turn ID for grouping related entries
+    #[prost(string, optional, tag = "6")]
+    pub turn_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Token usage (for llm_call entries)
+    #[prost(message, optional, tag = "7")]
+    pub token_usage: ::core::option::Option<TokenUsage>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AppendEntryResponse {
+    /// Created entry ID
+    #[prost(string, tag = "1")]
+    pub entry_id: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetCheckpointRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetCheckpointResponse {
+    /// Latest checkpoint (null if no checkpoint yet)
+    #[prost(message, optional, tag = "1")]
+    pub checkpoint: ::core::option::Option<AgentCheckpoint>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AgentCheckpoint {
+    /// Checkpoint ID
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Sequence number (1, 2, 3, ...)
+    #[prost(int32, tag = "2")]
+    pub sequence: i32,
+    /// Leaf entry ID at checkpoint time
+    #[prost(string, optional, tag = "3")]
+    pub leaf_entry_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Serialized state (JSON)
+    #[prost(bytes = "vec", tag = "4")]
+    pub state: ::prost::alloc::vec::Vec<u8>,
+    /// Creation timestamp (milliseconds since epoch)
+    #[prost(int64, tag = "5")]
+    pub created_at_ms: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SubmitCheckpointRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Leaf entry ID at checkpoint time
+    #[prost(string, optional, tag = "2")]
+    pub leaf_entry_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Serialized state (JSON)
+    #[prost(bytes = "vec", tag = "3")]
+    pub state: ::prost::alloc::vec::Vec<u8>,
+    /// Token usage snapshot for this checkpoint
+    #[prost(message, optional, tag = "4")]
+    pub cumulative_token_usage: ::core::option::Option<TokenUsage>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SubmitCheckpointResponse {
+    /// Created checkpoint ID
+    #[prost(string, tag = "1")]
+    pub checkpoint_id: ::prost::alloc::string::String,
+    /// Assigned sequence number
+    #[prost(int32, tag = "2")]
+    pub sequence: i32,
+}
+/// First message in stream: task header with metadata
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTaskHeader {
+    /// Agent execution ID (parent)
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Task kind
+    #[prost(string, tag = "2")]
+    pub task_kind: ::prost::alloc::string::String,
+    /// Queue for task routing (default: inherit from agent)
+    #[prost(string, optional, tag = "3")]
+    pub queue: ::core::option::Option<::prost::alloc::string::String>,
+    /// Max retries (default: 3)
+    #[prost(int32, optional, tag = "4")]
+    pub max_retries: ::core::option::Option<i32>,
+    /// Timeout in milliseconds
+    #[prost(int64, optional, tag = "5")]
+    pub timeout_ms: ::core::option::Option<i64>,
+    /// Idempotency key for preventing duplicate tasks
+    /// Format: {agent_execution_id}:{checkpoint_seq}:{task_index}
+    #[prost(string, optional, tag = "6")]
+    pub idempotency_key: ::core::option::Option<::prost::alloc::string::String>,
+    /// TTL for idempotency key in seconds (default: 86400)
+    #[prost(int64, optional, tag = "7")]
+    pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
+    /// Arbitrary metadata
+    #[prost(map = "string, string", tag = "8")]
+    pub metadata:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+}
+/// Client-side streaming message
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTaskChunk {
+    #[prost(oneof = "schedule_agent_task_chunk::Chunk", tags = "1, 2")]
+    pub chunk: ::core::option::Option<schedule_agent_task_chunk::Chunk>,
+}
+/// Nested message and enum types in `ScheduleAgentTaskChunk`.
+pub mod schedule_agent_task_chunk {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Chunk {
+        /// First message: task metadata
+        #[prost(message, tag = "1")]
+        Header(super::ScheduleAgentTaskHeader),
+        /// Subsequent messages: input data chunks (~64KB each)
+        #[prost(bytes, tag = "2")]
+        InputChunk(::prost::alloc::vec::Vec<u8>),
+    }
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTaskResponse {
+    /// Created task execution ID
+    #[prost(string, tag = "1")]
+    pub task_execution_id: ::prost::alloc::string::String,
+    /// Whether idempotency key was used
+    #[prost(bool, tag = "2")]
+    pub idempotency_key_used: bool,
+    /// Whether a new task was created (false if existing returned)
+    #[prost(bool, tag = "3")]
+    pub idempotency_key_new: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CompleteAgentRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Output data (serialized)
+    #[prost(bytes = "vec", tag = "2")]
+    pub output: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FailAgentRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Error message
+    #[prost(string, tag = "2")]
+    pub error: ::prost::alloc::string::String,
+    /// Stack trace (optional)
+    #[prost(string, optional, tag = "3")]
+    pub stack_trace: ::core::option::Option<::prost::alloc::string::String>,
+    /// Failure type: "CODE_BUG", "TRANSIENT_ERROR", "BUSINESS_LOGIC", etc.
+    #[prost(string, optional, tag = "4")]
+    pub failure_type: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SuspendAgentRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Optional reason for suspension
+    #[prost(string, optional, tag = "3")]
+    pub reason: ::core::option::Option<::prost::alloc::string::String>,
+    /// Wait condition - exactly one must be set
+    #[prost(oneof = "suspend_agent_request::WaitCondition", tags = "2, 4")]
+    pub wait_condition: ::core::option::Option<suspend_agent_request::WaitCondition>,
+}
+/// Nested message and enum types in `SuspendAgentRequest`.
+pub mod suspend_agent_request {
+    /// Wait condition - exactly one must be set
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum WaitCondition {
+        /// Wait for external signal (e.g., "userMessage")
+        #[prost(string, tag = "2")]
+        WaitForSignal(::prost::alloc::string::String),
+        /// Wait for task completion (task execution ID)
+        #[prost(string, tag = "4")]
+        WaitForTask(::prost::alloc::string::String),
+    }
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalAgentRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Signal name (e.g., "userMessage", "cancel")
+    #[prost(string, tag = "2")]
+    pub signal_name: ::prost::alloc::string::String,
+    /// Signal value (serialized, optional)
+    #[prost(bytes = "vec", tag = "3")]
+    pub signal_value: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalAgentResponse {
+    /// Created signal ID
+    #[prost(string, tag = "1")]
+    pub signal_id: ::prost::alloc::string::String,
+    /// Whether agent transitioned from WAITING to PENDING
+    #[prost(bool, tag = "2")]
+    pub agent_resumed: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConsumeSignalsRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Signal name to consume (empty = all signals)
+    #[prost(string, optional, tag = "2")]
+    pub signal_name: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConsumeSignalsResponse {
+    /// Consumed signals
+    #[prost(message, repeated, tag = "1")]
+    pub signals: ::prost::alloc::vec::Vec<AgentSignal>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AgentSignal {
+    /// Signal ID
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Signal name
+    #[prost(string, tag = "2")]
+    pub signal_name: ::prost::alloc::string::String,
+    /// Signal value (serialized, optional)
+    #[prost(bytes = "vec", tag = "3")]
+    pub signal_value: ::prost::alloc::vec::Vec<u8>,
+    /// Creation timestamp (milliseconds since epoch)
+    #[prost(int64, tag = "4")]
+    pub created_at_ms: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HasSignalRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Signal name to check
+    #[prost(string, tag = "2")]
+    pub signal_name: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HasSignalResponse {
+    /// Whether unconsumed signal exists
+    #[prost(bool, tag = "1")]
+    pub has_signal: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAgentTaskResultRequest {
+    /// Agent execution ID (for authorization)
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Task execution ID to query
+    #[prost(string, tag = "2")]
+    pub task_execution_id: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAgentTaskResultResponse {
+    /// Task status: "PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"
+    #[prost(string, tag = "1")]
+    pub status: ::prost::alloc::string::String,
+    /// Output (if COMPLETED)
+    #[prost(bytes = "vec", optional, tag = "2")]
+    pub output: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    /// Error message (if FAILED)
+    #[prost(string, optional, tag = "3")]
+    pub error: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StreamAgentDataRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Sequence number for ordering
+    #[prost(int32, tag = "2")]
+    pub sequence: i32,
+    /// Event type
+    #[prost(enumeration = "AgentStreamEventType", tag = "3")]
+    pub event_type: i32,
+    /// Event payload (JSON-encoded)
+    #[prost(string, tag = "4")]
+    pub payload: ::prost::alloc::string::String,
+    /// Timestamp (milliseconds since epoch)
+    #[prost(int64, tag = "5")]
+    pub timestamp_ms: i64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StreamAgentDataResponse {
+    /// Whether event was acknowledged
+    #[prost(bool, tag = "1")]
+    pub acknowledged: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AgentStreamEventType {
+    Unspecified = 0,
+    /// Tokens from LLM response
+    AgentToken = 1,
+    /// Progress update
+    AgentProgress = 2,
+    /// Arbitrary data event
+    AgentData = 3,
+    /// Error event
+    AgentError = 4,
+    /// Tool invocation started
+    AgentToolStart = 5,
+    /// Tool invocation completed
+    AgentToolEnd = 6,
+}
+impl AgentStreamEventType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            AgentStreamEventType::Unspecified => "AGENT_STREAM_EVENT_TYPE_UNSPECIFIED",
+            AgentStreamEventType::AgentToken => "AGENT_TOKEN",
+            AgentStreamEventType::AgentProgress => "AGENT_PROGRESS",
+            AgentStreamEventType::AgentData => "AGENT_DATA",
+            AgentStreamEventType::AgentError => "AGENT_ERROR",
+            AgentStreamEventType::AgentToolStart => "AGENT_TOOL_START",
+            AgentStreamEventType::AgentToolEnd => "AGENT_TOOL_END",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "AGENT_STREAM_EVENT_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "AGENT_TOKEN" => Some(Self::AgentToken),
+            "AGENT_PROGRESS" => Some(Self::AgentProgress),
+            "AGENT_DATA" => Some(Self::AgentData),
+            "AGENT_ERROR" => Some(Self::AgentError),
+            "AGENT_TOOL_START" => Some(Self::AgentToolStart),
+            "AGENT_TOOL_END" => Some(Self::AgentToolEnd),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod agent_dispatch_client {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
+    #[derive(Debug, Clone)]
+    pub struct AgentDispatchClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl AgentDispatchClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> AgentDispatchClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> AgentDispatchClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
+                Into<StdError> + Send + Sync,
+        {
+            AgentDispatchClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Poll for available agent work (unary with long polling)
+        /// Returns lightweight metadata - entries are loaded separately
+        pub async fn poll_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::PollAgentRequest>,
+        ) -> std::result::Result<tonic::Response<super::PollAgentResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/PollAgent");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "PollAgent"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Load conversation entries (SERVER-SIDE STREAMING)
+        /// Streams entries one by one to handle large conversations (4MB gRPC limit)
+        pub async fn get_entries(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetEntriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::AgentEntryChunk>>,
+            tonic::Status,
+        > {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/GetEntries");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "GetEntries"));
+            self.inner.server_streaming(req, path, codec).await
+        }
+        /// Persist a single conversation entry (unary)
+        pub async fn append_entry(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AppendEntryRequest>,
+        ) -> std::result::Result<tonic::Response<super::AppendEntryResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/AppendEntry");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "AppendEntry"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Checkpoint management (unary)
+        pub async fn get_latest_checkpoint(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetCheckpointRequest>,
+        ) -> std::result::Result<tonic::Response<super::GetCheckpointResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/flovyn.v1.AgentDispatch/GetLatestCheckpoint",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "GetLatestCheckpoint",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn submit_checkpoint(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SubmitCheckpointRequest>,
+        ) -> std::result::Result<tonic::Response<super::SubmitCheckpointResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/SubmitCheckpoint");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "SubmitCheckpoint",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Task scheduling (CLIENT-SIDE STREAMING for large inputs)
+        /// First chunk: header with task kind, options
+        /// Subsequent chunks: serialized input data (~64KB each)
+        pub async fn schedule_agent_task(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::ScheduleAgentTaskChunk>,
+        ) -> std::result::Result<tonic::Response<super::ScheduleAgentTaskResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/ScheduleAgentTask");
+            let mut req = request.into_streaming_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "ScheduleAgentTask",
+            ));
+            self.inner.client_streaming(req, path, codec).await
+        }
+        /// Agent completion (unary)
+        pub async fn complete_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CompleteAgentRequest>,
+        ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/CompleteAgent");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "CompleteAgent"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn fail_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::FailAgentRequest>,
+        ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/FailAgent");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "FailAgent"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Suspension for multi-turn interaction (unary)
+        pub async fn suspend_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SuspendAgentRequest>,
+        ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/SuspendAgent");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "SuspendAgent"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Signal management (unary)
+        pub async fn signal_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SignalAgentRequest>,
+        ) -> std::result::Result<tonic::Response<super::SignalAgentResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/SignalAgent");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "SignalAgent"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn consume_signals(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ConsumeSignalsRequest>,
+        ) -> std::result::Result<tonic::Response<super::ConsumeSignalsResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/ConsumeSignals");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "ConsumeSignals"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn has_signal(
+            &mut self,
+            request: impl tonic::IntoRequest<super::HasSignalRequest>,
+        ) -> std::result::Result<tonic::Response<super::HasSignalResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/HasSignal");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "HasSignal"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Query task execution result
+        pub async fn get_agent_task_result(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetAgentTaskResultRequest>,
+        ) -> std::result::Result<tonic::Response<super::GetAgentTaskResultResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/GetAgentTaskResult");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "GetAgentTaskResult",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Real-time data streaming (CLIENT-SIDE STREAMING)
+        /// Used for streaming tokens, tool outputs, events to SSE subscribers
+        pub async fn stream_agent_data(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::StreamAgentDataRequest>,
+        ) -> std::result::Result<tonic::Response<super::StreamAgentDataResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/StreamAgentData");
+            let mut req = request.into_streaming_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "StreamAgentData",
+            ));
+            self.inner.client_streaming(req, path, codec).await
+        }
+    }
+}
