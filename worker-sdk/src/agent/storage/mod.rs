@@ -360,5 +360,8 @@ mod tests {
     }
 }
 
+mod memory;
 mod remote;
+
+pub use memory::InMemoryStorage;
 pub use remote::RemoteStorage;
