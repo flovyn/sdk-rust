@@ -3,6 +3,7 @@
 //! The FlovynClient provides a high-level API for interacting with the Flovyn server,
 //! including starting workflows, managing workers, and querying workflow state.
 
+use crate::agent::registry::AgentRegistry;
 use crate::client::builder::FlovynClientBuilder;
 use crate::client::hook::WorkflowHook;
 use crate::client::{
@@ -12,6 +13,7 @@ use crate::client::{
 use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
 use crate::task::registry::TaskRegistry;
+use crate::worker::agent_worker::{AgentExecutorWorker, AgentWorkerConfig};
 use crate::worker::lifecycle::{
     ConnectionInfo, HookChain, ReconnectionStrategy, RegistrationInfo, TaskConflict,
     WorkerControlError, WorkerInternals, WorkerLifecycleEvent, WorkerMetrics, WorkerStatus,
@@ -259,6 +261,7 @@ pub struct FlovynClient {
     pub(crate) heartbeat_interval: Duration,
     pub(crate) workflow_registry: Arc<WorkflowRegistry>,
     pub(crate) task_registry: Arc<TaskRegistry>,
+    pub(crate) agent_registry: Arc<AgentRegistry>,
     pub(crate) workflow_hook: Option<Arc<dyn WorkflowHook>>,
     pub(crate) running: AtomicBool,
     /// Worker token for gRPC authentication
@@ -302,6 +305,11 @@ impl FlovynClient {
     /// Check if a task is registered
     pub fn has_task(&self, kind: &str) -> bool {
         self.task_registry.has(kind)
+    }
+
+    /// Check if an agent is registered
+    pub fn has_agent(&self, kind: &str) -> bool {
+        self.agent_registry.has(kind)
     }
 
     /// Check if the client is running
@@ -487,6 +495,50 @@ impl FlovynClient {
             (None, None, None)
         };
 
+        // Start agent worker if there are registered agents
+        let (agent_handle, agent_ready, agent_running) =
+            if self.agent_registry.has_registrations() {
+                let config = AgentWorkerConfig {
+                    worker_id: self.worker_id.clone(),
+                    org_id: self.org_id,
+                    queue: self.queue.clone(),
+                    poll_timeout: self.poll_timeout,
+                    no_work_backoff: Duration::from_millis(100),
+                    heartbeat_interval: self.heartbeat_interval,
+                    worker_name: self.worker_name.clone(),
+                    worker_version: self.worker_version.clone(),
+                    team_id: self.team_id,
+                    enable_auto_registration: false, // Unified registration already done
+                    worker_token: self.worker_token.clone(),
+                    lifecycle_hooks: self.lifecycle_hooks.clone(),
+                    reconnection_strategy: self.reconnection_strategy.clone(),
+                    server_worker_id,
+                };
+
+                let worker = AgentExecutorWorker::new(
+                    config,
+                    self.agent_registry.clone(),
+                    self.channel.clone(),
+                )
+                .with_internals(internals.clone())
+                .with_shutdown_signal(shutdown_rx.clone());
+
+                let ready_notify = worker.ready_notify();
+                let running_flag = worker.running_flag();
+
+                let handle = tokio::spawn(async move {
+                    let mut worker = worker;
+                    if let Err(e) = worker.start().await {
+                        error!("Agent worker error: {}", e);
+                    }
+                });
+
+                (Some(handle), Some(ready_notify), Some(running_flag))
+            } else {
+                debug!("No agents registered, skipping agent worker");
+                (None, None, None)
+            };
+
         // Store the internals for later access
         *self.worker_internals.write() = Some(internals.clone());
 
@@ -494,10 +546,13 @@ impl FlovynClient {
             shutdown_tx,
             workflow_running,
             task_running,
+            agent_running,
             workflow_handle,
             task_handle,
+            agent_handle,
             workflow_ready,
             task_ready,
+            agent_ready,
             internals,
         })
     }
@@ -895,6 +950,11 @@ impl FlovynClient {
         &self.task_registry
     }
 
+    /// Get the agent registry
+    pub fn agent_registry(&self) -> &AgentRegistry {
+        &self.agent_registry
+    }
+
     /// Perform unified registration for both workflows and tasks
     ///
     /// This sends a single registration request with all workflow and task capabilities,
@@ -906,8 +966,11 @@ impl FlovynClient {
         }
 
         // Skip if no capabilities to register
-        if !self.workflow_registry.has_registrations() && !self.task_registry.has_registrations() {
-            debug!("No workflows or tasks registered, skipping registration");
+        if !self.workflow_registry.has_registrations()
+            && !self.task_registry.has_registrations()
+            && !self.agent_registry.has_registrations()
+        {
+            debug!("No workflows, tasks, or agents registered, skipping registration");
             return Ok(None);
         }
 
@@ -924,12 +987,25 @@ impl FlovynClient {
         let tasks = self.task_registry.get_all_metadata();
         let task_kinds: Vec<String> = tasks.iter().map(|m| m.kind.clone()).collect();
 
+        // Collect all agent metadata
+        let agents = self.agent_registry.get_all_metadata();
+        let agent_kinds: Vec<String> = agents.iter().map(|m| m.kind.clone()).collect();
+
         info!(
             worker_name = %worker_name,
             workflow_count = workflows.len(),
             task_count = tasks.len(),
+            agent_count = agents.len(),
             "Registering worker with unified capabilities"
         );
+
+        // Log agent capabilities (registration with server is done via polling for now)
+        if !agent_kinds.is_empty() {
+            debug!(
+                agent_kinds = ?agent_kinds,
+                "Agent capabilities will be announced via polling"
+            );
+        }
 
         let mut lifecycle_client =
             WorkerLifecycleClient::new(self.channel.clone(), &self.worker_token);
@@ -1001,10 +1077,13 @@ pub struct WorkerHandle {
     shutdown_tx: watch::Sender<bool>,
     workflow_running: Option<Arc<AtomicBool>>,
     task_running: Option<Arc<AtomicBool>>,
+    agent_running: Option<Arc<AtomicBool>>,
     workflow_handle: Option<tokio::task::JoinHandle<()>>,
     task_handle: Option<tokio::task::JoinHandle<()>>,
+    agent_handle: Option<tokio::task::JoinHandle<()>>,
     workflow_ready: Option<Arc<Notify>>,
     task_ready: Option<Arc<Notify>>,
+    agent_ready: Option<Arc<Notify>>,
     /// Shared internal state for lifecycle tracking
     internals: Arc<WorkerInternals>,
 }
@@ -1022,6 +1101,9 @@ impl WorkerHandle {
         if let Some(ref notify) = self.task_ready {
             notify.notified().await;
         }
+        if let Some(ref notify) = self.agent_ready {
+            notify.notified().await;
+        }
     }
 
     /// Wait for workflow worker to be ready
@@ -1034,6 +1116,13 @@ impl WorkerHandle {
     /// Wait for task worker to be ready
     pub async fn await_task_ready(&self) {
         if let Some(ref notify) = self.task_ready {
+            notify.notified().await;
+        }
+    }
+
+    /// Wait for agent worker to be ready
+    pub async fn await_agent_ready(&self) {
+        if let Some(ref notify) = self.agent_ready {
             notify.notified().await;
         }
     }
@@ -1056,12 +1145,18 @@ impl WorkerHandle {
         if let Some(ref running) = self.task_running {
             running.store(false, Ordering::SeqCst);
         }
+        if let Some(ref running) = self.agent_running {
+            running.store(false, Ordering::SeqCst);
+        }
 
         // Wait for handles to complete
         if let Some(handle) = self.workflow_handle {
             let _ = handle.await;
         }
         if let Some(handle) = self.task_handle {
+            let _ = handle.await;
+        }
+        if let Some(handle) = self.agent_handle {
             let _ = handle.await;
         }
 
@@ -1095,12 +1190,18 @@ impl WorkerHandle {
         if let Some(ref running) = self.task_running {
             running.store(false, Ordering::SeqCst);
         }
+        if let Some(ref running) = self.agent_running {
+            running.store(false, Ordering::SeqCst);
+        }
 
-        // Abort task handles
+        // Abort worker handles
         if let Some(handle) = self.workflow_handle {
             handle.abort();
         }
         if let Some(handle) = self.task_handle {
+            handle.abort();
+        }
+        if let Some(handle) = self.agent_handle {
             handle.abort();
         }
     }
@@ -1228,6 +1329,16 @@ impl WorkerHandle {
     /// Get the total number of tasks executed.
     pub fn tasks_executed(&self) -> u64 {
         self.internals.metrics().tasks_executed
+    }
+
+    /// Get the number of agents currently in progress.
+    pub fn agents_in_progress(&self) -> usize {
+        self.internals.metrics().agents_in_progress
+    }
+
+    /// Get the total number of agents executed.
+    pub fn agents_executed(&self) -> u64 {
+        self.internals.metrics().agents_executed
     }
 
     // ============ Event Subscription ============

@@ -157,6 +157,167 @@ impl TaskResult {
     pub fn is_running(&self) -> bool {
         self.status == "PENDING" || self.status == "RUNNING"
     }
+
+    /// Check if task is in a terminal state (COMPLETED, FAILED, or CANCELLED)
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.status.as_str(),
+            "COMPLETED" | "FAILED" | "CANCELLED"
+        )
+    }
+}
+
+/// Wait mode for parallel task waiting
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitMode {
+    /// Resume when ALL tasks complete (join_all semantics)
+    All,
+    /// Resume when ANY task completes (select semantics)
+    Any,
+}
+
+/// Result of a batch task result query
+#[derive(Debug, Clone)]
+pub struct BatchTaskResult {
+    /// Task execution ID
+    pub task_execution_id: Uuid,
+    /// Task status
+    pub status: String,
+    /// Task output (if COMPLETED)
+    pub output: Option<Value>,
+    /// Error message (if FAILED)
+    pub error: Option<String>,
+}
+
+impl BatchTaskResult {
+    /// Check if the task is completed successfully
+    pub fn is_completed(&self) -> bool {
+        self.status == "COMPLETED"
+    }
+
+    /// Check if the task has failed
+    pub fn is_failed(&self) -> bool {
+        self.status == "FAILED"
+    }
+
+    /// Check if the task is cancelled
+    pub fn is_cancelled(&self) -> bool {
+        self.status == "CANCELLED"
+    }
+
+    /// Check if the task is still running (PENDING or RUNNING)
+    pub fn is_running(&self) -> bool {
+        self.status == "PENDING" || self.status == "RUNNING"
+    }
+
+    /// Check if task is in a terminal state
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.status.as_str(),
+            "COMPLETED" | "FAILED" | "CANCELLED"
+        )
+    }
+}
+
+/// Result of a task cancellation attempt
+#[derive(Debug, Clone)]
+pub struct CancelResult {
+    /// Whether cancellation was successful
+    pub cancelled: bool,
+    /// Final task status after cancellation attempt
+    pub status: String,
+}
+
+impl CancelResult {
+    /// Check if the task was successfully cancelled
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
+
+    /// Check if the task was already completed before cancel
+    pub fn was_already_completed(&self) -> bool {
+        !self.cancelled && self.status == "COMPLETED"
+    }
+
+    /// Check if the task was already failed before cancel
+    pub fn was_already_failed(&self) -> bool {
+        !self.cancelled && self.status == "FAILED"
+    }
+}
+
+/// Input for a task in a batch schedule operation
+#[derive(Debug, Clone)]
+pub struct BatchScheduleTaskInput {
+    /// Task kind
+    pub task_kind: String,
+    /// Task input (JSON)
+    pub input: Value,
+    /// Idempotency key (optional)
+    pub idempotency_key: Option<String>,
+    /// Override queue (optional)
+    pub queue: Option<String>,
+    /// Override max retries (optional)
+    pub max_retries: Option<i32>,
+    /// Override timeout in ms (optional)
+    pub timeout_ms: Option<i64>,
+}
+
+impl BatchScheduleTaskInput {
+    /// Create a new batch task input
+    pub fn new(task_kind: impl Into<String>, input: Value) -> Self {
+        Self {
+            task_kind: task_kind.into(),
+            input,
+            idempotency_key: None,
+            queue: None,
+            max_retries: None,
+            timeout_ms: None,
+        }
+    }
+
+    /// Set the idempotency key
+    pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+
+    /// Set the queue
+    pub fn with_queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = Some(queue.into());
+        self
+    }
+
+    /// Set max retries
+    pub fn with_max_retries(mut self, max_retries: i32) -> Self {
+        self.max_retries = Some(max_retries);
+        self
+    }
+
+    /// Set timeout
+    pub fn with_timeout_ms(mut self, timeout_ms: i64) -> Self {
+        self.timeout_ms = Some(timeout_ms);
+        self
+    }
+}
+
+/// Result entry for a task in a batch schedule operation
+#[derive(Debug, Clone)]
+pub struct BatchScheduleTaskResultEntry {
+    /// Task execution ID
+    pub task_execution_id: Uuid,
+    /// Whether idempotency key was used
+    pub idempotency_key_used: bool,
+    /// Whether a new task was created (false if existing returned)
+    pub idempotency_key_new: bool,
+    /// Error message if this task failed to schedule
+    pub error: Option<String>,
+}
+
+impl BatchScheduleTaskResultEntry {
+    /// Check if this task was scheduled successfully
+    pub fn is_success(&self) -> bool {
+        self.error.is_none()
+    }
 }
 
 impl AgentDispatch {
@@ -373,6 +534,77 @@ impl AgentDispatch {
         })
     }
 
+    /// Schedule multiple tasks in a single batch (more efficient than multiple schedule_task calls)
+    ///
+    /// This method uses client-side streaming to send all task specifications in a single RPC,
+    /// which is more efficient than calling schedule_task multiple times.
+    pub async fn schedule_tasks_batch(
+        &mut self,
+        agent_execution_id: Uuid,
+        tasks: &[BatchScheduleTaskInput],
+        default_queue: Option<&str>,
+        default_max_retries: Option<i32>,
+        default_timeout_ms: Option<i64>,
+    ) -> CoreResult<Vec<BatchScheduleTaskResultEntry>> {
+        if tasks.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Create header chunk
+        let header = flovyn_v1::ScheduleAgentTasksChunk {
+            chunk: Some(flovyn_v1::schedule_agent_tasks_chunk::Chunk::Header(
+                flovyn_v1::ScheduleAgentTasksBatchHeader {
+                    agent_execution_id: agent_execution_id.to_string(),
+                    default_queue: default_queue.map(|q| q.to_string()),
+                    default_max_retries,
+                    default_timeout_ms,
+                },
+            )),
+        };
+
+        // Create task entry chunks
+        let mut chunks = vec![header];
+
+        for task in tasks {
+            let input_bytes = serde_json::to_vec(&task.input)?;
+            chunks.push(flovyn_v1::ScheduleAgentTasksChunk {
+                chunk: Some(flovyn_v1::schedule_agent_tasks_chunk::Chunk::TaskEntry(
+                    flovyn_v1::ScheduleAgentTaskEntry {
+                        task_kind: task.task_kind.clone(),
+                        input: input_bytes,
+                        idempotency_key: task.idempotency_key.clone(),
+                        queue: task.queue.clone(),
+                        max_retries: task.max_retries,
+                        timeout_ms: task.timeout_ms,
+                        metadata: Default::default(),
+                    },
+                )),
+            });
+        }
+
+        let stream = tokio_stream::iter(chunks);
+        let response = self.inner.schedule_agent_tasks(stream).await?;
+        let resp = response.into_inner();
+
+        // Convert results
+        let mut results = Vec::with_capacity(resp.results.len());
+        for entry in resp.results {
+            let task_execution_id = entry
+                .task_execution_id
+                .parse()
+                .map_err(|_| CoreError::Other("Invalid task execution ID".into()))?;
+
+            results.push(BatchScheduleTaskResultEntry {
+                task_execution_id,
+                idempotency_key_used: entry.idempotency_key_used,
+                idempotency_key_new: entry.idempotency_key_new,
+                error: entry.error,
+            });
+        }
+
+        Ok(results)
+    }
+
     /// Complete the agent with output
     pub async fn complete_agent(
         &mut self,
@@ -463,6 +695,82 @@ impl AgentDispatch {
             status: resp.status,
             output: resp.output.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
             error: resp.error,
+        })
+    }
+
+    /// Suspend the agent waiting for multiple tasks to complete
+    pub async fn suspend_agent_for_tasks(
+        &mut self,
+        agent_execution_id: Uuid,
+        task_execution_ids: &[Uuid],
+        mode: WaitMode,
+        reason: Option<&str>,
+    ) -> CoreResult<()> {
+        use flovyn_v1::suspend_agent_request::WaitCondition;
+
+        let proto_mode = match mode {
+            WaitMode::All => flovyn_v1::WaitMode::All,
+            WaitMode::Any => flovyn_v1::WaitMode::Any,
+        };
+
+        let request = flovyn_v1::SuspendAgentRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+            wait_condition: Some(WaitCondition::WaitForTasks(flovyn_v1::WaitForTasks {
+                task_ids: task_execution_ids.iter().map(|id| id.to_string()).collect(),
+                mode: proto_mode.into(),
+            })),
+            reason: reason.map(|r| r.to_string()),
+        };
+
+        self.inner.suspend_agent(request).await?;
+        Ok(())
+    }
+
+    /// Get results for multiple tasks in a single call (batch query)
+    pub async fn get_task_results_batch(
+        &mut self,
+        agent_execution_id: Uuid,
+        task_execution_ids: &[Uuid],
+    ) -> CoreResult<Vec<BatchTaskResult>> {
+        let request = flovyn_v1::GetAgentTaskResultsRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+            task_execution_ids: task_execution_ids.iter().map(|id| id.to_string()).collect(),
+        };
+
+        let response = self.inner.get_agent_task_results(request).await?;
+        let resp = response.into_inner();
+
+        Ok(resp
+            .results
+            .into_iter()
+            .map(|entry| BatchTaskResult {
+                task_execution_id: entry.task_execution_id.parse().unwrap_or_default(),
+                status: entry.status,
+                output: entry.output.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+                error: entry.error,
+            })
+            .collect())
+    }
+
+    /// Cancel a task
+    pub async fn cancel_task(
+        &mut self,
+        agent_execution_id: Uuid,
+        task_execution_id: Uuid,
+        reason: Option<&str>,
+    ) -> CoreResult<CancelResult> {
+        let request = flovyn_v1::CancelAgentTaskRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+            task_execution_id: task_execution_id.to_string(),
+            reason: reason.map(|r| r.to_string()),
+        };
+
+        let response = self.inner.cancel_agent_task(request).await?;
+        let resp = response.into_inner();
+
+        Ok(CancelResult {
+            cancelled: resp.cancelled,
+            status: resp.status,
         })
     }
 

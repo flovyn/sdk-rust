@@ -344,6 +344,7 @@ impl WorkerInternals {
             match work_type {
                 WorkType::Workflow => metrics.record_workflow_started(),
                 WorkType::Task => metrics.record_task_started(),
+                WorkType::Agent => metrics.record_agent_started(),
             }
         }
 
@@ -366,6 +367,7 @@ impl WorkerInternals {
             match work_type {
                 WorkType::Workflow => metrics.record_workflow_completed(duration),
                 WorkType::Task => metrics.record_task_completed(duration),
+                WorkType::Agent => metrics.record_agent_completed(duration),
             }
         }
 
@@ -390,6 +392,7 @@ impl WorkerInternals {
             match work_type {
                 WorkType::Workflow => metrics.record_workflow_failed(duration),
                 WorkType::Task => metrics.record_task_failed(duration),
+                WorkType::Agent => metrics.record_agent_failed(duration),
             }
         }
 

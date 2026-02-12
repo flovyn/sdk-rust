@@ -58,6 +58,17 @@ pub enum FlovynError {
         reason: String,
     },
 
+    /// Internal: Agent suspension signal. **Do not match on this variant.**
+    ///
+    /// This is an internal control flow mechanism used by the SDK to signal
+    /// that an agent needs to suspend and wait for an external event
+    /// (task completion, signal).
+    ///
+    /// Catching this error will cause incorrect agent behavior.
+    #[doc(hidden)]
+    #[error("Agent suspended: {0}")]
+    AgentSuspended(String),
+
     /// Internal: Determinism violation during replay. **Do not match on this variant.**
     ///
     /// This error indicates that the workflow's behavior during replay differs
@@ -144,6 +155,10 @@ pub enum FlovynError {
     /// Invalid input
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    /// Invalid argument to an SDK function
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
 
     /// Network error
     #[error("Network error: {0}")]

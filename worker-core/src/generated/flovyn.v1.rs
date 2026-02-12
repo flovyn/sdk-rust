@@ -2341,6 +2341,95 @@ pub struct ScheduleAgentTaskResponse {
     #[prost(bool, tag = "3")]
     pub idempotency_key_new: bool,
 }
+/// First message in stream: batch header
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTasksBatchHeader {
+    /// Agent execution ID (parent)
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Default queue for all tasks (can be overridden per task)
+    #[prost(string, optional, tag = "2")]
+    pub default_queue: ::core::option::Option<::prost::alloc::string::String>,
+    /// Default max retries for all tasks
+    #[prost(int32, optional, tag = "3")]
+    pub default_max_retries: ::core::option::Option<i32>,
+    /// Default timeout in milliseconds
+    #[prost(int64, optional, tag = "4")]
+    pub default_timeout_ms: ::core::option::Option<i64>,
+}
+/// Task entry in batch (one per task)
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTaskEntry {
+    /// Task kind
+    #[prost(string, tag = "1")]
+    pub task_kind: ::prost::alloc::string::String,
+    /// Task input (serialized bytes)
+    #[prost(bytes = "vec", tag = "2")]
+    pub input: ::prost::alloc::vec::Vec<u8>,
+    /// Idempotency key for preventing duplicate tasks
+    #[prost(string, optional, tag = "3")]
+    pub idempotency_key: ::core::option::Option<::prost::alloc::string::String>,
+    /// Override default queue for this task
+    #[prost(string, optional, tag = "4")]
+    pub queue: ::core::option::Option<::prost::alloc::string::String>,
+    /// Override default max retries for this task
+    #[prost(int32, optional, tag = "5")]
+    pub max_retries: ::core::option::Option<i32>,
+    /// Override default timeout for this task
+    #[prost(int64, optional, tag = "6")]
+    pub timeout_ms: ::core::option::Option<i64>,
+    /// Arbitrary metadata for this task
+    #[prost(map = "string, string", tag = "7")]
+    pub metadata:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+}
+/// Client-side streaming message for batch scheduling
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTasksChunk {
+    #[prost(oneof = "schedule_agent_tasks_chunk::Chunk", tags = "1, 2")]
+    pub chunk: ::core::option::Option<schedule_agent_tasks_chunk::Chunk>,
+}
+/// Nested message and enum types in `ScheduleAgentTasksChunk`.
+pub mod schedule_agent_tasks_chunk {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Chunk {
+        /// First message: batch header
+        #[prost(message, tag = "1")]
+        Header(super::ScheduleAgentTasksBatchHeader),
+        /// Subsequent messages: one entry per task
+        #[prost(message, tag = "2")]
+        TaskEntry(super::ScheduleAgentTaskEntry),
+    }
+}
+/// Response for batch task scheduling
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTasksResponse {
+    /// Results for each task (same order as task entries in request)
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<ScheduleAgentTaskResultEntry>,
+}
+/// Result entry for each scheduled task
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ScheduleAgentTaskResultEntry {
+    /// Created task execution ID
+    #[prost(string, tag = "1")]
+    pub task_execution_id: ::prost::alloc::string::String,
+    /// Whether idempotency key was used
+    #[prost(bool, tag = "2")]
+    pub idempotency_key_used: bool,
+    /// Whether a new task was created (false if existing returned)
+    #[prost(bool, tag = "3")]
+    pub idempotency_key_new: bool,
+    /// Error message if this specific task failed to schedule
+    #[prost(string, optional, tag = "4")]
+    pub error: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompleteAgentRequest {
@@ -2377,7 +2466,7 @@ pub struct SuspendAgentRequest {
     #[prost(string, optional, tag = "3")]
     pub reason: ::core::option::Option<::prost::alloc::string::String>,
     /// Wait condition - exactly one must be set
-    #[prost(oneof = "suspend_agent_request::WaitCondition", tags = "2, 4")]
+    #[prost(oneof = "suspend_agent_request::WaitCondition", tags = "2, 4, 5")]
     pub wait_condition: ::core::option::Option<suspend_agent_request::WaitCondition>,
 }
 /// Nested message and enum types in `SuspendAgentRequest`.
@@ -2389,10 +2478,24 @@ pub mod suspend_agent_request {
         /// Wait for external signal (e.g., "userMessage")
         #[prost(string, tag = "2")]
         WaitForSignal(::prost::alloc::string::String),
-        /// Wait for task completion (task execution ID)
+        /// Wait for single task completion (task execution ID)
         #[prost(string, tag = "4")]
         WaitForTask(::prost::alloc::string::String),
+        /// Wait for multiple tasks (parallel task support)
+        #[prost(message, tag = "5")]
+        WaitForTasks(super::WaitForTasks),
     }
+}
+/// Wait condition for multiple tasks (parallel execution)
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WaitForTasks {
+    /// Task execution IDs to wait for
+    #[prost(string, repeated, tag = "1")]
+    pub task_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Wait mode
+    #[prost(enumeration = "WaitMode", tag = "2")]
+    pub mode: i32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2492,6 +2595,63 @@ pub struct GetAgentTaskResultResponse {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAgentTaskResultsRequest {
+    /// Agent execution ID (for authorization)
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Task execution IDs to query (batch)
+    #[prost(string, repeated, tag = "2")]
+    pub task_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAgentTaskResultsResponse {
+    /// Results for each task (same order as request)
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<TaskResultEntry>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TaskResultEntry {
+    /// Task execution ID
+    #[prost(string, tag = "1")]
+    pub task_execution_id: ::prost::alloc::string::String,
+    /// Task status: "PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"
+    #[prost(string, tag = "2")]
+    pub status: ::prost::alloc::string::String,
+    /// Output (if COMPLETED)
+    #[prost(bytes = "vec", optional, tag = "3")]
+    pub output: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    /// Error message (if FAILED)
+    #[prost(string, optional, tag = "4")]
+    pub error: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CancelAgentTaskRequest {
+    /// Agent execution ID (for authorization)
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Task execution ID to cancel
+    #[prost(string, tag = "2")]
+    pub task_execution_id: ::prost::alloc::string::String,
+    /// Optional reason for cancellation
+    #[prost(string, optional, tag = "3")]
+    pub reason: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CancelAgentTaskResponse {
+    /// Whether cancellation was successful
+    #[prost(bool, tag = "1")]
+    pub cancelled: bool,
+    /// Final task status after cancellation attempt
+    /// "CANCELLED" if successful, or current status if task already completed
+    #[prost(string, tag = "2")]
+    pub status: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamAgentDataRequest {
     /// Agent execution ID
     #[prost(string, tag = "1")]
@@ -2515,6 +2675,38 @@ pub struct StreamAgentDataResponse {
     /// Whether event was acknowledged
     #[prost(bool, tag = "1")]
     pub acknowledged: bool,
+}
+/// Mode for waiting on multiple tasks
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum WaitMode {
+    Unspecified = 0,
+    /// Resume when ALL tasks complete (join_all semantics)
+    All = 1,
+    /// Resume when ANY task completes (select semantics)
+    Any = 2,
+}
+impl WaitMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            WaitMode::Unspecified => "WAIT_MODE_UNSPECIFIED",
+            WaitMode::All => "WAIT_MODE_ALL",
+            WaitMode::Any => "WAIT_MODE_ANY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "WAIT_MODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "WAIT_MODE_ALL" => Some(Self::All),
+            "WAIT_MODE_ANY" => Some(Self::Any),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -2775,6 +2967,31 @@ pub mod agent_dispatch_client {
             ));
             self.inner.client_streaming(req, path, codec).await
         }
+        /// Batch task scheduling (CLIENT-SIDE STREAMING)
+        /// Schedules multiple tasks in a single RPC for efficiency
+        /// First chunk: batch header with agent_execution_id
+        /// Subsequent chunks: task entries (one per task)
+        pub async fn schedule_agent_tasks(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::ScheduleAgentTasksChunk>,
+        ) -> std::result::Result<tonic::Response<super::ScheduleAgentTasksResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/ScheduleAgentTasks");
+            let mut req = request.into_streaming_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "ScheduleAgentTasks",
+            ));
+            self.inner.client_streaming(req, path, codec).await
+        }
         /// Agent completion (unary)
         pub async fn complete_agent(
             &mut self,
@@ -2885,7 +3102,7 @@ pub mod agent_dispatch_client {
                 .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "HasSignal"));
             self.inner.unary(req, path, codec).await
         }
-        /// Query task execution result
+        /// Query task execution result (single task)
         pub async fn get_agent_task_result(
             &mut self,
             request: impl tonic::IntoRequest<super::GetAgentTaskResultRequest>,
@@ -2904,6 +3121,51 @@ pub mod agent_dispatch_client {
             req.extensions_mut().insert(GrpcMethod::new(
                 "flovyn.v1.AgentDispatch",
                 "GetAgentTaskResult",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Query task execution results (batch - for parallel tasks)
+        pub async fn get_agent_task_results(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetAgentTaskResultsRequest>,
+        ) -> std::result::Result<tonic::Response<super::GetAgentTaskResultsResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/flovyn.v1.AgentDispatch/GetAgentTaskResults",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "GetAgentTaskResults",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Cancel a task
+        pub async fn cancel_agent_task(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CancelAgentTaskRequest>,
+        ) -> std::result::Result<tonic::Response<super::CancelAgentTaskResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/CancelAgentTask");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "CancelAgentTask",
             ));
             self.inner.unary(req, path, codec).await
         }

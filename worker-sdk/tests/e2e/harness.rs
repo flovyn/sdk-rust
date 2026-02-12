@@ -357,6 +357,216 @@ impl TestHarness {
             .await
             .expect("Failed to parse workflow execution response")
     }
+
+    // ========================================================================
+    // Agent Execution API Methods
+    // ========================================================================
+
+    /// Create a new agent execution via REST API.
+    pub async fn create_agent_execution(
+        &self,
+        kind: &str,
+        input: serde_json::Value,
+        queue: &str,
+    ) -> AgentExecutionResponse {
+        let base_url = format!("http://localhost:{}", self.server_http_port);
+        let client = reqwest::Client::new();
+
+        let url = format!("{}/api/orgs/{}/agent-executions", base_url, self.org_slug);
+
+        let body = serde_json::json!({
+            "kind": kind,
+            "input": input,
+            "queue": queue,
+        });
+
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await
+            .expect("Failed to create agent execution");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            panic!("Failed to create agent execution: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .expect("Failed to parse agent execution response")
+    }
+
+    /// Get agent execution details from the server.
+    pub async fn get_agent_execution(&self, agent_execution_id: &str) -> AgentExecutionResponse {
+        let base_url = format!("http://localhost:{}", self.server_http_port);
+        let client = reqwest::Client::new();
+
+        let url = format!(
+            "{}/api/orgs/{}/agent-executions/{}",
+            base_url, self.org_slug, agent_execution_id
+        );
+
+        let response = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .expect("Failed to get agent execution");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            panic!("Failed to get agent execution: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .expect("Failed to parse agent execution response")
+    }
+
+    /// Signal an agent execution.
+    pub async fn signal_agent_execution(
+        &self,
+        agent_execution_id: &str,
+        signal_name: &str,
+        signal_value: serde_json::Value,
+    ) -> SignalAgentResponse {
+        let base_url = format!("http://localhost:{}", self.server_http_port);
+        let client = reqwest::Client::new();
+
+        let url = format!(
+            "{}/api/orgs/{}/agent-executions/{}/signal",
+            base_url, self.org_slug, agent_execution_id
+        );
+
+        let body = serde_json::json!({
+            "signalName": signal_name,
+            "signalValue": signal_value,
+        });
+
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await
+            .expect("Failed to signal agent execution");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            panic!("Failed to signal agent execution: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .expect("Failed to parse signal response")
+    }
+
+    /// Get agent checkpoints.
+    pub async fn list_agent_checkpoints(
+        &self,
+        agent_execution_id: &str,
+    ) -> Vec<AgentCheckpointResponse> {
+        let base_url = format!("http://localhost:{}", self.server_http_port);
+        let client = reqwest::Client::new();
+
+        let url = format!(
+            "{}/api/orgs/{}/agent-executions/{}/checkpoints",
+            base_url, self.org_slug, agent_execution_id
+        );
+
+        let response = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .expect("Failed to list agent checkpoints");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            panic!("Failed to list agent checkpoints: {} - {}", status, body);
+        }
+
+        #[derive(Deserialize)]
+        struct ListResponse {
+            checkpoints: Vec<AgentCheckpointResponse>,
+        }
+
+        let list: ListResponse = response
+            .json()
+            .await
+            .expect("Failed to parse checkpoints response");
+        list.checkpoints
+    }
+
+    /// List tasks associated with an agent execution.
+    pub async fn list_agent_tasks(&self, agent_execution_id: &str) -> Vec<TaskExecutionResponse> {
+        let base_url = format!("http://localhost:{}", self.server_http_port);
+        let client = reqwest::Client::new();
+
+        let url = format!(
+            "{}/api/orgs/{}/agent-executions/{}/tasks",
+            base_url, self.org_slug, agent_execution_id
+        );
+
+        let response = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .expect("Failed to list agent tasks");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            panic!("Failed to list agent tasks: {} - {}", status, body);
+        }
+
+        #[derive(Deserialize)]
+        struct ListResponse {
+            tasks: Vec<TaskExecutionResponse>,
+        }
+
+        let list: ListResponse = response
+            .json()
+            .await
+            .expect("Failed to parse tasks response");
+        list.tasks
+    }
+
+    /// Wait for agent execution to reach a specific status (with timeout).
+    pub async fn wait_for_agent_status(
+        &self,
+        agent_execution_id: &str,
+        expected_statuses: &[&str],
+        timeout: Duration,
+    ) -> AgentExecutionResponse {
+        let start = std::time::Instant::now();
+        loop {
+            let agent = self.get_agent_execution(agent_execution_id).await;
+            if expected_statuses
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(&agent.status))
+            {
+                return agent;
+            }
+            if start.elapsed() > timeout {
+                panic!(
+                    "Timeout waiting for agent {} to reach status {:?}, current: {}",
+                    agent_execution_id, expected_statuses, agent.status
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
 }
 
 /// Workflow event response from the server API.
@@ -382,6 +592,73 @@ pub struct WorkflowExecutionResponse {
     pub output: Option<serde_json::Value>,
     #[serde(default)]
     pub error: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+}
+
+// ============================================================================
+// Agent Execution API Types
+// ============================================================================
+
+/// Agent execution response from the server API.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentExecutionResponse {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub kind: String,
+    pub status: String,
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
+    #[serde(default)]
+    pub output: Option<serde_json::Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub queue: String,
+    pub current_checkpoint_seq: i32,
+    pub created_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+}
+
+/// Agent checkpoint response from the server API.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCheckpointResponse {
+    pub id: Uuid,
+    pub agent_execution_id: Uuid,
+    pub sequence: i32,
+    #[serde(default)]
+    pub state: Option<serde_json::Value>,
+    pub created_at: String,
+}
+
+/// Signal response from the server API.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalAgentResponse {
+    pub signaled: bool,
+    pub agent_resumed: bool,
+}
+
+/// Task execution response from the server API.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskExecutionResponse {
+    pub id: Uuid,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    pub kind: String,
+    pub status: String,
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
+    #[serde(default)]
+    pub output: Option<serde_json::Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub queue: Option<String>,
     pub created_at: String,
     #[serde(default)]
     pub completed_at: Option<String>,

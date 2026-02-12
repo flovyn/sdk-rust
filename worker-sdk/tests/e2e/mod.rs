@@ -17,6 +17,7 @@
 //! - Flovyn server Docker image must be available (`rg.fr-par.scw.cloud/flovyn/flovyn-server:latest`)
 //! - Dev infrastructure running (PostgreSQL on 5435, NATS on 4222)
 
+mod agent_tests;
 mod child_workflow_tests;
 mod comprehensive_tests;
 mod concurrency_tests;

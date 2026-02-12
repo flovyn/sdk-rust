@@ -36,6 +36,12 @@ service AgentDispatch {
   // Subsequent chunks: serialized input data (~64KB each)
   rpc ScheduleAgentTask(stream ScheduleAgentTaskChunk) returns (ScheduleAgentTaskResponse);
 
+  // Batch task scheduling (CLIENT-SIDE STREAMING)
+  // Schedules multiple tasks in a single RPC for efficiency
+  // First chunk: batch header with agent_execution_id
+  // Subsequent chunks: task entries (one per task)
+  rpc ScheduleAgentTasks(stream ScheduleAgentTasksChunk) returns (ScheduleAgentTasksResponse);
+
   // Agent completion (unary)
   rpc CompleteAgent(CompleteAgentRequest) returns (google.protobuf.Empty);
   rpc FailAgent(FailAgentRequest) returns (google.protobuf.Empty);
@@ -48,8 +54,14 @@ service AgentDispatch {
   rpc ConsumeSignals(ConsumeSignalsRequest) returns (ConsumeSignalsResponse);
   rpc HasSignal(HasSignalRequest) returns (HasSignalResponse);
 
-  // Query task execution result
+  // Query task execution result (single task)
   rpc GetAgentTaskResult(GetAgentTaskResultRequest) returns (GetAgentTaskResultResponse);
+
+  // Query task execution results (batch - for parallel tasks)
+  rpc GetAgentTaskResults(GetAgentTaskResultsRequest) returns (GetAgentTaskResultsResponse);
+
+  // Cancel a task
+  rpc CancelAgentTask(CancelAgentTaskRequest) returns (CancelAgentTaskResponse);
 
   // Real-time data streaming (CLIENT-SIDE STREAMING)
   // Used for streaming tokens, tool outputs, events to SSE subscribers
@@ -310,6 +322,81 @@ message ScheduleAgentTaskResponse {
 }
 
 // ============================================================================
+// Batch Task Scheduling Messages (Client-Side Streaming)
+// ============================================================================
+
+// First message in stream: batch header
+message ScheduleAgentTasksBatchHeader {
+  // Agent execution ID (parent)
+  string agent_execution_id = 1;
+
+  // Default queue for all tasks (can be overridden per task)
+  optional string default_queue = 2;
+
+  // Default max retries for all tasks
+  optional int32 default_max_retries = 3;
+
+  // Default timeout in milliseconds
+  optional int64 default_timeout_ms = 4;
+}
+
+// Task entry in batch (one per task)
+message ScheduleAgentTaskEntry {
+  // Task kind
+  string task_kind = 1;
+
+  // Task input (serialized bytes)
+  bytes input = 2;
+
+  // Idempotency key for preventing duplicate tasks
+  optional string idempotency_key = 3;
+
+  // Override default queue for this task
+  optional string queue = 4;
+
+  // Override default max retries for this task
+  optional int32 max_retries = 5;
+
+  // Override default timeout for this task
+  optional int64 timeout_ms = 6;
+
+  // Arbitrary metadata for this task
+  map<string, string> metadata = 7;
+}
+
+// Client-side streaming message for batch scheduling
+message ScheduleAgentTasksChunk {
+  oneof chunk {
+    // First message: batch header
+    ScheduleAgentTasksBatchHeader header = 1;
+
+    // Subsequent messages: one entry per task
+    ScheduleAgentTaskEntry task_entry = 2;
+  }
+}
+
+// Response for batch task scheduling
+message ScheduleAgentTasksResponse {
+  // Results for each task (same order as task entries in request)
+  repeated ScheduleAgentTaskResultEntry results = 1;
+}
+
+// Result entry for each scheduled task
+message ScheduleAgentTaskResultEntry {
+  // Created task execution ID
+  string task_execution_id = 1;
+
+  // Whether idempotency key was used
+  bool idempotency_key_used = 2;
+
+  // Whether a new task was created (false if existing returned)
+  bool idempotency_key_new = 3;
+
+  // Error message if this specific task failed to schedule
+  optional string error = 4;
+}
+
+// ============================================================================
 // Completion Messages
 // ============================================================================
 
@@ -344,12 +431,35 @@ message SuspendAgentRequest {
     // Wait for external signal (e.g., "userMessage")
     string wait_for_signal = 2;
 
-    // Wait for task completion (task execution ID)
+    // Wait for single task completion (task execution ID)
     string wait_for_task = 4;
+
+    // Wait for multiple tasks (parallel task support)
+    WaitForTasks wait_for_tasks = 5;
   }
 
   // Optional reason for suspension
   optional string reason = 3;
+}
+
+// Wait condition for multiple tasks (parallel execution)
+message WaitForTasks {
+  // Task execution IDs to wait for
+  repeated string task_ids = 1;
+
+  // Wait mode
+  WaitMode mode = 2;
+}
+
+// Mode for waiting on multiple tasks
+enum WaitMode {
+  WAIT_MODE_UNSPECIFIED = 0;
+
+  // Resume when ALL tasks complete (join_all semantics)
+  WAIT_MODE_ALL = 1;
+
+  // Resume when ANY task completes (select semantics)
+  WAIT_MODE_ANY = 2;
 }
 
 // ============================================================================
@@ -436,6 +546,61 @@ message GetAgentTaskResultResponse {
 
   // Error message (if FAILED)
   optional string error = 3;
+}
+
+// ============================================================================
+// Batch Task Result Query Messages (for parallel tasks)
+// ============================================================================
+
+message GetAgentTaskResultsRequest {
+  // Agent execution ID (for authorization)
+  string agent_execution_id = 1;
+
+  // Task execution IDs to query (batch)
+  repeated string task_execution_ids = 2;
+}
+
+message GetAgentTaskResultsResponse {
+  // Results for each task (same order as request)
+  repeated TaskResultEntry results = 1;
+}
+
+message TaskResultEntry {
+  // Task execution ID
+  string task_execution_id = 1;
+
+  // Task status: "PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"
+  string status = 2;
+
+  // Output (if COMPLETED)
+  optional bytes output = 3;
+
+  // Error message (if FAILED)
+  optional string error = 4;
+}
+
+// ============================================================================
+// Task Cancellation Messages
+// ============================================================================
+
+message CancelAgentTaskRequest {
+  // Agent execution ID (for authorization)
+  string agent_execution_id = 1;
+
+  // Task execution ID to cancel
+  string task_execution_id = 2;
+
+  // Optional reason for cancellation
+  optional string reason = 3;
+}
+
+message CancelAgentTaskResponse {
+  // Whether cancellation was successful
+  bool cancelled = 1;
+
+  // Final task status after cancellation attempt
+  // "CANCELLED" if successful, or current status if task already completed
+  string status = 2;
 }
 
 // ============================================================================

@@ -62,6 +62,7 @@
 
 #![allow(clippy::result_large_err)]
 
+pub mod agent;
 pub mod client;
 pub mod common;
 pub mod config;
@@ -105,6 +106,15 @@ pub use workflow::definition::WorkflowDefinition;
 pub use workflow::event::{EventType, ReplayEvent};
 pub use workflow::recorder::{CommandCollector, CommandRecorder, ValidatingCommandRecorder};
 
+// Re-export agent types
+pub use agent::context::{
+    AgentContext, AgentContextExt, AgentSignalValue, EntryRole, EntryType, LoadedMessage,
+    ScheduleAgentTaskOptions, TokenUsage,
+};
+pub use agent::context_impl::AgentContextImpl;
+pub use agent::definition::{AgentDefinition, DynamicAgent};
+pub use agent::registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
+
 // Re-export task types
 pub use task::context::{LogLevel, TaskContext};
 pub use task::context_impl::TaskContextImpl;
@@ -116,6 +126,7 @@ pub use task::registry::{RegisteredTask, TaskMetadata, TaskRegistry};
 pub use task::streaming::{StreamError, StreamEvent, StreamEventType, TaskStreamEvent};
 
 // Re-export worker types
+pub use worker::agent_worker::{AgentExecutorWorker, AgentWorkerConfig};
 pub use worker::determinism::{DeterminismValidationResult, DeterminismValidator};
 pub use worker::executor::{
     WorkflowExecutor, WorkflowExecutorConfig, WorkflowStatus, WorkflowTaskResult,
@@ -136,6 +147,14 @@ pub use telemetry::{RecordingSpan, SpanCollector};
 pub mod prelude {
     #[cfg(feature = "oauth2")]
     pub use crate::client::OAuth2Credentials;
+    // Agent types
+    pub use crate::agent::context::{
+        AgentContext, AgentContextExt, AgentSignalValue, EntryRole, EntryType, LoadedMessage,
+        ScheduleAgentTaskOptions, TokenUsage,
+    };
+    pub use crate::agent::context_impl::AgentContextImpl;
+    pub use crate::agent::definition::{AgentDefinition, DynamicAgent};
+    pub use crate::agent::registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
     pub use crate::client::{
         FlovynClient, FlovynClientBuilder, StartWorkflowOptions, StartWorkflowResult, WorkerHandle,
     };
@@ -155,6 +174,7 @@ pub mod prelude {
     pub use crate::task::registry::{RegisteredTask, TaskMetadata, TaskRegistry};
     pub use crate::task::streaming::{StreamError, StreamEvent, StreamEventType, TaskStreamEvent};
     pub use crate::telemetry::{RecordingSpan, SpanCollector};
+    pub use crate::worker::agent_worker::{AgentExecutorWorker, AgentWorkerConfig};
     pub use crate::worker::determinism::{DeterminismValidationResult, DeterminismValidator};
     pub use crate::worker::executor::{
         WorkflowExecutor, WorkflowExecutorConfig, WorkflowStatus, WorkflowTaskResult,
