@@ -47,8 +47,11 @@ pub mod combinators;
 pub mod context;
 pub mod context_impl;
 pub mod definition;
+pub mod executor;
 pub mod registry;
+pub mod signals;
 pub mod storage;
+pub mod tracer;
 
 // Re-export commonly used types
 pub use combinators::{
@@ -59,9 +62,12 @@ pub use combinators::{
 pub use context::{AgentContext, AgentContextExt, EntryRole, EntryType, ScheduleAgentTaskOptions};
 pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};
+pub use executor::{ExecutorResult, RemoteTaskExecutor, TaskExecutor};
 pub use registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
+pub use signals::{ChannelSignalSource, RemoteSignalSource, SignalResult, SignalSource};
 pub use storage::{
-    AgentCommand, AgentStorage, CheckpointData, CommandBatch, PendingTask, RemoteStorage,
-    SegmentState, StorageResult, TaskOptions, TaskResult, TaskStatus,
-    TokenUsage as StorageTokenUsage,
+    AgentCommand, AgentStorage, CheckpointData, CommandBatch, PendingTask,
+    RemoteStorage as RemoteAgentStorage, SegmentState, StorageResult, TaskOptions, TaskResult,
+    TaskStatus, TokenUsage as StorageTokenUsage,
 };
+pub use tracer::{AgentTracer, CompositeTracer, NoopTracer, StdoutTracer};

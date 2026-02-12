@@ -114,6 +114,7 @@ pub use agent::context::{
 pub use agent::context_impl::AgentContextImpl;
 pub use agent::definition::{AgentDefinition, DynamicAgent};
 pub use agent::registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
+pub use agent::tracer::{AgentTracer, CompositeTracer, NoopTracer, StdoutTracer};
 
 // Re-export task types
 pub use task::context::{LogLevel, TaskContext};
@@ -155,6 +156,7 @@ pub mod prelude {
     pub use crate::agent::context_impl::AgentContextImpl;
     pub use crate::agent::definition::{AgentDefinition, DynamicAgent};
     pub use crate::agent::registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
+    pub use crate::agent::tracer::{AgentTracer, CompositeTracer, NoopTracer, StdoutTracer};
     pub use crate::client::{
         FlovynClient, FlovynClientBuilder, StartWorkflowOptions, StartWorkflowResult, WorkerHandle,
     };
