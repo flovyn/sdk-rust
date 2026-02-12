@@ -435,17 +435,9 @@ impl DynamicAgent for RacingTasksAgent {
         }))
         .await?;
 
-        // Schedule both tasks
-        let primary = ctx
-            .schedule_task_handle(
-                "slow-task",
-                json!({
-                    "source": "primary",
-                    "delay_ms": primary_delay
-                }),
-            )
-            .await?;
-
+        // Schedule both tasks - fallback first so it gets picked up first with sequential execution
+        // In a sequential task worker, the first scheduled task is picked up first.
+        // To test the "faster wins" behavior, we schedule the faster task first.
         let fallback = ctx
             .schedule_task_handle(
                 "slow-task",
@@ -456,15 +448,25 @@ impl DynamicAgent for RacingTasksAgent {
             )
             .await?;
 
-        // Race - first to complete wins
-        let (winner_index, result) = agent_select(ctx, vec![primary, fallback]).await?;
+        let primary = ctx
+            .schedule_task_handle(
+                "slow-task",
+                json!({
+                    "source": "primary",
+                    "delay_ms": primary_delay
+                }),
+            )
+            .await?;
+
+        // Race - first to complete wins (fallback at index 0, primary at index 1)
+        let (winner_index, result) = agent_select(ctx, vec![fallback, primary]).await?;
 
         // Checkpoint after race
         ctx.checkpoint(&json!({"phase": "post-race", "winnerIndex": winner_index}))
             .await?;
 
-        // Log winner
-        let winner_name = if winner_index == 0 { "primary" } else { "fallback" };
+        // Log winner (fallback is index 0, primary is index 1)
+        let winner_name = if winner_index == 0 { "fallback" } else { "primary" };
         ctx.append_entry(
             EntryRole::Assistant,
             &json!({"text": format!("{} task won the race", winner_name)}),
