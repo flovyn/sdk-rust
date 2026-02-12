@@ -48,14 +48,19 @@ pub mod context;
 pub mod context_impl;
 pub mod definition;
 pub mod registry;
+pub mod storage;
 
 // Re-export commonly used types
 pub use combinators::{
-    agent_join_all, agent_join_all_outcomes, agent_join_all_with_timeout, agent_select,
-    agent_select_with_cancel, AgentTaskHandle, CancelAttempt, JoinAllTimeoutResult,
-    SelectWithCancelResult, TaskOutcome,
+    agent_join_all, agent_join_all_outcomes, agent_join_all_settled, agent_select, agent_select_ok,
+    agent_select_with_cancel, AgentTaskHandle, CancelAttempt, SelectWithCancelResult,
+    SettledResult, TaskOutcome,
 };
 pub use context::{AgentContext, AgentContextExt, EntryRole, EntryType, ScheduleAgentTaskOptions};
 pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};
 pub use registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
+pub use storage::{
+    AgentCommand, AgentStorage, CheckpointData, CommandBatch, PendingTask, SegmentState,
+    StorageResult, TaskOptions, TaskResult, TaskStatus, TokenUsage as StorageTokenUsage,
+};
