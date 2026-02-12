@@ -2210,13 +2210,20 @@ pub struct AppendEntryRequest {
     /// Token usage (for llm_call entries)
     #[prost(message, optional, tag = "7")]
     pub token_usage: ::core::option::Option<TokenUsage>,
+    /// Idempotency key for duplicate prevention on agent resume
+    /// Format: {agent_execution_id}:entry:{counter}
+    #[prost(string, optional, tag = "8")]
+    pub idempotency_key: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AppendEntryResponse {
-    /// Created entry ID
+    /// Entry ID (either newly created or existing if idempotency key matched)
     #[prost(string, tag = "1")]
     pub entry_id: ::prost::alloc::string::String,
+    /// True if an existing entry was returned (idempotency key matched)
+    #[prost(bool, tag = "2")]
+    pub already_existed: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2341,95 +2348,6 @@ pub struct ScheduleAgentTaskResponse {
     #[prost(bool, tag = "3")]
     pub idempotency_key_new: bool,
 }
-/// First message in stream: batch header
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScheduleAgentTasksBatchHeader {
-    /// Agent execution ID (parent)
-    #[prost(string, tag = "1")]
-    pub agent_execution_id: ::prost::alloc::string::String,
-    /// Default queue for all tasks (can be overridden per task)
-    #[prost(string, optional, tag = "2")]
-    pub default_queue: ::core::option::Option<::prost::alloc::string::String>,
-    /// Default max retries for all tasks
-    #[prost(int32, optional, tag = "3")]
-    pub default_max_retries: ::core::option::Option<i32>,
-    /// Default timeout in milliseconds
-    #[prost(int64, optional, tag = "4")]
-    pub default_timeout_ms: ::core::option::Option<i64>,
-}
-/// Task entry in batch (one per task)
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScheduleAgentTaskEntry {
-    /// Task kind
-    #[prost(string, tag = "1")]
-    pub task_kind: ::prost::alloc::string::String,
-    /// Task input (serialized bytes)
-    #[prost(bytes = "vec", tag = "2")]
-    pub input: ::prost::alloc::vec::Vec<u8>,
-    /// Idempotency key for preventing duplicate tasks
-    #[prost(string, optional, tag = "3")]
-    pub idempotency_key: ::core::option::Option<::prost::alloc::string::String>,
-    /// Override default queue for this task
-    #[prost(string, optional, tag = "4")]
-    pub queue: ::core::option::Option<::prost::alloc::string::String>,
-    /// Override default max retries for this task
-    #[prost(int32, optional, tag = "5")]
-    pub max_retries: ::core::option::Option<i32>,
-    /// Override default timeout for this task
-    #[prost(int64, optional, tag = "6")]
-    pub timeout_ms: ::core::option::Option<i64>,
-    /// Arbitrary metadata for this task
-    #[prost(map = "string, string", tag = "7")]
-    pub metadata:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
-}
-/// Client-side streaming message for batch scheduling
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScheduleAgentTasksChunk {
-    #[prost(oneof = "schedule_agent_tasks_chunk::Chunk", tags = "1, 2")]
-    pub chunk: ::core::option::Option<schedule_agent_tasks_chunk::Chunk>,
-}
-/// Nested message and enum types in `ScheduleAgentTasksChunk`.
-pub mod schedule_agent_tasks_chunk {
-    #[allow(clippy::derive_partial_eq_without_eq)]
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum Chunk {
-        /// First message: batch header
-        #[prost(message, tag = "1")]
-        Header(super::ScheduleAgentTasksBatchHeader),
-        /// Subsequent messages: one entry per task
-        #[prost(message, tag = "2")]
-        TaskEntry(super::ScheduleAgentTaskEntry),
-    }
-}
-/// Response for batch task scheduling
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScheduleAgentTasksResponse {
-    /// Results for each task (same order as task entries in request)
-    #[prost(message, repeated, tag = "1")]
-    pub results: ::prost::alloc::vec::Vec<ScheduleAgentTaskResultEntry>,
-}
-/// Result entry for each scheduled task
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScheduleAgentTaskResultEntry {
-    /// Created task execution ID
-    #[prost(string, tag = "1")]
-    pub task_execution_id: ::prost::alloc::string::String,
-    /// Whether idempotency key was used
-    #[prost(bool, tag = "2")]
-    pub idempotency_key_used: bool,
-    /// Whether a new task was created (false if existing returned)
-    #[prost(bool, tag = "3")]
-    pub idempotency_key_new: bool,
-    /// Error message if this specific task failed to schedule
-    #[prost(string, optional, tag = "4")]
-    pub error: ::core::option::Option<::prost::alloc::string::String>,
-}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompleteAgentRequest {
@@ -2496,6 +2414,29 @@ pub struct WaitForTasks {
     /// Wait mode
     #[prost(enumeration = "WaitMode", tag = "2")]
     pub mode: i32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResumeAgentRequest {
+    /// Agent execution ID to resume
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    /// Worker ID claiming the agent
+    #[prost(string, tag = "2")]
+    pub worker_id: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResumeAgentResponse {
+    /// Whether the resume was successful (false if agent wasn't WAITING or already claimed)
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    /// Agent execution info (populated if success=true)
+    #[prost(message, optional, tag = "2")]
+    pub agent: ::core::option::Option<AgentExecutionInfo>,
+    /// Traceparent for distributed tracing (populated if success=true)
+    #[prost(string, tag = "3")]
+    pub traceparent: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2625,6 +2566,20 @@ pub struct TaskResultEntry {
     /// Error message (if FAILED)
     #[prost(string, optional, tag = "4")]
     pub error: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAgentTaskCountRequest {
+    /// Agent execution ID
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAgentTaskCountResponse {
+    /// Number of tasks scheduled by this agent
+    #[prost(int32, tag = "1")]
+    pub task_count: i32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2967,31 +2922,6 @@ pub mod agent_dispatch_client {
             ));
             self.inner.client_streaming(req, path, codec).await
         }
-        /// Batch task scheduling (CLIENT-SIDE STREAMING)
-        /// Schedules multiple tasks in a single RPC for efficiency
-        /// First chunk: batch header with agent_execution_id
-        /// Subsequent chunks: task entries (one per task)
-        pub async fn schedule_agent_tasks(
-            &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::ScheduleAgentTasksChunk>,
-        ) -> std::result::Result<tonic::Response<super::ScheduleAgentTasksResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/ScheduleAgentTasks");
-            let mut req = request.into_streaming_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "flovyn.v1.AgentDispatch",
-                "ScheduleAgentTasks",
-            ));
-            self.inner.client_streaming(req, path, codec).await
-        }
         /// Agent completion (unary)
         pub async fn complete_agent(
             &mut self,
@@ -3045,6 +2975,26 @@ pub mod agent_dispatch_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "SuspendAgent"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Resume a WAITING agent and claim it for this worker (atomic)
+        /// Used by workers to directly claim a suspended agent without going through PENDING
+        pub async fn resume_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ResumeAgentRequest>,
+        ) -> std::result::Result<tonic::Response<super::ResumeAgentResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/ResumeAgent");
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("flovyn.v1.AgentDispatch", "ResumeAgent"));
             self.inner.unary(req, path, codec).await
         }
         /// Signal management (unary)
@@ -3144,6 +3094,28 @@ pub mod agent_dispatch_client {
             req.extensions_mut().insert(GrpcMethod::new(
                 "flovyn.v1.AgentDispatch",
                 "GetAgentTaskResults",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get count of tasks scheduled by this agent (for counter restoration on resume)
+        pub async fn get_agent_task_count(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetAgentTaskCountRequest>,
+        ) -> std::result::Result<tonic::Response<super::GetAgentTaskCountResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/GetAgentTaskCount");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "GetAgentTaskCount",
             ));
             self.inner.unary(req, path, codec).await
         }

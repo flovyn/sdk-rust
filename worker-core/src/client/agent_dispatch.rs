@@ -117,6 +117,15 @@ pub struct ScheduleTaskResult {
     pub idempotency_key_new: bool,
 }
 
+/// Result of appending an entry
+#[derive(Debug, Clone)]
+pub struct AppendEntryResult {
+    /// Entry ID (either newly created or existing if idempotency key matched)
+    pub entry_id: Uuid,
+    /// True if an existing entry was returned (idempotency key matched)
+    pub already_existed: bool,
+}
+
 /// Result of signaling an agent
 #[derive(Debug, Clone)]
 pub struct SignalResult {
@@ -395,6 +404,10 @@ impl AgentDispatch {
     }
 
     /// Append a conversation entry
+    ///
+    /// If `idempotency_key` is provided, the server will return an existing entry
+    /// if one already exists with the same key, preventing duplicate entries on
+    /// agent resume.
     pub async fn append_entry(
         &mut self,
         agent_execution_id: Uuid,
@@ -404,7 +417,8 @@ impl AgentDispatch {
         content: &Value,
         turn_id: Option<Uuid>,
         token_usage: Option<TokenUsage>,
-    ) -> CoreResult<Uuid> {
+        idempotency_key: Option<&str>,
+    ) -> CoreResult<AppendEntryResult> {
         let request = flovyn_v1::AppendEntryRequest {
             agent_execution_id: agent_execution_id.to_string(),
             parent_id: parent_id.map(|id| id.to_string()),
@@ -418,13 +432,20 @@ impl AgentDispatch {
                 cache_read_tokens: tu.cache_read_tokens,
                 cache_write_tokens: tu.cache_write_tokens,
             }),
+            idempotency_key: idempotency_key.map(|k| k.to_string()),
         };
 
         let response = self.inner.append_entry(request).await?;
         let resp = response.into_inner();
-        resp.entry_id
+        let entry_id = resp
+            .entry_id
             .parse()
-            .map_err(|_| CoreError::Other("Invalid entry ID".into()))
+            .map_err(|_| CoreError::Other("Invalid entry ID".into()))?;
+
+        Ok(AppendEntryResult {
+            entry_id,
+            already_existed: resp.already_existed,
+        })
     }
 
     /// Get the latest checkpoint
@@ -534,10 +555,10 @@ impl AgentDispatch {
         })
     }
 
-    /// Schedule multiple tasks in a single batch (more efficient than multiple schedule_task calls)
+    /// Schedule multiple tasks (fallback implementation using multiple single-task calls)
     ///
-    /// This method uses client-side streaming to send all task specifications in a single RPC,
-    /// which is more efficient than calling schedule_task multiple times.
+    /// Note: This implementation calls schedule_task for each task sequentially.
+    /// A more efficient batch RPC could be added in the future.
     pub async fn schedule_tasks_batch(
         &mut self,
         agent_execution_id: Uuid,
@@ -550,56 +571,47 @@ impl AgentDispatch {
             return Ok(vec![]);
         }
 
-        // Create header chunk
-        let header = flovyn_v1::ScheduleAgentTasksChunk {
-            chunk: Some(flovyn_v1::schedule_agent_tasks_chunk::Chunk::Header(
-                flovyn_v1::ScheduleAgentTasksBatchHeader {
-                    agent_execution_id: agent_execution_id.to_string(),
-                    default_queue: default_queue.map(|q| q.to_string()),
-                    default_max_retries,
-                    default_timeout_ms,
-                },
-            )),
-        };
-
-        // Create task entry chunks
-        let mut chunks = vec![header];
+        let mut results = Vec::with_capacity(tasks.len());
 
         for task in tasks {
-            let input_bytes = serde_json::to_vec(&task.input)?;
-            chunks.push(flovyn_v1::ScheduleAgentTasksChunk {
-                chunk: Some(flovyn_v1::schedule_agent_tasks_chunk::Chunk::TaskEntry(
-                    flovyn_v1::ScheduleAgentTaskEntry {
-                        task_kind: task.task_kind.clone(),
-                        input: input_bytes,
-                        idempotency_key: task.idempotency_key.clone(),
-                        queue: task.queue.clone(),
-                        max_retries: task.max_retries,
-                        timeout_ms: task.timeout_ms,
-                        metadata: Default::default(),
-                    },
-                )),
-            });
-        }
+            let queue = task
+                .queue
+                .as_deref()
+                .or(default_queue)
+                .map(|s| s.to_string());
+            let max_retries = task.max_retries.or(default_max_retries);
+            let timeout_ms = task.timeout_ms.or(default_timeout_ms);
 
-        let stream = tokio_stream::iter(chunks);
-        let response = self.inner.schedule_agent_tasks(stream).await?;
-        let resp = response.into_inner();
+            let result = self
+                .schedule_task(
+                    agent_execution_id,
+                    &task.task_kind,
+                    &task.input,
+                    queue.as_deref(),
+                    max_retries,
+                    timeout_ms,
+                    task.idempotency_key.as_deref(),
+                )
+                .await;
 
-        // Convert results
-        let mut results = Vec::with_capacity(resp.results.len());
-        for entry in resp.results {
-            let task_execution_id = entry
-                .task_execution_id
-                .parse()
-                .map_err(|_| CoreError::Other("Invalid task execution ID".into()))?;
-
-            results.push(BatchScheduleTaskResultEntry {
-                task_execution_id,
-                idempotency_key_used: entry.idempotency_key_used,
-                idempotency_key_new: entry.idempotency_key_new,
-                error: entry.error,
-            });
+            match result {
+                Ok(r) => {
+                    results.push(BatchScheduleTaskResultEntry {
+                        task_execution_id: r.task_execution_id,
+                        idempotency_key_used: r.idempotency_key_used,
+                        idempotency_key_new: r.idempotency_key_new,
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    results.push(BatchScheduleTaskResultEntry {
+                        task_execution_id: Uuid::nil(),
+                        idempotency_key_used: false,
+                        idempotency_key_new: false,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
         }
 
         Ok(results)
@@ -772,6 +784,19 @@ impl AgentDispatch {
             cancelled: resp.cancelled,
             status: resp.status,
         })
+    }
+
+    /// Get the count of tasks scheduled by this agent.
+    /// Used to restore the task counter on agent resume.
+    pub async fn get_agent_task_count(&mut self, agent_execution_id: Uuid) -> CoreResult<i32> {
+        let request = flovyn_v1::GetAgentTaskCountRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+        };
+
+        let response = self.inner.get_agent_task_count(request).await?;
+        let resp = response.into_inner();
+
+        Ok(resp.task_count)
     }
 
     /// Signal the agent

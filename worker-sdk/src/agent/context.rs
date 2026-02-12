@@ -214,6 +214,25 @@ pub trait AgentContext: Send + Sync {
     /// The ID of the created entry
     async fn append_tool_result(&self, tool_name: &str, tool_output: &Value) -> Result<Uuid>;
 
+    /// Append a tool result entry with tool call ID for matching with tool calls.
+    ///
+    /// This variant includes the tool_call_id which allows the UI to correctly
+    /// match tool results with their corresponding tool calls.
+    ///
+    /// # Arguments
+    /// * `tool_call_id` - ID of the tool call this result corresponds to
+    /// * `tool_name` - Name of the tool that was called
+    /// * `tool_output` - Output from the tool execution
+    ///
+    /// # Returns
+    /// The ID of the created entry
+    async fn append_tool_result_with_id(
+        &self,
+        tool_call_id: &str,
+        tool_name: &str,
+        tool_output: &Value,
+    ) -> Result<Uuid>;
+
     /// Load all conversation messages for this agent.
     ///
     /// Messages are reconstructed from the entry tree, walking from root

@@ -15,9 +15,9 @@ pub mod oauth2;
 
 pub use agent_dispatch::{
     AgentCheckpoint, AgentDispatch, AgentEntry, AgentExecutionInfo, AgentSignal,
-    BatchScheduleTaskInput, BatchScheduleTaskResultEntry, BatchTaskResult, CancelResult,
-    ScheduleTaskResult as AgentScheduleTaskResult, SignalResult, TaskResult as AgentTaskResult,
-    TokenUsage as AgentTokenUsage, WaitMode,
+    AppendEntryResult, BatchScheduleTaskInput, BatchScheduleTaskResultEntry, BatchTaskResult,
+    CancelResult, ScheduleTaskResult as AgentScheduleTaskResult, SignalResult,
+    TaskResult as AgentTaskResult, TokenUsage as AgentTokenUsage, WaitMode,
 };
 pub use auth::AuthInterceptor;
 pub use task_execution::{SubmitTaskResult, TaskExecutionClient, TaskExecutionInfo};

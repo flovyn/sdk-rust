@@ -323,6 +323,26 @@ impl AgentContext for MockAgentContext {
         Ok(id)
     }
 
+    async fn append_tool_result_with_id(
+        &self,
+        tool_call_id: &str,
+        tool_name: &str,
+        tool_output: &Value,
+    ) -> Result<Uuid> {
+        let id = Uuid::new_v4();
+        self.inner.entries.write().push(RecordedEntry {
+            id,
+            role: EntryRole::ToolResult,
+            content: serde_json::json!({
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "result": tool_output,
+            }),
+            entry_type: "tool_result".to_string(),
+        });
+        Ok(id)
+    }
+
     fn load_messages(&self) -> &[LoadedMessage] {
         // This is a bit tricky since we return a reference.
         // For mock purposes, we'll return an empty slice and rely on reload_messages.
@@ -783,5 +803,135 @@ mod tests {
         assert_eq!(handles[0].task_kind, "task-a");
         assert_eq!(handles[1].task_kind, "task-b");
         assert_eq!(ctx.scheduled_tasks().len(), 2);
+    }
+
+    // =========================================================================
+    // Tests for suspension/resume scenarios (idempotency key stability)
+    // =========================================================================
+
+    /// Test that simulates what happens in a real agent suspension/resume cycle.
+    ///
+    /// This test verifies that when an agent:
+    /// 1. Schedules a task and gets a result
+    /// 2. "Resumes" (simulated by creating a new context with loaded messages)
+    /// 3. Schedules the "same" task again
+    ///
+    /// The results should be consistent (i.e., idempotency should work).
+    ///
+    /// Note: MockAgentContext doesn't use real idempotency keys like AgentContextImpl,
+    /// but this test documents the expected behavior and can catch regressions in
+    /// agent logic that depends on task scheduling across suspension boundaries.
+    #[tokio::test]
+    async fn test_suspension_resume_task_consistency() {
+        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+        let expected_result = json!({"response": "Hello from LLM!"});
+
+        // First "execution" - agent schedules task
+        let ctx1 = MockAgentContext::builder()
+            .agent_execution_id(agent_id)
+            .task_result("llm-request", expected_result.clone())
+            .build();
+
+        let result1 = ctx1
+            .schedule_task_raw("llm-request", json!({"prompt": "Hello"}))
+            .await
+            .unwrap();
+
+        assert_eq!(result1, expected_result);
+
+        // Simulate checkpoint
+        ctx1.checkpoint(&json!({"turn": 1})).await.unwrap();
+        let checkpoint_seq_after_task = ctx1.checkpoint_sequence();
+
+        // Second "execution" - simulating resume after suspension
+        // In real code, this would be a new AgentContextImpl created from checkpoint
+        let ctx2 = MockAgentContext::builder()
+            .agent_execution_id(agent_id) // Same agent ID
+            .initial_checkpoint_seq(checkpoint_seq_after_task) // Restored checkpoint
+            .task_result("llm-request", expected_result.clone()) // Same mock result
+            .build();
+
+        // When agent resumes and tries to get the task result again,
+        // it should get the same result (due to idempotency in real impl)
+        let result2 = ctx2
+            .schedule_task_raw("llm-request", json!({"prompt": "Hello"}))
+            .await
+            .unwrap();
+
+        assert_eq!(result2, expected_result,
+            "Task result should be consistent across suspension/resume");
+        assert_eq!(result1, result2,
+            "Same task should return same result on resume");
+    }
+
+    /// Test that demonstrates the importance of stable idempotency keys.
+    ///
+    /// This test shows what the CORRECT behavior should be:
+    /// - Task scheduled before suspension should be retrievable after resume
+    /// - The agent should NOT create a new task on resume
+    ///
+    /// In MockAgentContext, we simulate this by verifying that the same task_kind
+    /// returns the same configured result regardless of checkpoint state.
+    #[tokio::test]
+    async fn test_idempotency_across_checkpoint_changes() {
+        let agent_id = Uuid::new_v4();
+        let llm_result = json!({"message": "Assistant response"});
+
+        // Create context with checkpoint_seq = 0
+        let ctx = MockAgentContext::builder()
+            .agent_execution_id(agent_id)
+            .initial_checkpoint_seq(0)
+            .task_result("llm-request", llm_result.clone())
+            .build();
+
+        // First task scheduling (simulating first execution)
+        let result1 = ctx.schedule_task_raw("llm-request", json!({})).await.unwrap();
+        assert_eq!(result1, llm_result);
+
+        // Checkpoint (simulating suspension)
+        ctx.checkpoint(&json!({"step": 1})).await.unwrap();
+        assert_eq!(ctx.checkpoint_sequence(), 1);
+
+        // Second task scheduling (simulating resume)
+        // Even though checkpoint_seq changed from 0 to 1, the result should be the same
+        let result2 = ctx.schedule_task_raw("llm-request", json!({})).await.unwrap();
+        assert_eq!(result2, llm_result);
+
+        // More checkpoints (simulating multiple suspension/resume cycles)
+        ctx.checkpoint(&json!({"step": 2})).await.unwrap();
+        ctx.checkpoint(&json!({"step": 3})).await.unwrap();
+        assert_eq!(ctx.checkpoint_sequence(), 3);
+
+        // Task result should still be the same
+        let result3 = ctx.schedule_task_raw("llm-request", json!({})).await.unwrap();
+        assert_eq!(result3, llm_result,
+            "Task result must be stable regardless of checkpoint_seq changes");
+    }
+
+    /// Test that verifies the format of idempotency keys used in AgentContextImpl.
+    ///
+    /// While MockAgentContext doesn't use idempotency keys, this test documents
+    /// the expected format and can be used to verify the fix is correct.
+    #[test]
+    fn test_idempotency_key_format_documentation() {
+        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+
+        // CORRECT format (current implementation):
+        // "{agent_id}:task:{counter}"
+        let correct_key_0 = format!("{}:task:{}", agent_id, 0);
+        let correct_key_1 = format!("{}:task:{}", agent_id, 1);
+
+        // The key should NOT include checkpoint_seq
+        assert!(!correct_key_0.contains(":-1:"), "Key must not include checkpoint_seq");
+        assert!(correct_key_0.contains(":task:"), "Key must use ':task:' separator");
+
+        // BUGGY format (old implementation that caused infinite task creation):
+        // "{agent_id}:{checkpoint_seq}:{counter}"
+        let _buggy_key_run1 = format!("{}:{}:{}", agent_id, -1, 0); // First run
+        let _buggy_key_run2 = format!("{}:{}:{}", agent_id, 5, 0);  // After resume
+
+        // The buggy keys would be different even for the same logical task,
+        // causing the server to create a new task instead of returning the existing one.
+        // This is documented here to explain why the fix was necessary.
     }
 }

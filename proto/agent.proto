@@ -36,18 +36,16 @@ service AgentDispatch {
   // Subsequent chunks: serialized input data (~64KB each)
   rpc ScheduleAgentTask(stream ScheduleAgentTaskChunk) returns (ScheduleAgentTaskResponse);
 
-  // Batch task scheduling (CLIENT-SIDE STREAMING)
-  // Schedules multiple tasks in a single RPC for efficiency
-  // First chunk: batch header with agent_execution_id
-  // Subsequent chunks: task entries (one per task)
-  rpc ScheduleAgentTasks(stream ScheduleAgentTasksChunk) returns (ScheduleAgentTasksResponse);
-
   // Agent completion (unary)
   rpc CompleteAgent(CompleteAgentRequest) returns (google.protobuf.Empty);
   rpc FailAgent(FailAgentRequest) returns (google.protobuf.Empty);
 
   // Suspension for multi-turn interaction (unary)
   rpc SuspendAgent(SuspendAgentRequest) returns (google.protobuf.Empty);
+
+  // Resume a WAITING agent and claim it for this worker (atomic)
+  // Used by workers to directly claim a suspended agent without going through PENDING
+  rpc ResumeAgent(ResumeAgentRequest) returns (ResumeAgentResponse);
 
   // Signal management (unary)
   rpc SignalAgent(SignalAgentRequest) returns (SignalAgentResponse);
@@ -59,6 +57,9 @@ service AgentDispatch {
 
   // Query task execution results (batch - for parallel tasks)
   rpc GetAgentTaskResults(GetAgentTaskResultsRequest) returns (GetAgentTaskResultsResponse);
+
+  // Get count of tasks scheduled by this agent (for counter restoration on resume)
+  rpc GetAgentTaskCount(GetAgentTaskCountRequest) returns (GetAgentTaskCountResponse);
 
   // Cancel a task
   rpc CancelAgentTask(CancelAgentTaskRequest) returns (CancelAgentTaskResponse);
@@ -207,11 +208,18 @@ message AppendEntryRequest {
 
   // Token usage (for llm_call entries)
   optional TokenUsage token_usage = 7;
+
+  // Idempotency key for duplicate prevention on agent resume
+  // Format: {agent_execution_id}:entry:{counter}
+  optional string idempotency_key = 8;
 }
 
 message AppendEntryResponse {
-  // Created entry ID
+  // Entry ID (either newly created or existing if idempotency key matched)
   string entry_id = 1;
+
+  // True if an existing entry was returned (idempotency key matched)
+  bool already_existed = 2;
 }
 
 // ============================================================================
@@ -322,81 +330,6 @@ message ScheduleAgentTaskResponse {
 }
 
 // ============================================================================
-// Batch Task Scheduling Messages (Client-Side Streaming)
-// ============================================================================
-
-// First message in stream: batch header
-message ScheduleAgentTasksBatchHeader {
-  // Agent execution ID (parent)
-  string agent_execution_id = 1;
-
-  // Default queue for all tasks (can be overridden per task)
-  optional string default_queue = 2;
-
-  // Default max retries for all tasks
-  optional int32 default_max_retries = 3;
-
-  // Default timeout in milliseconds
-  optional int64 default_timeout_ms = 4;
-}
-
-// Task entry in batch (one per task)
-message ScheduleAgentTaskEntry {
-  // Task kind
-  string task_kind = 1;
-
-  // Task input (serialized bytes)
-  bytes input = 2;
-
-  // Idempotency key for preventing duplicate tasks
-  optional string idempotency_key = 3;
-
-  // Override default queue for this task
-  optional string queue = 4;
-
-  // Override default max retries for this task
-  optional int32 max_retries = 5;
-
-  // Override default timeout for this task
-  optional int64 timeout_ms = 6;
-
-  // Arbitrary metadata for this task
-  map<string, string> metadata = 7;
-}
-
-// Client-side streaming message for batch scheduling
-message ScheduleAgentTasksChunk {
-  oneof chunk {
-    // First message: batch header
-    ScheduleAgentTasksBatchHeader header = 1;
-
-    // Subsequent messages: one entry per task
-    ScheduleAgentTaskEntry task_entry = 2;
-  }
-}
-
-// Response for batch task scheduling
-message ScheduleAgentTasksResponse {
-  // Results for each task (same order as task entries in request)
-  repeated ScheduleAgentTaskResultEntry results = 1;
-}
-
-// Result entry for each scheduled task
-message ScheduleAgentTaskResultEntry {
-  // Created task execution ID
-  string task_execution_id = 1;
-
-  // Whether idempotency key was used
-  bool idempotency_key_used = 2;
-
-  // Whether a new task was created (false if existing returned)
-  bool idempotency_key_new = 3;
-
-  // Error message if this specific task failed to schedule
-  optional string error = 4;
-}
-
-// ============================================================================
 // Completion Messages
 // ============================================================================
 
@@ -460,6 +393,29 @@ enum WaitMode {
 
   // Resume when ANY task completes (select semantics)
   WAIT_MODE_ANY = 2;
+}
+
+// ============================================================================
+// Resume Messages
+// ============================================================================
+
+message ResumeAgentRequest {
+  // Agent execution ID to resume
+  string agent_execution_id = 1;
+
+  // Worker ID claiming the agent
+  string worker_id = 2;
+}
+
+message ResumeAgentResponse {
+  // Whether the resume was successful (false if agent wasn't WAITING or already claimed)
+  bool success = 1;
+
+  // Agent execution info (populated if success=true)
+  AgentExecutionInfo agent = 2;
+
+  // Traceparent for distributed tracing (populated if success=true)
+  string traceparent = 3;
 }
 
 // ============================================================================
@@ -577,6 +533,20 @@ message TaskResultEntry {
 
   // Error message (if FAILED)
   optional string error = 4;
+}
+
+// ============================================================================
+// Task Count Query Messages (for counter restoration on resume)
+// ============================================================================
+
+message GetAgentTaskCountRequest {
+  // Agent execution ID
+  string agent_execution_id = 1;
+}
+
+message GetAgentTaskCountResponse {
+  // Number of tasks scheduled by this agent
+  int32 task_count = 1;
 }
 
 // ============================================================================
