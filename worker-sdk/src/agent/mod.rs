@@ -61,6 +61,7 @@ pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};
 pub use registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
 pub use storage::{
-    AgentCommand, AgentStorage, CheckpointData, CommandBatch, PendingTask, SegmentState,
-    StorageResult, TaskOptions, TaskResult, TaskStatus, TokenUsage as StorageTokenUsage,
+    AgentCommand, AgentStorage, CheckpointData, CommandBatch, PendingTask, RemoteStorage,
+    SegmentState, StorageResult, TaskOptions, TaskResult, TaskStatus,
+    TokenUsage as StorageTokenUsage,
 };

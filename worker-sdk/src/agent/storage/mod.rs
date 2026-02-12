@@ -359,3 +359,6 @@ mod tests {
         assert!(deserialized.token_usage.is_some());
     }
 }
+
+mod remote;
+pub use remote::RemoteStorage;
