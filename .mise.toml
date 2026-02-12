@@ -22,7 +22,9 @@ run = "cargo test --test tck -p flovyn-worker-sdk"
 
 [tasks."test:e2e"]
 description = "Run E2E tests (requires server)"
-run = "cargo test --test e2e -p flovyn-worker-sdk -- --ignored --nocapture"
+# Limit parallelism to 4 threads - tests share a singleton TestHarness with shared
+# database/server. Too many parallel tests (>6) causes race conditions.
+run = "cargo test --test e2e -p flovyn-worker-sdk -- --ignored --nocapture --test-threads=4"
 
 [tasks."test:model"]
 description = "Run Stateright model checking tests"
