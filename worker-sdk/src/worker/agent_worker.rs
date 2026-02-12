@@ -400,13 +400,14 @@ impl AgentExecutorWorker {
         let agent_input = agent_info.input.clone();
 
         // Create context from loaded data
-        let ctx = match self.create_agent_context(
-            agent_execution_id,
-            agent_info.org_id,
-            agent_info.input,
-            agent_info.current_checkpoint_seq,
-        )
-        .await
+        let ctx = match self
+            .create_agent_context(
+                agent_execution_id,
+                agent_info.org_id,
+                agent_info.input,
+                agent_info.current_checkpoint_seq,
+            )
+            .await
         {
             Ok(ctx) => ctx,
             Err(e) => {

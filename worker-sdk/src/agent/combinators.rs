@@ -466,7 +466,12 @@ pub async fn agent_select_with_cancel(
             .collect();
 
         // Cancel all non-winning tasks
-        let cancel_results = ctx.cancel_tasks(&to_cancel.iter().cloned().cloned().collect::<Vec<_>>(), cancel_reason).await?;
+        let cancel_results = ctx
+            .cancel_tasks(
+                &to_cancel.iter().cloned().cloned().collect::<Vec<_>>(),
+                cancel_reason,
+            )
+            .await?;
 
         // Build cancel attempt results
         let mut cancel_attempts = Vec::with_capacity(to_cancel.len());

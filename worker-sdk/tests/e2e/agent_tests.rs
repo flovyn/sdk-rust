@@ -72,11 +72,19 @@ async fn test_basic_agent_execution() {
 
         // Wait for agent to complete
         let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(30))
+            .wait_for_agent_status(
+                &agent.id.to_string(),
+                &["COMPLETED", "FAILED"],
+                Duration::from_secs(30),
+            )
             .await;
 
         println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete successfully");
+        assert_eq!(
+            completed.status.to_uppercase(),
+            "COMPLETED",
+            "Agent should complete successfully"
+        );
 
         // Verify output
         let output = completed.output.expect("Agent should have output");
@@ -91,7 +99,10 @@ async fn test_basic_agent_execution() {
 
         // Verify checkpoints were created
         let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
-        assert!(!checkpoints.is_empty(), "Agent should have created checkpoints");
+        assert!(
+            !checkpoints.is_empty(),
+            "Agent should have created checkpoints"
+        );
         println!("Agent created {} checkpoint(s)", checkpoints.len());
 
         handle.abort();
@@ -114,86 +125,118 @@ async fn test_basic_agent_execution() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_multi_turn_agent_with_signals() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_multi_turn_agent_with_signals", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_multi_turn_agent_with_signals",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-signal-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-signal-agent-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(MultiTurnAgent)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-signal-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-signal-agent-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(MultiTurnAgent)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent execution
-        let agent = harness
-            .create_agent_execution(
-                "multi-turn-agent",
-                json!({"prompt": "What is the weather?"}),
-                queue,
-            )
-            .await;
+            // Create agent execution
+            let agent = harness
+                .create_agent_execution(
+                    "multi-turn-agent",
+                    json!({"prompt": "What is the weather?"}),
+                    queue,
+                )
+                .await;
 
-        println!("Created multi-turn agent execution: {}", agent.id);
+            println!("Created multi-turn agent execution: {}", agent.id);
 
-        // Wait for agent to reach WAITING status (suspended waiting for signal)
-        let waiting = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["WAITING", "COMPLETED", "FAILED"], Duration::from_secs(30))
-            .await;
+            // Wait for agent to reach WAITING status (suspended waiting for signal)
+            let waiting = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["WAITING", "COMPLETED", "FAILED"],
+                    Duration::from_secs(30),
+                )
+                .await;
 
-        println!("Agent status after first turn: {}", waiting.status);
-        assert_eq!(waiting.status.to_uppercase(), "WAITING", "Agent should suspend waiting for signal");
+            println!("Agent status after first turn: {}", waiting.status);
+            assert_eq!(
+                waiting.status.to_uppercase(),
+                "WAITING",
+                "Agent should suspend waiting for signal"
+            );
 
-        // Verify checkpoint was created before suspension
-        let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
-        assert!(!checkpoints.is_empty(), "Agent should checkpoint before waiting");
-        println!("Agent created {} checkpoint(s) before waiting", checkpoints.len());
+            // Verify checkpoint was created before suspension
+            let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
+            assert!(
+                !checkpoints.is_empty(),
+                "Agent should checkpoint before waiting"
+            );
+            println!(
+                "Agent created {} checkpoint(s) before waiting",
+                checkpoints.len()
+            );
 
-        // Send the follow-up signal
-        println!("Sending followUp signal...");
-        let signal_response = harness
-            .signal_agent_execution(
-                &agent.id.to_string(),
-                "followUp",
-                json!({"message": "It's sunny today!"}),
-            )
-            .await;
+            // Send the follow-up signal
+            println!("Sending followUp signal...");
+            let signal_response = harness
+                .signal_agent_execution(
+                    &agent.id.to_string(),
+                    "followUp",
+                    json!({"message": "It's sunny today!"}),
+                )
+                .await;
 
-        assert!(signal_response.signaled, "Signal should be created");
-        assert!(signal_response.agent_resumed, "Agent should be resumed after signal");
-        println!("Signal sent, agent resumed: {}", signal_response.agent_resumed);
+            assert!(signal_response.signaled, "Signal should be created");
+            assert!(
+                signal_response.agent_resumed,
+                "Agent should be resumed after signal"
+            );
+            println!(
+                "Signal sent, agent resumed: {}",
+                signal_response.agent_resumed
+            );
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(30))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(30),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete after signal");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete after signal"
+            );
 
-        // Verify output includes both turns
-        let output = completed.output.expect("Agent should have output");
-        assert_eq!(output.get("turns").and_then(|v| v.as_i64()), Some(2));
-        assert!(
-            output.get("firstResponse").is_some(),
-            "Output should include first response"
-        );
-        assert_eq!(
-            output.get("followUpReceived").and_then(|v| v.as_str()),
-            Some("It's sunny today!")
-        );
+            // Verify output includes both turns
+            let output = completed.output.expect("Agent should have output");
+            assert_eq!(output.get("turns").and_then(|v| v.as_i64()), Some(2));
+            assert!(
+                output.get("firstResponse").is_some(),
+                "Output should include first response"
+            );
+            assert_eq!(
+                output.get("followUpReceived").and_then(|v| v.as_str()),
+                Some("It's sunny today!")
+            );
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -215,76 +258,91 @@ async fn test_multi_turn_agent_with_signals() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_with_task_scheduling() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_with_task_scheduling", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_with_task_scheduling",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-task-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-agent-task-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(TaskSchedulingAgent)
-            .register_task(EchoTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-task-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-agent-task-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(TaskSchedulingAgent)
+                .register_task(EchoTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent that will schedule a task
-        let agent = harness
-            .create_agent_execution(
-                "task-scheduling-agent",
-                json!({
-                    "taskKind": "echo-task",
-                    "taskInput": {"message": "Task input from agent"}
-                }),
-                queue,
-            )
-            .await;
+            // Create agent that will schedule a task
+            let agent = harness
+                .create_agent_execution(
+                    "task-scheduling-agent",
+                    json!({
+                        "taskKind": "echo-task",
+                        "taskInput": {"message": "Task input from agent"}
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created task-scheduling agent execution: {}", agent.id);
+            println!("Created task-scheduling agent execution: {}", agent.id);
 
-        // Wait for agent to complete (may go through WAITING state while task executes)
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
-            .await;
+            // Wait for agent to complete (may go through WAITING state while task executes)
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete after task");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete after task"
+            );
 
-        // Verify output includes task result
-        let output = completed.output.expect("Agent should have output");
-        assert_eq!(
-            output.get("taskKind").and_then(|v| v.as_str()),
-            Some("echo-task")
-        );
+            // Verify output includes task result
+            let output = completed.output.expect("Agent should have output");
+            assert_eq!(
+                output.get("taskKind").and_then(|v| v.as_str()),
+                Some("echo-task")
+            );
 
-        let task_result = output.get("taskResult");
-        assert!(task_result.is_some(), "Output should include task result");
-        println!("Task result: {:?}", task_result);
+            let task_result = output.get("taskResult");
+            assert!(task_result.is_some(), "Output should include task result");
+            println!("Task result: {:?}", task_result);
 
-        // Verify task was created and associated with agent
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert!(!tasks.is_empty(), "Agent should have scheduled tasks");
-        println!("Agent scheduled {} task(s)", tasks.len());
+            // Verify task was created and associated with agent
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert!(!tasks.is_empty(), "Agent should have scheduled tasks");
+            println!("Agent scheduled {} task(s)", tasks.len());
 
-        let task = &tasks[0];
-        assert_eq!(task.kind, "echo-task");
-        assert_eq!(task.status.to_uppercase(), "COMPLETED");
+            let task = &tasks[0];
+            assert_eq!(task.kind, "echo-task");
+            assert_eq!(task.status.to_uppercase(), "COMPLETED");
 
-        // Verify checkpoints
-        let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
-        assert!(checkpoints.len() >= 2, "Agent should have checkpoints before and after task");
-        println!("Agent created {} checkpoint(s)", checkpoints.len());
+            // Verify checkpoints
+            let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
+            assert!(
+                checkpoints.len() >= 2,
+                "Agent should have checkpoints before and after task"
+            );
+            println!("Agent created {} checkpoint(s)", checkpoints.len());
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -300,69 +358,76 @@ async fn test_agent_with_task_scheduling() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_checkpoint_persistence() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_checkpoint_persistence", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_checkpoint_persistence",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-checkpoint-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-checkpoint-agent-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(CheckpointAgent)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-checkpoint-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-checkpoint-agent-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(CheckpointAgent)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent that will create multiple checkpoints
-        let agent = harness
-            .create_agent_execution(
-                "checkpoint-agent",
-                json!({"steps": 5}),
-                queue,
-            )
-            .await;
+            // Create agent that will create multiple checkpoints
+            let agent = harness
+                .create_agent_execution("checkpoint-agent", json!({"steps": 5}), queue)
+                .await;
 
-        println!("Created checkpoint agent execution: {}", agent.id);
+            println!("Created checkpoint agent execution: {}", agent.id);
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(30))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(30),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(completed.status.to_uppercase(), "COMPLETED");
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
-        assert_eq!(output.get("totalSteps").and_then(|v| v.as_i64()), Some(5));
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
+            assert_eq!(output.get("totalSteps").and_then(|v| v.as_i64()), Some(5));
 
-        let completed_steps = output.get("completedSteps").and_then(|v| v.as_array());
-        assert!(completed_steps.is_some());
-        assert_eq!(completed_steps.unwrap().len(), 5);
+            let completed_steps = output.get("completedSteps").and_then(|v| v.as_array());
+            assert!(completed_steps.is_some());
+            assert_eq!(completed_steps.unwrap().len(), 5);
 
-        // Verify checkpoints were created (one per step)
-        let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
-        assert!(checkpoints.len() >= 5, "Agent should have at least 5 checkpoints");
-        println!("Agent created {} checkpoint(s)", checkpoints.len());
+            // Verify checkpoints were created (one per step)
+            let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
+            assert!(
+                checkpoints.len() >= 5,
+                "Agent should have at least 5 checkpoints"
+            );
+            println!("Agent created {} checkpoint(s)", checkpoints.len());
 
-        // Verify checkpoint states have correct progress
-        for (i, cp) in checkpoints.iter().enumerate() {
-            if let Some(state) = &cp.state {
-                if let Some(step) = state.get("completedStep").and_then(|v| v.as_i64()) {
-                    println!("Checkpoint {} has completedStep: {}", i, step);
+            // Verify checkpoint states have correct progress
+            for (i, cp) in checkpoints.iter().enumerate() {
+                if let Some(state) = &cp.state {
+                    if let Some(step) = state.get("completedStep").and_then(|v| v.as_i64()) {
+                        println!("Checkpoint {} has completedStep: {}", i, step);
+                    }
                 }
             }
-        }
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -395,7 +460,11 @@ async fn test_agent_worker_metrics() {
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         // Initially no agents executed
-        assert_eq!(handle.agents_executed(), 0, "No agents should have executed yet");
+        assert_eq!(
+            handle.agents_executed(),
+            0,
+            "No agents should have executed yet"
+        );
 
         // Create and run an agent
         let agent = harness
@@ -403,7 +472,11 @@ async fn test_agent_worker_metrics() {
             .await;
 
         harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(30))
+            .wait_for_agent_status(
+                &agent.id.to_string(),
+                &["COMPLETED", "FAILED"],
+                Duration::from_secs(30),
+            )
             .await;
 
         // Give metrics time to update
@@ -467,7 +540,11 @@ async fn test_combined_worker_types() {
             .await;
 
         let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
+            .wait_for_agent_status(
+                &agent.id.to_string(),
+                &["COMPLETED", "FAILED"],
+                Duration::from_secs(60),
+            )
             .await;
 
         assert_eq!(completed.status.to_uppercase(), "COMPLETED");
@@ -509,11 +586,7 @@ async fn test_agent_failure_handling() {
         // Create agent with non-existent kind (should fail or timeout)
         // Note: This tests that unknown agent kinds are handled gracefully
         let agent = harness
-            .create_agent_execution(
-                "non-existent-agent",
-                json!({"message": "test"}),
-                queue,
-            )
+            .create_agent_execution("non-existent-agent", json!({"message": "test"}), queue)
             .await;
 
         // Wait a bit - agent should remain PENDING since no worker handles it
@@ -546,93 +619,100 @@ async fn test_agent_failure_handling() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_concurrent_agent_execution() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_concurrent_agent_execution", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_concurrent_agent_execution",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-concurrent-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-concurrent-agent-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(EchoAgent)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-concurrent-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-concurrent-agent-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(EchoAgent)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Start multiple agents concurrently
-        let num_agents = 5;
-        let mut agent_ids = Vec::new();
+            // Start multiple agents concurrently
+            let num_agents = 5;
+            let mut agent_ids = Vec::new();
 
-        for i in 0..num_agents {
-            let agent = harness
-                .create_agent_execution(
-                    "echo-agent",
-                    json!({"message": format!("Agent {}", i)}),
-                    queue,
-                )
-                .await;
-            agent_ids.push((i, agent.id));
-            println!("Created agent {}: {}", i, agent.id);
-        }
-
-        // Wait for all agents to complete
-        let timeout = Duration::from_secs(60);
-        let start = std::time::Instant::now();
-        let mut completed = vec![false; num_agents];
-
-        loop {
-            if start.elapsed() > timeout {
-                let pending: Vec<_> = completed
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| !**c)
-                    .map(|(i, _)| i)
-                    .collect();
-                panic!("Agents did not complete within timeout. Pending: {:?}", pending);
+            for i in 0..num_agents {
+                let agent = harness
+                    .create_agent_execution(
+                        "echo-agent",
+                        json!({"message": format!("Agent {}", i)}),
+                        queue,
+                    )
+                    .await;
+                agent_ids.push((i, agent.id));
+                println!("Created agent {}: {}", i, agent.id);
             }
 
-            for (idx, (input_idx, agent_id)) in agent_ids.iter().enumerate() {
-                if completed[idx] {
-                    continue;
+            // Wait for all agents to complete
+            let timeout = Duration::from_secs(60);
+            let start = std::time::Instant::now();
+            let mut completed = vec![false; num_agents];
+
+            loop {
+                if start.elapsed() > timeout {
+                    let pending: Vec<_> = completed
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| !**c)
+                        .map(|(i, _)| i)
+                        .collect();
+                    panic!(
+                        "Agents did not complete within timeout. Pending: {:?}",
+                        pending
+                    );
                 }
 
-                let status = harness.get_agent_execution(&agent_id.to_string()).await;
-                if status.status.to_uppercase() == "COMPLETED" {
-                    // Verify output is correct
-                    if let Some(output) = &status.output {
-                        let expected_msg = format!("Agent {}", input_idx);
-                        let expected_response = format!("Echo: {}", expected_msg);
-                        assert_eq!(
-                            output.get("response").and_then(|v| v.as_str()),
-                            Some(expected_response.as_str()),
-                            "Agent {} should have correct response",
-                            agent_id
-                        );
+                for (idx, (input_idx, agent_id)) in agent_ids.iter().enumerate() {
+                    if completed[idx] {
+                        continue;
                     }
-                    completed[idx] = true;
-                    println!("Agent {} completed", input_idx);
-                } else if status.status.to_uppercase() == "FAILED" {
-                    panic!("Agent {} failed: {:?}", agent_id, status.error);
+
+                    let status = harness.get_agent_execution(&agent_id.to_string()).await;
+                    if status.status.to_uppercase() == "COMPLETED" {
+                        // Verify output is correct
+                        if let Some(output) = &status.output {
+                            let expected_msg = format!("Agent {}", input_idx);
+                            let expected_response = format!("Echo: {}", expected_msg);
+                            assert_eq!(
+                                output.get("response").and_then(|v| v.as_str()),
+                                Some(expected_response.as_str()),
+                                "Agent {} should have correct response",
+                                agent_id
+                            );
+                        }
+                        completed[idx] = true;
+                        println!("Agent {} completed", input_idx);
+                    } else if status.status.to_uppercase() == "FAILED" {
+                        panic!("Agent {} failed: {:?}", agent_id, status.error);
+                    }
                 }
+
+                if completed.iter().all(|c| *c) {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(300)).await;
             }
 
-            if completed.iter().all(|c| *c) {
-                break;
-            }
-
-            tokio::time::sleep(Duration::from_millis(300)).await;
-        }
-
-        println!("All {} agents completed successfully", num_agents);
-        handle.abort();
-    })
+            println!("All {} agents completed successfully", num_agents);
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -823,92 +903,106 @@ async fn test_rapid_signal_delivery() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_concurrent_agents_with_tasks() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_concurrent_agents_with_tasks", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_concurrent_agents_with_tasks",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-concurrent-task-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-concurrent-task-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(TaskSchedulingAgent)
-            .register_task(EchoTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-concurrent-task-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-concurrent-task-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(TaskSchedulingAgent)
+                .register_task(EchoTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Start multiple task-scheduling agents concurrently
-        let num_agents = 3;
-        let mut agent_ids = Vec::new();
+            // Start multiple task-scheduling agents concurrently
+            let num_agents = 3;
+            let mut agent_ids = Vec::new();
 
-        for i in 0..num_agents {
-            let agent = harness
-                .create_agent_execution(
-                    "task-scheduling-agent",
-                    json!({
-                        "taskKind": "echo-task",
-                        "taskInput": {"message": format!("Task from agent {}", i)}
-                    }),
-                    queue,
-                )
-                .await;
-            agent_ids.push((i, agent.id));
-            println!("Created task-scheduling agent {}: {}", i, agent.id);
-        }
-
-        // Wait for all agents to complete
-        let timeout = Duration::from_secs(90);
-        let start = std::time::Instant::now();
-        let mut completed = vec![false; num_agents];
-
-        loop {
-            if start.elapsed() > timeout {
-                let pending: Vec<_> = completed
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| !**c)
-                    .map(|(i, _)| i)
-                    .collect();
-                panic!("Agents did not complete within timeout. Pending: {:?}", pending);
+            for i in 0..num_agents {
+                let agent = harness
+                    .create_agent_execution(
+                        "task-scheduling-agent",
+                        json!({
+                            "taskKind": "echo-task",
+                            "taskInput": {"message": format!("Task from agent {}", i)}
+                        }),
+                        queue,
+                    )
+                    .await;
+                agent_ids.push((i, agent.id));
+                println!("Created task-scheduling agent {}: {}", i, agent.id);
             }
 
-            for (idx, (input_idx, agent_id)) in agent_ids.iter().enumerate() {
-                if completed[idx] {
-                    continue;
+            // Wait for all agents to complete
+            let timeout = Duration::from_secs(90);
+            let start = std::time::Instant::now();
+            let mut completed = vec![false; num_agents];
+
+            loop {
+                if start.elapsed() > timeout {
+                    let pending: Vec<_> = completed
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| !**c)
+                        .map(|(i, _)| i)
+                        .collect();
+                    panic!(
+                        "Agents did not complete within timeout. Pending: {:?}",
+                        pending
+                    );
                 }
 
-                let status = harness.get_agent_execution(&agent_id.to_string()).await;
-                if status.status.to_uppercase() == "COMPLETED" {
-                    // Verify task was created for this agent
-                    let tasks = harness.list_agent_tasks(&agent_id.to_string()).await;
-                    assert!(!tasks.is_empty(), "Agent {} should have scheduled tasks", input_idx);
-                    assert_eq!(tasks[0].kind, "echo-task");
-                    assert_eq!(tasks[0].status.to_uppercase(), "COMPLETED");
+                for (idx, (input_idx, agent_id)) in agent_ids.iter().enumerate() {
+                    if completed[idx] {
+                        continue;
+                    }
 
-                    completed[idx] = true;
-                    println!("Agent {} completed with task", input_idx);
-                } else if status.status.to_uppercase() == "FAILED" {
-                    panic!("Agent {} failed: {:?}", agent_id, status.error);
+                    let status = harness.get_agent_execution(&agent_id.to_string()).await;
+                    if status.status.to_uppercase() == "COMPLETED" {
+                        // Verify task was created for this agent
+                        let tasks = harness.list_agent_tasks(&agent_id.to_string()).await;
+                        assert!(
+                            !tasks.is_empty(),
+                            "Agent {} should have scheduled tasks",
+                            input_idx
+                        );
+                        assert_eq!(tasks[0].kind, "echo-task");
+                        assert_eq!(tasks[0].status.to_uppercase(), "COMPLETED");
+
+                        completed[idx] = true;
+                        println!("Agent {} completed with task", input_idx);
+                    } else if status.status.to_uppercase() == "FAILED" {
+                        panic!("Agent {} failed: {:?}", agent_id, status.error);
+                    }
                 }
+
+                if completed.iter().all(|c| *c) {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(300)).await;
             }
 
-            if completed.iter().all(|c| *c) {
-                break;
-            }
-
-            tokio::time::sleep(Duration::from_millis(300)).await;
-        }
-
-        println!("All {} agents with tasks completed successfully", num_agents);
-        handle.abort();
-    })
+            println!(
+                "All {} agents with tasks completed successfully",
+                num_agents
+            );
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -993,75 +1087,90 @@ async fn test_agent_claiming_race() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_parallel_tasks_join_all() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_parallel_tasks_join_all", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_parallel_tasks_join_all",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-parallel-join-all-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-parallel-agent-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(ParallelTasksAgent)
-            .register_task(EchoTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-parallel-join-all-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-parallel-agent-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(ParallelTasksAgent)
+                .register_task(EchoTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent that will schedule 3 parallel tasks
-        let agent = harness
-            .create_agent_execution(
-                "parallel-tasks-agent",
-                json!({
-                    "items": ["alpha", "beta", "gamma"],
-                    "taskKind": "echo-task"
-                }),
-                queue,
-            )
-            .await;
+            // Create agent that will schedule 3 parallel tasks
+            let agent = harness
+                .create_agent_execution(
+                    "parallel-tasks-agent",
+                    json!({
+                        "items": ["alpha", "beta", "gamma"],
+                        "taskKind": "echo-task"
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created parallel-tasks agent execution: {}", agent.id);
+            println!("Created parallel-tasks agent execution: {}", agent.id);
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(90))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(90),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete after all tasks");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete after all tasks"
+            );
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
-        assert_eq!(output.get("itemCount").and_then(|v| v.as_i64()), Some(3));
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
+            assert_eq!(output.get("itemCount").and_then(|v| v.as_i64()), Some(3));
 
-        let results = output.get("results").and_then(|v| v.as_array());
-        assert!(results.is_some(), "Output should include results array");
-        assert_eq!(results.unwrap().len(), 3, "Should have 3 results");
-        println!("Agent received {} task results", results.unwrap().len());
+            let results = output.get("results").and_then(|v| v.as_array());
+            assert!(results.is_some(), "Output should include results array");
+            assert_eq!(results.unwrap().len(), 3, "Should have 3 results");
+            println!("Agent received {} task results", results.unwrap().len());
 
-        // Verify all 3 tasks were created for this agent
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
+            // Verify all 3 tasks were created for this agent
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
 
-        for task in &tasks {
-            assert_eq!(task.kind, "echo-task");
-            assert_eq!(task.status.to_uppercase(), "COMPLETED");
-        }
-        println!("All 3 tasks completed successfully");
+            for task in &tasks {
+                assert_eq!(task.kind, "echo-task");
+                assert_eq!(task.status.to_uppercase(), "COMPLETED");
+            }
+            println!("All 3 tasks completed successfully");
 
-        // Verify checkpoints were created
-        let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
-        assert!(checkpoints.len() >= 2, "Agent should have checkpoints before and after parallel tasks");
-        println!("Agent created {} checkpoint(s)", checkpoints.len());
+            // Verify checkpoints were created
+            let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
+            assert!(
+                checkpoints.len() >= 2,
+                "Agent should have checkpoints before and after parallel tasks"
+            );
+            println!("Agent created {} checkpoint(s)", checkpoints.len());
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1075,71 +1184,91 @@ async fn test_agent_parallel_tasks_join_all() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_racing_tasks_select() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_racing_tasks_select", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_racing_tasks_select",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-racing-select-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-racing-agent-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(RacingTasksAgent)
-            .register_task(SlowTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-racing-select-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-racing-agent-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(RacingTasksAgent)
+                .register_task(SlowTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent with primary (slow) and fallback (fast) tasks
-        // Fallback should win the race
-        let agent = harness
-            .create_agent_execution(
-                "racing-tasks-agent",
-                json!({
-                    "primaryDelayMs": 5000,   // Primary: 5 seconds
-                    "fallbackDelayMs": 100    // Fallback: 100ms (should win)
-                }),
-                queue,
-            )
-            .await;
+            // Create agent with primary (slow) and fallback (fast) tasks
+            // Fallback should win the race
+            let agent = harness
+                .create_agent_execution(
+                    "racing-tasks-agent",
+                    json!({
+                        "primaryDelayMs": 5000,   // Primary: 5 seconds
+                        "fallbackDelayMs": 100    // Fallback: 100ms (should win)
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created racing-tasks agent execution: {}", agent.id);
+            println!("Created racing-tasks agent execution: {}", agent.id);
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(90))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(90),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete after any task");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete after any task"
+            );
 
-        // Verify output - fallback should win
-        let output = completed.output.expect("Agent should have output");
-        let winner_index = output.get("winnerIndex").and_then(|v| v.as_i64());
-        let winner = output.get("winner").and_then(|v| v.as_str());
+            // Verify output - fallback should win
+            let output = completed.output.expect("Agent should have output");
+            let winner_index = output.get("winnerIndex").and_then(|v| v.as_i64());
+            let winner = output.get("winner").and_then(|v| v.as_str());
 
-        println!("Winner index: {:?}, winner: {:?}", winner_index, winner);
+            println!("Winner index: {:?}, winner: {:?}", winner_index, winner);
 
-        // Fallback (index 0) should win - it's scheduled first and has shorter delay
-        assert_eq!(winner_index, Some(0), "Fallback task (index 0) should win the race");
-        assert_eq!(winner, Some("fallback"), "Winner should be 'fallback'");
+            // Fallback (index 0) should win - it's scheduled first and has shorter delay
+            assert_eq!(
+                winner_index,
+                Some(0),
+                "Fallback task (index 0) should win the race"
+            );
+            assert_eq!(winner, Some("fallback"), "Winner should be 'fallback'");
 
-        // Verify the result contains source from the winning task
-        let result = output.get("result");
-        assert!(result.is_some(), "Output should include result from winner");
-        if let Some(r) = result {
-            let source = r.get("source").and_then(|v| v.as_str());
-            assert_eq!(source, Some("fallback"), "Result source should be 'fallback'");
-        }
+            // Verify the result contains source from the winning task
+            let result = output.get("result");
+            assert!(result.is_some(), "Output should include result from winner");
+            if let Some(r) = result {
+                let source = r.get("source").and_then(|v| v.as_str());
+                assert_eq!(
+                    source,
+                    Some("fallback"),
+                    "Result source should be 'fallback'"
+                );
+            }
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1152,65 +1281,77 @@ async fn test_agent_racing_tasks_select() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_parallel_large_batch() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_parallel_large_batch", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_parallel_large_batch",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-parallel-batch-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-batch-agent-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(ParallelTasksAgent)
-            .register_task(EchoTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-parallel-batch-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-batch-agent-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(ParallelTasksAgent)
+                .register_task(EchoTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent that will schedule 10 parallel tasks
-        let items: Vec<String> = (0..10).map(|i| format!("item-{}", i)).collect();
-        let agent = harness
-            .create_agent_execution(
-                "parallel-tasks-agent",
-                json!({
-                    "items": items,
-                    "taskKind": "echo-task"
-                }),
-                queue,
-            )
-            .await;
+            // Create agent that will schedule 10 parallel tasks
+            let items: Vec<String> = (0..10).map(|i| format!("item-{}", i)).collect();
+            let agent = harness
+                .create_agent_execution(
+                    "parallel-tasks-agent",
+                    json!({
+                        "items": items,
+                        "taskKind": "echo-task"
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created large-batch parallel agent execution: {}", agent.id);
+            println!("Created large-batch parallel agent execution: {}", agent.id);
 
-        // Wait for agent to complete (may take longer with 10 tasks)
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(120))
-            .await;
+            // Wait for agent to complete (may take longer with 10 tasks)
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(120),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete after all 10 tasks");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete after all 10 tasks"
+            );
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
-        assert_eq!(output.get("itemCount").and_then(|v| v.as_i64()), Some(10));
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
+            assert_eq!(output.get("itemCount").and_then(|v| v.as_i64()), Some(10));
 
-        let results = output.get("results").and_then(|v| v.as_array());
-        assert!(results.is_some(), "Output should include results array");
-        assert_eq!(results.unwrap().len(), 10, "Should have 10 results");
-        println!("Agent received {} task results", results.unwrap().len());
+            let results = output.get("results").and_then(|v| v.as_array());
+            assert!(results.is_some(), "Output should include results array");
+            assert_eq!(results.unwrap().len(), 10, "Should have 10 results");
+            println!("Agent received {} task results", results.unwrap().len());
 
-        // Verify all 10 tasks were created for this agent
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert_eq!(tasks.len(), 10, "Agent should have scheduled 10 tasks");
+            // Verify all 10 tasks were created for this agent
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 10, "Agent should have scheduled 10 tasks");
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1223,97 +1364,112 @@ async fn test_agent_parallel_large_batch() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_concurrent_agents_parallel_tasks() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_concurrent_agents_parallel_tasks", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_concurrent_agents_parallel_tasks",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-concurrent-parallel-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-concurrent-parallel-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(ParallelTasksAgent)
-            .register_task(EchoTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-concurrent-parallel-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-concurrent-parallel-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(ParallelTasksAgent)
+                .register_task(EchoTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Start 3 agents, each scheduling 3 parallel tasks (9 total tasks)
-        let num_agents = 3;
-        let mut agent_ids = Vec::new();
+            // Start 3 agents, each scheduling 3 parallel tasks (9 total tasks)
+            let num_agents = 3;
+            let mut agent_ids = Vec::new();
 
-        for i in 0..num_agents {
-            let items: Vec<String> = (0..3).map(|j| format!("agent{}-item{}", i, j)).collect();
-            let agent = harness
-                .create_agent_execution(
-                    "parallel-tasks-agent",
-                    json!({
-                        "items": items,
-                        "taskKind": "echo-task"
-                    }),
-                    queue,
-                )
-                .await;
-            agent_ids.push((i, agent.id));
-            println!("Created parallel agent {}: {}", i, agent.id);
-        }
-
-        // Wait for all agents to complete
-        let timeout = Duration::from_secs(120);
-        let start = std::time::Instant::now();
-        let mut completed = vec![false; num_agents];
-
-        loop {
-            if start.elapsed() > timeout {
-                let pending: Vec<_> = completed
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| !**c)
-                    .map(|(i, _)| i)
-                    .collect();
-                panic!("Agents did not complete within timeout. Pending: {:?}", pending);
+            for i in 0..num_agents {
+                let items: Vec<String> = (0..3).map(|j| format!("agent{}-item{}", i, j)).collect();
+                let agent = harness
+                    .create_agent_execution(
+                        "parallel-tasks-agent",
+                        json!({
+                            "items": items,
+                            "taskKind": "echo-task"
+                        }),
+                        queue,
+                    )
+                    .await;
+                agent_ids.push((i, agent.id));
+                println!("Created parallel agent {}: {}", i, agent.id);
             }
 
-            for (idx, (input_idx, agent_id)) in agent_ids.iter().enumerate() {
-                if completed[idx] {
-                    continue;
+            // Wait for all agents to complete
+            let timeout = Duration::from_secs(120);
+            let start = std::time::Instant::now();
+            let mut completed = vec![false; num_agents];
+
+            loop {
+                if start.elapsed() > timeout {
+                    let pending: Vec<_> = completed
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| !**c)
+                        .map(|(i, _)| i)
+                        .collect();
+                    panic!(
+                        "Agents did not complete within timeout. Pending: {:?}",
+                        pending
+                    );
                 }
 
-                let status = harness.get_agent_execution(&agent_id.to_string()).await;
-                if status.status.to_uppercase() == "COMPLETED" {
-                    // Verify each agent has exactly 3 tasks
-                    let tasks = harness.list_agent_tasks(&agent_id.to_string()).await;
-                    assert_eq!(tasks.len(), 3, "Agent {} should have 3 tasks", input_idx);
-
-                    // Verify output has 3 results
-                    if let Some(output) = &status.output {
-                        let item_count = output.get("itemCount").and_then(|v| v.as_i64());
-                        assert_eq!(item_count, Some(3), "Agent {} should have 3 items", input_idx);
+                for (idx, (input_idx, agent_id)) in agent_ids.iter().enumerate() {
+                    if completed[idx] {
+                        continue;
                     }
 
-                    completed[idx] = true;
-                    println!("Agent {} completed with 3 parallel tasks", input_idx);
-                } else if status.status.to_uppercase() == "FAILED" {
-                    panic!("Agent {} failed: {:?}", agent_id, status.error);
+                    let status = harness.get_agent_execution(&agent_id.to_string()).await;
+                    if status.status.to_uppercase() == "COMPLETED" {
+                        // Verify each agent has exactly 3 tasks
+                        let tasks = harness.list_agent_tasks(&agent_id.to_string()).await;
+                        assert_eq!(tasks.len(), 3, "Agent {} should have 3 tasks", input_idx);
+
+                        // Verify output has 3 results
+                        if let Some(output) = &status.output {
+                            let item_count = output.get("itemCount").and_then(|v| v.as_i64());
+                            assert_eq!(
+                                item_count,
+                                Some(3),
+                                "Agent {} should have 3 items",
+                                input_idx
+                            );
+                        }
+
+                        completed[idx] = true;
+                        println!("Agent {} completed with 3 parallel tasks", input_idx);
+                    } else if status.status.to_uppercase() == "FAILED" {
+                        panic!("Agent {} failed: {:?}", agent_id, status.error);
+                    }
                 }
+
+                if completed.iter().all(|c| *c) {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(300)).await;
             }
 
-            if completed.iter().all(|c| *c) {
-                break;
-            }
-
-            tokio::time::sleep(Duration::from_millis(300)).await;
-        }
-
-        println!("All {} agents with parallel tasks completed successfully", num_agents);
-        handle.abort();
-    })
+            println!(
+                "All {} agents with parallel tasks completed successfully",
+                num_agents
+            );
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1328,103 +1484,135 @@ async fn test_concurrent_agents_parallel_tasks() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_racing_tasks_with_cancellation() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_racing_tasks_with_cancellation", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_racing_tasks_with_cancellation",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-racing-cancel-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-racing-cancel-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(RacingTasksWithCancelAgent)
-            .register_task(SlowTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-racing-cancel-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-racing-cancel-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(RacingTasksWithCancelAgent)
+                .register_task(SlowTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent with three tasks: fast (100ms), medium (1s), slow (5s)
-        // Fast should win, medium and slow should be cancelled
-        let agent = harness
-            .create_agent_execution(
-                "racing-tasks-with-cancel-agent",
-                json!({
-                    "fastDelayMs": 100,     // Fast: 100ms (should win)
-                    "mediumDelayMs": 3000,  // Medium: 3 seconds
-                    "slowDelayMs": 10000    // Slow: 10 seconds
-                }),
-                queue,
-            )
-            .await;
+            // Create agent with three tasks: fast (100ms), medium (1s), slow (5s)
+            // Fast should win, medium and slow should be cancelled
+            let agent = harness
+                .create_agent_execution(
+                    "racing-tasks-with-cancel-agent",
+                    json!({
+                        "fastDelayMs": 100,     // Fast: 100ms (should win)
+                        "mediumDelayMs": 3000,  // Medium: 3 seconds
+                        "slowDelayMs": 10000    // Slow: 10 seconds
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created racing-tasks-with-cancel agent execution: {}", agent.id);
+            println!(
+                "Created racing-tasks-with-cancel agent execution: {}",
+                agent.id
+            );
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(90))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(90),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete after any task");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete after any task"
+            );
 
-        // Verify output - fast should win
-        let output = completed.output.expect("Agent should have output");
-        let winner_index = output.get("winnerIndex").and_then(|v| v.as_i64());
-        let winner = output.get("winner").and_then(|v| v.as_str());
+            // Verify output - fast should win
+            let output = completed.output.expect("Agent should have output");
+            let winner_index = output.get("winnerIndex").and_then(|v| v.as_i64());
+            let winner = output.get("winner").and_then(|v| v.as_str());
 
-        println!("Winner index: {:?}, winner: {:?}", winner_index, winner);
+            println!("Winner index: {:?}, winner: {:?}", winner_index, winner);
 
-        // Fast (index 0) should win because it has shortest delay
-        assert_eq!(winner_index, Some(0), "Fast task (index 0) should win the race");
-        assert_eq!(winner, Some("fast"), "Winner should be 'fast'");
+            // Fast (index 0) should win because it has shortest delay
+            assert_eq!(
+                winner_index,
+                Some(0),
+                "Fast task (index 0) should win the race"
+            );
+            assert_eq!(winner, Some("fast"), "Winner should be 'fast'");
 
-        // Verify the result contains source from the winning task
-        let result = output.get("result");
-        assert!(result.is_some(), "Output should include result from winner");
-        if let Some(r) = result {
-            let source = r.get("source").and_then(|v| v.as_str());
-            assert_eq!(source, Some("fast"), "Result source should be 'fast'");
-        }
-
-        // Verify cancellation results
-        let cancel_results = output.get("cancelResults").and_then(|v| v.as_array());
-        assert!(cancel_results.is_some(), "Output should include cancellation results");
-        let cancel_results = cancel_results.unwrap();
-        println!("Cancellation results: {} attempts", cancel_results.len());
-
-        // Should have attempted to cancel 2 tasks (medium and slow)
-        assert_eq!(cancel_results.len(), 2, "Should have 2 cancellation attempts");
-
-        // Verify tasks were created
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
-        println!("Agent scheduled {} tasks", tasks.len());
-
-        // Check task statuses - winner should be COMPLETED, others may be CANCELLED or COMPLETED
-        let mut completed_count = 0;
-        let mut cancelled_count = 0;
-        for task in &tasks {
-            match task.status.to_uppercase().as_str() {
-                "COMPLETED" => completed_count += 1,
-                "CANCELLED" => cancelled_count += 1,
-                status => println!("Task {} has status: {}", task.id, status),
+            // Verify the result contains source from the winning task
+            let result = output.get("result");
+            assert!(result.is_some(), "Output should include result from winner");
+            if let Some(r) = result {
+                let source = r.get("source").and_then(|v| v.as_str());
+                assert_eq!(source, Some("fast"), "Result source should be 'fast'");
             }
-        }
 
-        println!("Task statuses: {} completed, {} cancelled", completed_count, cancelled_count);
-        // At minimum, the winner should be completed
-        assert!(completed_count >= 1, "At least one task should be completed (the winner)");
-        // Cancellation may or may not succeed depending on timing - medium/slow tasks may have
-        // already started running by the time we try to cancel
+            // Verify cancellation results
+            let cancel_results = output.get("cancelResults").and_then(|v| v.as_array());
+            assert!(
+                cancel_results.is_some(),
+                "Output should include cancellation results"
+            );
+            let cancel_results = cancel_results.unwrap();
+            println!("Cancellation results: {} attempts", cancel_results.len());
 
-        handle.abort();
-    })
+            // Should have attempted to cancel 2 tasks (medium and slow)
+            assert_eq!(
+                cancel_results.len(),
+                2,
+                "Should have 2 cancellation attempts"
+            );
+
+            // Verify tasks were created
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
+            println!("Agent scheduled {} tasks", tasks.len());
+
+            // Check task statuses - winner should be COMPLETED, others may be CANCELLED or COMPLETED
+            let mut completed_count = 0;
+            let mut cancelled_count = 0;
+            for task in &tasks {
+                match task.status.to_uppercase().as_str() {
+                    "COMPLETED" => completed_count += 1,
+                    "CANCELLED" => cancelled_count += 1,
+                    status => println!("Task {} has status: {}", task.id, status),
+                }
+            }
+
+            println!(
+                "Task statuses: {} completed, {} cancelled",
+                completed_count, cancelled_count
+            );
+            // At minimum, the winner should be completed
+            assert!(
+                completed_count >= 1,
+                "At least one task should be completed (the winner)"
+            );
+            // Cancellation may or may not succeed depending on timing - medium/slow tasks may have
+            // already started running by the time we try to cancel
+
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1438,99 +1626,136 @@ async fn test_agent_racing_tasks_with_cancellation() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_parallel_with_failure() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_parallel_with_failure", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_parallel_with_failure",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-parallel-failure-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-parallel-failure-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(ParallelWithFailuresAgent)
-            .register_task(ConditionalFailTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-parallel-failure-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-parallel-failure-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(ParallelWithFailuresAgent)
+                .register_task(ConditionalFailTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent with 3 tasks: 2 succeed, 1 fails
-        let agent = harness
-            .create_agent_execution(
-                "parallel-with-failures-agent",
-                json!({
-                    "tasks": [
-                        {"name": "task-a", "shouldFail": false},
-                        {"name": "task-b", "shouldFail": true},   // This one fails
-                        {"name": "task-c", "shouldFail": false}
-                    ]
-                }),
-                queue,
-            )
-            .await;
+            // Create agent with 3 tasks: 2 succeed, 1 fails
+            let agent = harness
+                .create_agent_execution(
+                    "parallel-with-failures-agent",
+                    json!({
+                        "tasks": [
+                            {"name": "task-a", "shouldFail": false},
+                            {"name": "task-b", "shouldFail": true},   // This one fails
+                            {"name": "task-c", "shouldFail": false}
+                        ]
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created parallel-with-failures agent execution: {}", agent.id);
+            println!(
+                "Created parallel-with-failures agent execution: {}",
+                agent.id
+            );
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(90))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(90),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete (handling failures gracefully)");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete (handling failures gracefully)"
+            );
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
 
-        let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
-        let completed_count = output.get("completedCount").and_then(|v| v.as_i64());
-        let failed_count = output.get("failedCount").and_then(|v| v.as_i64());
+            let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
+            let completed_count = output.get("completedCount").and_then(|v| v.as_i64());
+            let failed_count = output.get("failedCount").and_then(|v| v.as_i64());
 
-        println!("Total: {:?}, Completed: {:?}, Failed: {:?}", total_tasks, completed_count, failed_count);
+            println!(
+                "Total: {:?}, Completed: {:?}, Failed: {:?}",
+                total_tasks, completed_count, failed_count
+            );
 
-        assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
-        assert_eq!(completed_count, Some(2), "2 tasks should have completed successfully");
-        assert_eq!(failed_count, Some(1), "1 task should have failed");
+            assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
+            assert_eq!(
+                completed_count,
+                Some(2),
+                "2 tasks should have completed successfully"
+            );
+            assert_eq!(failed_count, Some(1), "1 task should have failed");
 
-        // Verify completed results
-        let completed_results = output.get("completedResults").and_then(|v| v.as_array());
-        assert!(completed_results.is_some(), "Should have completed results array");
-        assert_eq!(completed_results.unwrap().len(), 2, "Should have 2 completed results");
+            // Verify completed results
+            let completed_results = output.get("completedResults").and_then(|v| v.as_array());
+            assert!(
+                completed_results.is_some(),
+                "Should have completed results array"
+            );
+            assert_eq!(
+                completed_results.unwrap().len(),
+                2,
+                "Should have 2 completed results"
+            );
 
-        // Verify failed errors
-        let failed_errors = output.get("failedErrors").and_then(|v| v.as_array());
-        assert!(failed_errors.is_some(), "Should have failed errors array");
-        assert_eq!(failed_errors.unwrap().len(), 1, "Should have 1 failed error");
+            // Verify failed errors
+            let failed_errors = output.get("failedErrors").and_then(|v| v.as_array());
+            assert!(failed_errors.is_some(), "Should have failed errors array");
+            assert_eq!(
+                failed_errors.unwrap().len(),
+                1,
+                "Should have 1 failed error"
+            );
 
-        // Verify the failed task info
-        let failed_error = &failed_errors.unwrap()[0];
-        assert_eq!(failed_error.get("index").and_then(|v| v.as_i64()), Some(1), "Failed task should be at index 1");
+            // Verify the failed task info
+            let failed_error = &failed_errors.unwrap()[0];
+            assert_eq!(
+                failed_error.get("index").and_then(|v| v.as_i64()),
+                Some(1),
+                "Failed task should be at index 1"
+            );
 
-        // Verify all 3 tasks were created
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
+            // Verify all 3 tasks were created
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
 
-        // Check task statuses
-        let mut task_completed = 0;
-        let mut task_failed = 0;
-        for task in &tasks {
-            match task.status.to_uppercase().as_str() {
-                "COMPLETED" => task_completed += 1,
-                "FAILED" => task_failed += 1,
-                status => println!("Task {} has status: {}", task.id, status),
+            // Check task statuses
+            let mut task_completed = 0;
+            let mut task_failed = 0;
+            for task in &tasks {
+                match task.status.to_uppercase().as_str() {
+                    "COMPLETED" => task_completed += 1,
+                    "FAILED" => task_failed += 1,
+                    status => println!("Task {} has status: {}", task.id, status),
+                }
             }
-        }
 
-        assert_eq!(task_completed, 2, "2 tasks should be COMPLETED");
-        assert_eq!(task_failed, 1, "1 task should be FAILED");
+            assert_eq!(task_completed, 2, "2 tasks should be COMPLETED");
+            assert_eq!(task_failed, 1, "1 task should be FAILED");
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1544,83 +1769,97 @@ async fn test_agent_parallel_with_failure() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_cancel_completed_task() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_cancel_completed_task", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_cancel_completed_task",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-cancel-completed-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-cancel-completed-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(RacingTasksWithCancelAgent)
-            .register_task(SlowTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-cancel-completed-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-cancel-completed-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(RacingTasksWithCancelAgent)
+                .register_task(SlowTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent with tasks where fast wins quickly
-        // The medium and slow tasks may have already completed by the time we try to cancel
-        let agent = harness
-            .create_agent_execution(
-                "racing-tasks-with-cancel-agent",
-                json!({
-                    "fastDelayMs": 50,      // Very fast
-                    "mediumDelayMs": 100,   // Also fast - may complete before cancel
-                    "slowDelayMs": 150      // Also relatively fast - may complete before cancel
-                }),
-                queue,
-            )
-            .await;
+            // Create agent with tasks where fast wins quickly
+            // The medium and slow tasks may have already completed by the time we try to cancel
+            let agent = harness
+                .create_agent_execution(
+                    "racing-tasks-with-cancel-agent",
+                    json!({
+                        "fastDelayMs": 50,      // Very fast
+                        "mediumDelayMs": 100,   // Also fast - may complete before cancel
+                        "slowDelayMs": 150      // Also relatively fast - may complete before cancel
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created cancel-completed test agent execution: {}", agent.id);
-
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
-            .await;
-
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED");
-
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
-
-        // Fast task should win
-        let winner_index = output.get("winnerIndex").and_then(|v| v.as_i64());
-        assert_eq!(winner_index, Some(0), "Fast task should win");
-
-        // Check cancel results - some may have already completed
-        let cancel_results = output.get("cancelResults").and_then(|v| v.as_array());
-        assert!(cancel_results.is_some(), "Should have cancel results");
-
-        let cancel_results = cancel_results.unwrap();
-        println!("Cancel results: {:?}", cancel_results);
-
-        // Both cancel attempts should exist (for medium and slow tasks)
-        assert_eq!(cancel_results.len(), 2, "Should have 2 cancel attempts");
-
-        // At least verify the cancel attempts were made
-        // Some may be cancelled=false because task already completed
-        for result in cancel_results {
-            let cancelled = result.get("cancelled").and_then(|v| v.as_bool());
-            let reason = result.get("reason");
-            println!("Cancel attempt: cancelled={:?}, reason={:?}", cancelled, reason);
-            // Either successfully cancelled, or has a reason why not
-            assert!(
-                cancelled == Some(true) || reason.is_some(),
-                "Cancel should either succeed or have a reason for failure"
+            println!(
+                "Created cancel-completed test agent execution: {}",
+                agent.id
             );
-        }
 
-        handle.abort();
-    })
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
+
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(completed.status.to_uppercase(), "COMPLETED");
+
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
+
+            // Fast task should win
+            let winner_index = output.get("winnerIndex").and_then(|v| v.as_i64());
+            assert_eq!(winner_index, Some(0), "Fast task should win");
+
+            // Check cancel results - some may have already completed
+            let cancel_results = output.get("cancelResults").and_then(|v| v.as_array());
+            assert!(cancel_results.is_some(), "Should have cancel results");
+
+            let cancel_results = cancel_results.unwrap();
+            println!("Cancel results: {:?}", cancel_results);
+
+            // Both cancel attempts should exist (for medium and slow tasks)
+            assert_eq!(cancel_results.len(), 2, "Should have 2 cancel attempts");
+
+            // At least verify the cancel attempts were made
+            // Some may be cancelled=false because task already completed
+            for result in cancel_results {
+                let cancelled = result.get("cancelled").and_then(|v| v.as_bool());
+                let reason = result.get("reason");
+                println!(
+                    "Cancel attempt: cancelled={:?}, reason={:?}",
+                    cancelled, reason
+                );
+                // Either successfully cancelled, or has a reason why not
+                assert!(
+                    cancelled == Some(true) || reason.is_some(),
+                    "Cancel should either succeed or have a reason for failure"
+                );
+            }
+
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1635,108 +1874,130 @@ async fn test_agent_cancel_completed_task() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_timeout_cancels_all() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_timeout_cancels_all", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_timeout_cancels_all",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-timeout-cancel-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-timeout-cancel-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(TimeoutTasksAgent)
-            .register_task(SlowTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-timeout-cancel-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-timeout-cancel-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(TimeoutTasksAgent)
+                .register_task(SlowTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent with 3 slow tasks (5s each) but only 1s timeout
-        let agent = harness
-            .create_agent_execution(
-                "timeout-tasks-agent",
-                json!({
-                    "taskCount": 3,
-                    "taskDelayMs": 5000,   // Each task takes 5 seconds
-                    "timeoutMs": 1000      // But we only wait 1 second
-                }),
-                queue,
-            )
-            .await;
+            // Create agent with 3 slow tasks (5s each) but only 1s timeout
+            let agent = harness
+                .create_agent_execution(
+                    "timeout-tasks-agent",
+                    json!({
+                        "taskCount": 3,
+                        "taskDelayMs": 5000,   // Each task takes 5 seconds
+                        "timeoutMs": 1000      // But we only wait 1 second
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created timeout-tasks agent execution: {}", agent.id);
+            println!("Created timeout-tasks agent execution: {}", agent.id);
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete (handling timeout gracefully)");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete (handling timeout gracefully)"
+            );
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
 
-        let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
-        let completed_count = output.get("completedCount").and_then(|v| v.as_i64());
-        let cancelled_count = output.get("cancelledCount").and_then(|v| v.as_i64());
-        let timed_out = output.get("timedOut").and_then(|v| v.as_bool());
+            let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
+            let completed_count = output.get("completedCount").and_then(|v| v.as_i64());
+            let cancelled_count = output.get("cancelledCount").and_then(|v| v.as_i64());
+            let timed_out = output.get("timedOut").and_then(|v| v.as_bool());
 
-        println!(
-            "Total: {:?}, Completed: {:?}, Cancelled: {:?}, TimedOut: {:?}",
-            total_tasks, completed_count, cancelled_count, timed_out
-        );
+            println!(
+                "Total: {:?}, Completed: {:?}, Cancelled: {:?}, TimedOut: {:?}",
+                total_tasks, completed_count, cancelled_count, timed_out
+            );
 
-        assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
-        assert_eq!(timed_out, Some(true), "Should have timed out");
+            assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
+            assert_eq!(timed_out, Some(true), "Should have timed out");
 
-        // Note: With sequential task execution, the worker picks up tasks one at a time.
-        // When timeout occurs, some tasks may already be RUNNING (picked up by worker).
-        // cancel_task only works for PENDING tasks, so RUNNING tasks won't be cancelled.
-        // The agent reports "cancelled" based on its perspective (cancel request made),
-        // but the actual task status may be RUNNING if cancellation didn't succeed.
-        assert_eq!(completed_count, Some(0), "No tasks should have completed (they take 5s, timeout is 1s)");
+            // With sequential execution, cancel only affects PENDING tasks (not RUNNING).
+            // No tasks should complete (they take 5s, timeout is 1s).
+            assert_eq!(
+                completed_count,
+                Some(0),
+                "No tasks should have completed (they take 5s, timeout is 1s)"
+            );
 
-        // Verify cancelled indices from agent's perspective (cancel was attempted)
-        let cancelled_indices = output.get("cancelledIndices").and_then(|v| v.as_array());
-        assert!(cancelled_indices.is_some(), "Should have cancelled indices");
-        // Agent attempted to cancel all 3
-        assert_eq!(cancelled_indices.unwrap().len(), 3, "Should have attempted to cancel 3 tasks");
+            // Agent attempted to cancel all 3
+            let cancelled_indices = output.get("cancelledIndices").and_then(|v| v.as_array());
+            assert!(cancelled_indices.is_some(), "Should have cancelled indices");
+            assert_eq!(
+                cancelled_indices.unwrap().len(),
+                3,
+                "Should have attempted to cancel 3 tasks"
+            );
 
-        // Verify all 3 tasks were created
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
+            // Verify all 3 tasks were created
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
 
-        // Check task statuses - may be CANCELLED, RUNNING, or PENDING
-        // depending on whether the worker picked them up before cancel
-        let mut task_cancelled = 0;
-        let mut task_running = 0;
-        let mut task_pending = 0;
-        for task in &tasks {
-            match task.status.to_uppercase().as_str() {
-                "CANCELLED" => task_cancelled += 1,
-                "RUNNING" => task_running += 1,
-                "PENDING" => task_pending += 1,
-                status => println!("Task {} has status: {}", task.id, status),
-            }
-        }
+            // Count statuses (may be CANCELLED, RUNNING, or PENDING)
+            let count_status = |status: &str| {
+                tasks
+                    .iter()
+                    .filter(|t| t.status.eq_ignore_ascii_case(status))
+                    .count()
+            };
+            let (task_cancelled, task_running, task_pending) = (
+                count_status("CANCELLED"),
+                count_status("RUNNING"),
+                count_status("PENDING"),
+            );
 
-        println!("Task statuses: {} cancelled, {} running, {} pending", task_cancelled, task_running, task_pending);
+            println!(
+                "Task statuses: {} cancelled, {} running, {} pending",
+                task_cancelled, task_running, task_pending
+            );
 
-        // At least some tasks should be cancelled (those still PENDING when cancel was called)
-        // Note: With sequential execution, the first task may be RUNNING
-        assert!(task_cancelled + task_running + task_pending == 3, "All 3 tasks should have a valid status");
-        // None should be completed (they take 5s, we only waited 1s)
-        let task_completed = tasks.iter().filter(|t| t.status.to_uppercase() == "COMPLETED").count();
-        assert_eq!(task_completed, 0, "No tasks should be completed (they take 5s)");
+            assert_eq!(
+                task_cancelled + task_running + task_pending,
+                3,
+                "All 3 tasks should have a valid status"
+            );
+            assert_eq!(
+                count_status("COMPLETED"),
+                0,
+                "No tasks should be completed (they take 5s)"
+            );
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1750,80 +2011,100 @@ async fn test_agent_timeout_cancels_all() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_timeout_partial_completion() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_timeout_partial_completion", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_timeout_partial_completion",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-timeout-partial-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-timeout-partial-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(TimeoutTasksAgent)
-            .register_task(SlowTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-timeout-partial-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-timeout-partial-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(TimeoutTasksAgent)
+                .register_task(SlowTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Note: TimeoutTasksAgent uses same delay for all tasks
-        // For partial completion test, we use a timeout that allows some tasks to complete
-        // With 3 tasks at 200ms each and 500ms timeout, at least 1-2 should complete
-        let agent = harness
-            .create_agent_execution(
-                "timeout-tasks-agent",
-                json!({
-                    "taskCount": 3,
-                    "taskDelayMs": 200,    // Each task takes 200ms
-                    "timeoutMs": 350       // Timeout after 350ms (1-2 tasks should complete)
-                }),
-                queue,
-            )
-            .await;
+            // Note: TimeoutTasksAgent uses same delay for all tasks
+            // For partial completion test, we use a timeout that allows some tasks to complete
+            // With 3 tasks at 200ms each and 500ms timeout, at least 1-2 should complete
+            let agent = harness
+                .create_agent_execution(
+                    "timeout-tasks-agent",
+                    json!({
+                        "taskCount": 3,
+                        "taskDelayMs": 200,    // Each task takes 200ms
+                        "timeoutMs": 350       // Timeout after 350ms (1-2 tasks should complete)
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created partial-timeout agent execution: {}", agent.id);
+            println!("Created partial-timeout agent execution: {}", agent.id);
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(completed.status.to_uppercase(), "COMPLETED");
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
 
-        let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
-        let completed_count = output.get("completedCount").and_then(|v| v.as_i64()).unwrap_or(0);
-        let cancelled_count = output.get("cancelledCount").and_then(|v| v.as_i64()).unwrap_or(0);
-        let timed_out = output.get("timedOut").and_then(|v| v.as_bool());
+            let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
+            let completed_count = output
+                .get("completedCount")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let cancelled_count = output
+                .get("cancelledCount")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let timed_out = output.get("timedOut").and_then(|v| v.as_bool());
 
-        println!(
-            "Total: {:?}, Completed: {}, Cancelled: {}, TimedOut: {:?}",
-            total_tasks, completed_count, cancelled_count, timed_out
-        );
+            println!(
+                "Total: {:?}, Completed: {}, Cancelled: {}, TimedOut: {:?}",
+                total_tasks, completed_count, cancelled_count, timed_out
+            );
 
-        assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
+            assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
 
-        // Either all completed (no timeout) or we have a mix of completed and cancelled
-        if timed_out == Some(true) {
-            // Some tasks completed, some cancelled
-            assert!(completed_count > 0, "At least some tasks should have completed before timeout");
-            assert!(cancelled_count > 0, "Some tasks should have been cancelled due to timeout");
-            assert_eq!(completed_count + cancelled_count, 3, "Total should be 3");
-        } else {
-            // All completed before timeout
-            assert_eq!(completed_count, 3, "All tasks completed before timeout");
-        }
+            // Either all completed (no timeout) or we have a mix of completed and cancelled
+            if timed_out == Some(true) {
+                // Some tasks completed, some cancelled
+                assert!(
+                    completed_count > 0,
+                    "At least some tasks should have completed before timeout"
+                );
+                assert!(
+                    cancelled_count > 0,
+                    "Some tasks should have been cancelled due to timeout"
+                );
+                assert_eq!(completed_count + cancelled_count, 3, "Total should be 3");
+            } else {
+                // All completed before timeout
+                assert_eq!(completed_count, 3, "All tasks completed before timeout");
+            }
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1837,87 +2118,108 @@ async fn test_agent_timeout_partial_completion() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_mixed_parallel_sequential() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_mixed_parallel_sequential", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_mixed_parallel_sequential",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-mixed-parallel-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-mixed-parallel-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(MixedParallelSequentialAgent)
-            .register_task(EchoTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-mixed-parallel-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-mixed-parallel-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(MixedParallelSequentialAgent)
+                .register_task(EchoTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent
-        let agent = harness
-            .create_agent_execution(
-                "mixed-parallel-sequential-agent",
-                json!({}),
-                queue,
-            )
-            .await;
+            // Create agent
+            let agent = harness
+                .create_agent_execution("mixed-parallel-sequential-agent", json!({}), queue)
+                .await;
 
-        println!("Created mixed-parallel-sequential agent execution: {}", agent.id);
+            println!(
+                "Created mixed-parallel-sequential agent execution: {}",
+                agent.id
+            );
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(90))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(90),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(completed.status.to_uppercase(), "COMPLETED");
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
 
-        let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
-        let phases = output.get("phases").and_then(|v| v.as_i64());
-        let success = output.get("success").and_then(|v| v.as_bool());
+            let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
+            let phases = output.get("phases").and_then(|v| v.as_i64());
+            let success = output.get("success").and_then(|v| v.as_bool());
 
-        println!("Total tasks: {:?}, Phases: {:?}, Success: {:?}", total_tasks, phases, success);
+            println!(
+                "Total tasks: {:?}, Phases: {:?}, Success: {:?}",
+                total_tasks, phases, success
+            );
 
-        assert_eq!(total_tasks, Some(6), "Should have 6 total tasks (2 + 1 + 3)");
-        assert_eq!(phases, Some(3), "Should have 3 phases");
-        assert_eq!(success, Some(true), "Should be successful");
+            assert_eq!(
+                total_tasks,
+                Some(6),
+                "Should have 6 total tasks (2 + 1 + 3)"
+            );
+            assert_eq!(phases, Some(3), "Should have 3 phases");
+            assert_eq!(success, Some(true), "Should be successful");
 
-        // Verify phase results
-        let phase1 = output.get("phase1").and_then(|v| v.as_array());
-        let phase2 = output.get("phase2");
-        let phase3 = output.get("phase3").and_then(|v| v.as_array());
+            // Verify phase results
+            let phase1 = output.get("phase1").and_then(|v| v.as_array());
+            let phase2 = output.get("phase2");
+            let phase3 = output.get("phase3").and_then(|v| v.as_array());
 
-        assert!(phase1.is_some(), "Should have phase1 results");
-        assert_eq!(phase1.unwrap().len(), 2, "Phase 1 should have 2 results");
+            assert!(phase1.is_some(), "Should have phase1 results");
+            assert_eq!(phase1.unwrap().len(), 2, "Phase 1 should have 2 results");
 
-        assert!(phase2.is_some(), "Should have phase2 result");
+            assert!(phase2.is_some(), "Should have phase2 result");
 
-        assert!(phase3.is_some(), "Should have phase3 results");
-        assert_eq!(phase3.unwrap().len(), 3, "Phase 3 should have 3 results");
+            assert!(phase3.is_some(), "Should have phase3 results");
+            assert_eq!(phase3.unwrap().len(), 3, "Phase 3 should have 3 results");
 
-        // Verify all 6 tasks were created
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert_eq!(tasks.len(), 6, "Agent should have scheduled 6 tasks");
+            // Verify all 6 tasks were created
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 6, "Agent should have scheduled 6 tasks");
 
-        // All tasks should be completed
-        for task in &tasks {
-            assert_eq!(task.status.to_uppercase(), "COMPLETED", "All tasks should be COMPLETED");
-        }
+            // All tasks should be completed
+            for task in &tasks {
+                assert_eq!(
+                    task.status.to_uppercase(),
+                    "COMPLETED",
+                    "All tasks should be COMPLETED"
+                );
+            }
 
-        // Verify checkpoints
-        let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
-        assert!(checkpoints.len() >= 3, "Agent should have at least 3 checkpoints (one per phase)");
+            // Verify checkpoints
+            let checkpoints = harness.list_agent_checkpoints(&agent.id.to_string()).await;
+            assert!(
+                checkpoints.len() >= 3,
+                "Agent should have at least 3 checkpoints (one per phase)"
+            );
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -1930,68 +2232,83 @@ async fn test_agent_mixed_parallel_sequential() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_batch_api_scheduling() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_batch_api_scheduling", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_batch_api_scheduling",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-batch-api-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-batch-api-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(BatchSchedulingAgent)
-            .register_task(EchoTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-batch-api-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-batch-api-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(BatchSchedulingAgent)
+                .register_task(EchoTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Create agent that will use batch scheduling for 5 items
-        let agent = harness
-            .create_agent_execution(
-                "batch-scheduling-agent",
-                json!({
-                    "items": ["alpha", "beta", "gamma", "delta", "epsilon"],
-                    "taskKind": "echo-task"
-                }),
-                queue,
-            )
-            .await;
+            // Create agent that will use batch scheduling for 5 items
+            let agent = harness
+                .create_agent_execution(
+                    "batch-scheduling-agent",
+                    json!({
+                        "items": ["alpha", "beta", "gamma", "delta", "epsilon"],
+                        "taskKind": "echo-task"
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created batch-scheduling agent execution: {}", agent.id);
+            println!("Created batch-scheduling agent execution: {}", agent.id);
 
-        // Wait for agent to complete
-        let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(90))
-            .await;
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(90),
+                )
+                .await;
 
-        println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete successfully");
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete successfully"
+            );
 
-        // Verify output
-        let output = completed.output.expect("Agent should have output");
-        assert_eq!(output.get("itemCount").and_then(|v| v.as_i64()), Some(5));
-        assert_eq!(output.get("usedBatchApi").and_then(|v| v.as_bool()), Some(true));
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
+            assert_eq!(output.get("itemCount").and_then(|v| v.as_i64()), Some(5));
+            assert_eq!(
+                output.get("usedBatchApi").and_then(|v| v.as_bool()),
+                Some(true)
+            );
 
-        let results = output.get("results").and_then(|v| v.as_array());
-        assert!(results.is_some(), "Output should include results array");
-        assert_eq!(results.unwrap().len(), 5, "Should have 5 results");
+            let results = output.get("results").and_then(|v| v.as_array());
+            assert!(results.is_some(), "Output should include results array");
+            assert_eq!(results.unwrap().len(), 5, "Should have 5 results");
 
-        // Verify all 5 tasks were created
-        let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
-        assert_eq!(tasks.len(), 5, "Agent should have scheduled 5 tasks");
+            // Verify all 5 tasks were created
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 5, "Agent should have scheduled 5 tasks");
 
-        for task in &tasks {
-            assert_eq!(task.status.to_uppercase(), "COMPLETED");
-        }
+            for task in &tasks {
+                assert_eq!(task.status.to_uppercase(), "COMPLETED");
+            }
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }
 
@@ -2044,11 +2361,19 @@ async fn test_agent_cancel_and_replace() {
 
         // Wait for agent to complete
         let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
+            .wait_for_agent_status(
+                &agent.id.to_string(),
+                &["COMPLETED", "FAILED"],
+                Duration::from_secs(60),
+            )
             .await;
 
         println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete successfully");
+        assert_eq!(
+            completed.status.to_uppercase(),
+            "COMPLETED",
+            "Agent should complete successfully"
+        );
 
         // Verify output
         let output = completed.output.expect("Agent should have output");
@@ -2057,39 +2382,60 @@ async fn test_agent_cancel_and_replace() {
         let slow_task_status = output.get("slowTaskStatus").and_then(|v| v.as_str());
         let success = output.get("success").and_then(|v| v.as_bool());
 
-        println!("Slow task cancelled: {:?}, status: {:?}, success: {:?}", slow_task_cancelled, slow_task_status, success);
+        println!(
+            "Slow task cancelled: {:?}, status: {:?}, success: {:?}",
+            slow_task_cancelled, slow_task_status, success
+        );
 
-        // Note: Cancellation may fail if the task was already picked up by the worker (RUNNING).
-        // cancel_task only works for PENDING tasks. This is expected behavior.
-        // The important thing is that the agent completed successfully and has a replacement result.
+        // Cancellation may fail if task was already RUNNING. The key is that replacement succeeds.
         assert_eq!(success, Some(true), "Agent should complete successfully");
 
         // Verify replacement result
         let replacement_result = output.get("replacementResult");
-        assert!(replacement_result.is_some(), "Should have replacement result");
+        assert!(
+            replacement_result.is_some(),
+            "Should have replacement result"
+        );
 
         if let Some(result) = replacement_result {
             let source = result.get("source").and_then(|v| v.as_str());
-            assert_eq!(source, Some("fast-replacement"), "Result should be from fast replacement");
+            assert_eq!(
+                source,
+                Some("fast-replacement"),
+                "Result should be from fast replacement"
+            );
         }
 
-        // Verify tasks - should have 2 tasks total
+        // Verify tasks - slow task may be CANCELLED or RUNNING, replacement should be COMPLETED
         let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
         assert_eq!(tasks.len(), 2, "Agent should have scheduled 2 tasks");
 
-        // The slow task may be CANCELLED (if cancellation succeeded) or
-        // RUNNING/COMPLETED (if the worker picked it up before cancellation).
-        // The replacement task should be COMPLETED.
-        let cancelled_count = tasks.iter().filter(|t| t.status.to_uppercase() == "CANCELLED").count();
-        let completed_count = tasks.iter().filter(|t| t.status.to_uppercase() == "COMPLETED").count();
-        let running_count = tasks.iter().filter(|t| t.status.to_uppercase() == "RUNNING").count();
+        let count_status = |status: &str| {
+            tasks
+                .iter()
+                .filter(|t| t.status.eq_ignore_ascii_case(status))
+                .count()
+        };
+        let (cancelled_count, completed_count, running_count) = (
+            count_status("CANCELLED"),
+            count_status("COMPLETED"),
+            count_status("RUNNING"),
+        );
 
-        println!("Tasks: {} cancelled, {} completed, {} running", cancelled_count, completed_count, running_count);
+        println!(
+            "Tasks: {} cancelled, {} completed, {} running",
+            cancelled_count, completed_count, running_count
+        );
 
-        // At least one task should be completed (the replacement)
-        assert!(completed_count >= 1, "At least one task (replacement) should be completed");
-        // Total should be 2
-        assert_eq!(cancelled_count + completed_count + running_count, 2, "All 2 tasks should have a status");
+        assert!(
+            completed_count >= 1,
+            "At least one task (replacement) should be completed"
+        );
+        assert_eq!(
+            cancelled_count + completed_count + running_count,
+            2,
+            "All 2 tasks should have a status"
+        );
 
         handle.abort();
     })
@@ -2143,11 +2489,19 @@ async fn test_agent_cancel_idempotency() {
 
         // Wait for agent to complete
         let completed = harness
-            .wait_for_agent_status(&agent.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
+            .wait_for_agent_status(
+                &agent.id.to_string(),
+                &["COMPLETED", "FAILED"],
+                Duration::from_secs(60),
+            )
             .await;
 
         println!("Agent completed with status: {}", completed.status);
-        assert_eq!(completed.status.to_uppercase(), "COMPLETED", "Agent should complete successfully");
+        assert_eq!(
+            completed.status.to_uppercase(),
+            "COMPLETED",
+            "Agent should complete successfully"
+        );
 
         // Verify output
         let output = completed.output.expect("Agent should have output");
@@ -2156,10 +2510,17 @@ async fn test_agent_cancel_idempotency() {
         let first_cancel_succeeded = output.get("firstCancelSucceeded").and_then(|v| v.as_bool());
         let success = output.get("success").and_then(|v| v.as_bool());
 
-        println!("Cancel count: {:?}, first succeeded: {:?}", cancel_count, first_cancel_succeeded);
+        println!(
+            "Cancel count: {:?}, first succeeded: {:?}",
+            cancel_count, first_cancel_succeeded
+        );
 
         assert_eq!(cancel_count, Some(3), "Should have made 3 cancel attempts");
-        assert_eq!(first_cancel_succeeded, Some(true), "First cancel should succeed");
+        assert_eq!(
+            first_cancel_succeeded,
+            Some(true),
+            "First cancel should succeed"
+        );
         assert_eq!(success, Some(true), "Agent should complete successfully");
 
         // Verify cancel results
@@ -2181,16 +2542,29 @@ async fn test_agent_cancel_idempotency() {
         for (i, result) in cancel_results.iter().enumerate().skip(1) {
             let cancelled = result.get("cancelled").and_then(|v| v.as_bool());
             let status = result.get("status").and_then(|v| v.as_str());
-            println!("Cancel attempt {}: cancelled={:?}, status={:?}", i + 1, cancelled, status);
+            println!(
+                "Cancel attempt {}: cancelled={:?}, status={:?}",
+                i + 1,
+                cancelled,
+                status
+            );
             // Already cancelled - cancelled should be false
-            assert_eq!(cancelled, Some(false), "Subsequent cancels should return false");
+            assert_eq!(
+                cancelled,
+                Some(false),
+                "Subsequent cancels should return false"
+            );
             assert_eq!(status, Some("CANCELLED"), "Status should be CANCELLED");
         }
 
         // Verify task status
         let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
         assert_eq!(tasks.len(), 1, "Agent should have scheduled 1 task");
-        assert_eq!(tasks[0].status.to_uppercase(), "CANCELLED", "Task should be CANCELLED");
+        assert_eq!(
+            tasks[0].status.to_uppercase(),
+            "CANCELLED",
+            "Task should be CANCELLED"
+        );
 
         handle.abort();
     })
@@ -2208,94 +2582,140 @@ async fn test_agent_cancel_idempotency() {
 #[tokio::test]
 #[ignore] // Enable when Docker is available
 async fn test_agent_join_all_with_cancelled_handle() {
-    with_timeout(AGENT_TEST_TIMEOUT, "test_agent_join_all_with_cancelled_handle", async {
-        let harness = get_harness().await;
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_join_all_with_cancelled_handle",
+        async {
+            let harness = get_harness().await;
 
-        let queue = "agent-join-cancelled-queue";
-        let client = FlovynClient::builder()
-            .server_url(harness.grpc_url())
-            .org_id(harness.org_id())
-            .worker_id("e2e-join-cancelled-worker")
-            .worker_token(harness.worker_token())
-            .queue(queue)
-            .register_agent(JoinAllWithCancelledHandleAgent)
-            .register_task(SlowTask)
-            .build()
-            .await
-            .expect("Failed to build FlovynClient");
+            let queue = "agent-join-cancelled-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-join-cancelled-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(JoinAllWithCancelledHandleAgent)
+                .register_task(SlowTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
 
-        let handle = client.start().await.expect("Failed to start worker");
-        handle.await_ready().await;
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Test 1: Using regular join_all (should fail)
-        let agent1 = harness
-            .create_agent_execution(
-                "join-all-cancelled-handle-agent",
-                json!({
-                    "useOutcomes": false
-                }),
-                queue,
-            )
-            .await;
+            // Test 1: Using regular join_all (should fail)
+            let agent1 = harness
+                .create_agent_execution(
+                    "join-all-cancelled-handle-agent",
+                    json!({
+                        "useOutcomes": false
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created join-all-cancelled test agent (regular): {}", agent1.id);
+            println!(
+                "Created join-all-cancelled test agent (regular): {}",
+                agent1.id
+            );
 
-        let completed1 = harness
-            .wait_for_agent_status(&agent1.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
-            .await;
+            let completed1 = harness
+                .wait_for_agent_status(
+                    &agent1.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
 
-        println!("Agent 1 completed with status: {}", completed1.status);
-        assert_eq!(completed1.status.to_uppercase(), "COMPLETED", "Agent should complete");
+            println!("Agent 1 completed with status: {}", completed1.status);
+            assert_eq!(
+                completed1.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete"
+            );
 
-        let output1 = completed1.output.expect("Agent should have output");
-        let task1_cancelled = output1.get("task1Cancelled").and_then(|v| v.as_bool());
-        let join_all_succeeded = output1.get("joinAllSucceeded").and_then(|v| v.as_bool());
-        let success1 = output1.get("success").and_then(|v| v.as_bool());
+            let output1 = completed1.output.expect("Agent should have output");
+            let task1_cancelled = output1.get("task1Cancelled").and_then(|v| v.as_bool());
+            let join_all_succeeded = output1.get("joinAllSucceeded").and_then(|v| v.as_bool());
+            let success1 = output1.get("success").and_then(|v| v.as_bool());
 
-        println!("Task1 cancelled: {:?}, joinAll succeeded: {:?}, success: {:?}",
-                 task1_cancelled, join_all_succeeded, success1);
+            println!(
+                "Task1 cancelled: {:?}, joinAll succeeded: {:?}, success: {:?}",
+                task1_cancelled, join_all_succeeded, success1
+            );
 
-        assert_eq!(task1_cancelled, Some(true), "Task 1 should have been cancelled");
-        assert_eq!(join_all_succeeded, Some(false), "join_all should have failed");
-        assert_eq!(success1, Some(true), "Test should succeed (expected failure handled)");
+            assert_eq!(
+                task1_cancelled,
+                Some(true),
+                "Task 1 should have been cancelled"
+            );
+            assert_eq!(
+                join_all_succeeded,
+                Some(false),
+                "join_all should have failed"
+            );
+            assert_eq!(
+                success1,
+                Some(true),
+                "Test should succeed (expected failure handled)"
+            );
 
-        // Test 2: Using outcomes API (should handle gracefully)
-        let agent2 = harness
-            .create_agent_execution(
-                "join-all-cancelled-handle-agent",
-                json!({
-                    "useOutcomes": true
-                }),
-                queue,
-            )
-            .await;
+            // Test 2: Using outcomes API (should handle gracefully)
+            let agent2 = harness
+                .create_agent_execution(
+                    "join-all-cancelled-handle-agent",
+                    json!({
+                        "useOutcomes": true
+                    }),
+                    queue,
+                )
+                .await;
 
-        println!("Created join-all-cancelled test agent (outcomes): {}", agent2.id);
+            println!(
+                "Created join-all-cancelled test agent (outcomes): {}",
+                agent2.id
+            );
 
-        let completed2 = harness
-            .wait_for_agent_status(&agent2.id.to_string(), &["COMPLETED", "FAILED"], Duration::from_secs(60))
-            .await;
+            let completed2 = harness
+                .wait_for_agent_status(
+                    &agent2.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
 
-        println!("Agent 2 completed with status: {}", completed2.status);
-        assert_eq!(completed2.status.to_uppercase(), "COMPLETED", "Agent should complete");
+            println!("Agent 2 completed with status: {}", completed2.status);
+            assert_eq!(
+                completed2.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete"
+            );
 
-        let output2 = completed2.output.expect("Agent should have output");
-        let used_outcomes = output2.get("usedOutcomes").and_then(|v| v.as_bool());
-        let completed_count = output2.get("completedCount").and_then(|v| v.as_i64());
-        let cancelled_count = output2.get("cancelledCount").and_then(|v| v.as_i64());
-        let success2 = output2.get("success").and_then(|v| v.as_bool());
+            let output2 = completed2.output.expect("Agent should have output");
+            let used_outcomes = output2.get("usedOutcomes").and_then(|v| v.as_bool());
+            let completed_count = output2.get("completedCount").and_then(|v| v.as_i64());
+            let cancelled_count = output2.get("cancelledCount").and_then(|v| v.as_i64());
+            let success2 = output2.get("success").and_then(|v| v.as_bool());
 
-        println!("Used outcomes: {:?}, completed: {:?}, cancelled: {:?}, success: {:?}",
-                 used_outcomes, completed_count, cancelled_count, success2);
+            println!(
+                "Used outcomes: {:?}, completed: {:?}, cancelled: {:?}, success: {:?}",
+                used_outcomes, completed_count, cancelled_count, success2
+            );
 
-        assert_eq!(used_outcomes, Some(true), "Should have used outcomes API");
-        assert_eq!(completed_count, Some(1), "One task should have completed");
-        assert_eq!(cancelled_count, Some(1), "One task should have been cancelled");
-        assert_eq!(success2, Some(true), "Test should succeed");
+            assert_eq!(used_outcomes, Some(true), "Should have used outcomes API");
+            assert_eq!(completed_count, Some(1), "One task should have completed");
+            assert_eq!(
+                cancelled_count,
+                Some(1),
+                "One task should have been cancelled"
+            );
+            assert_eq!(success2, Some(true), "Test should succeed");
 
-        handle.abort();
-    })
+            handle.abort();
+        },
+    )
     .await;
 }

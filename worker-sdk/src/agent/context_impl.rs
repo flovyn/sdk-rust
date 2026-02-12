@@ -105,6 +105,7 @@ impl AgentContextImpl {
     }
 
     /// Create from pre-loaded data (for testing or optimization).
+    #[allow(clippy::too_many_arguments)]
     pub fn from_loaded(
         client: AgentDispatch,
         agent_execution_id: Uuid,
@@ -443,7 +444,9 @@ impl AgentContext for AgentContextImpl {
         }
 
         if task_result.is_failed() {
-            let error = task_result.error.unwrap_or_else(|| "Task failed".to_string());
+            let error = task_result
+                .error
+                .unwrap_or_else(|| "Task failed".to_string());
             return Err(FlovynError::TaskFailed(format!(
                 "Task '{}' failed: {}",
                 task_kind, error
@@ -537,18 +540,22 @@ impl AgentContext for AgentContextImpl {
         let timestamp_ms = Self::now_ms();
 
         let (event_type, payload) = match event {
-            StreamEvent::Token { text } => {
-                (AgentStreamEventType::AgentToken, serde_json::json!({"text": text}))
-            }
-            StreamEvent::Progress { progress, details } => {
-                (AgentStreamEventType::AgentProgress, serde_json::json!({"progress": progress, "details": details}))
-            }
-            StreamEvent::Data { data } => {
-                (AgentStreamEventType::AgentData, serde_json::json!({"data": data}))
-            }
-            StreamEvent::Error { message, code } => {
-                (AgentStreamEventType::AgentError, serde_json::json!({"message": message, "code": code}))
-            }
+            StreamEvent::Token { text } => (
+                AgentStreamEventType::AgentToken,
+                serde_json::json!({"text": text}),
+            ),
+            StreamEvent::Progress { progress, details } => (
+                AgentStreamEventType::AgentProgress,
+                serde_json::json!({"progress": progress, "details": details}),
+            ),
+            StreamEvent::Data { data } => (
+                AgentStreamEventType::AgentData,
+                serde_json::json!({"data": data}),
+            ),
+            StreamEvent::Error { message, code } => (
+                AgentStreamEventType::AgentError,
+                serde_json::json!({"message": message, "code": code}),
+            ),
         };
 
         let payload_str = serde_json::to_string(&payload)?;
@@ -588,8 +595,12 @@ impl AgentContext for AgentContextImpl {
         task_kind: &str,
         input: Value,
     ) -> Result<crate::agent::combinators::AgentTaskHandle> {
-        self.schedule_task_handle_with_options(task_kind, input, ScheduleAgentTaskOptions::default())
-            .await
+        self.schedule_task_handle_with_options(
+            task_kind,
+            input,
+            ScheduleAgentTaskOptions::default(),
+        )
+        .await
     }
 
     async fn schedule_task_handle_with_options(
@@ -762,8 +773,7 @@ impl AgentContext for AgentContextImpl {
 
         // Get the starting index for these tasks
         // Note: counter was already incremented in generate_task_idempotency_key calls
-        let start_index =
-            self.scheduled_task_counter.load(Ordering::SeqCst) as usize - tasks.len();
+        let start_index = self.scheduled_task_counter.load(Ordering::SeqCst) as usize - tasks.len();
 
         // Build handles
         let mut handles = Vec::with_capacity(results.len());
@@ -871,9 +881,18 @@ mod tests {
 
         // Verify the format doesn't contain checkpoint sequence pattern
         // (which would look like a number between two colons before the counter)
-        assert!(key_format_0.contains(":task:"), "Key should use ':task:' format");
-        assert!(!key_format_0.contains(":-1:"), "Key should NOT include checkpoint_seq");
-        assert!(!key_format_0.contains(":0:0"), "Key should NOT use old format");
+        assert!(
+            key_format_0.contains(":task:"),
+            "Key should use ':task:' format"
+        );
+        assert!(
+            !key_format_0.contains(":-1:"),
+            "Key should NOT include checkpoint_seq"
+        );
+        assert!(
+            !key_format_0.contains(":0:0"),
+            "Key should NOT use old format"
+        );
 
         // Verify keys for different tasks are different
         assert_ne!(key_format_0, key_format_1);
@@ -908,16 +927,26 @@ mod tests {
         let key_run2 = format!("{}:task:{}", agent_id, task_counter_resume);
 
         // CRITICAL: Keys must be identical for the same task across suspensions
-        assert_eq!(key_run1, key_run2,
+        assert_eq!(
+            key_run1, key_run2,
             "Idempotency key must be stable across suspension/resume. \
              checkpoint_seq changed from {} to {} but key should be unchanged.",
-            checkpoint_seq_initial, checkpoint_seq_resume);
+            checkpoint_seq_initial, checkpoint_seq_resume
+        );
 
         // Verify the buggy format WOULD have been different
-        let buggy_key_run1 = format!("{}:{}:{}", agent_id, checkpoint_seq_initial, task_counter_initial);
-        let buggy_key_run2 = format!("{}:{}:{}", agent_id, checkpoint_seq_resume, task_counter_resume);
-        assert_ne!(buggy_key_run1, buggy_key_run2,
-            "Old buggy format would have produced different keys");
+        let buggy_key_run1 = format!(
+            "{}:{}:{}",
+            agent_id, checkpoint_seq_initial, task_counter_initial
+        );
+        let buggy_key_run2 = format!(
+            "{}:{}:{}",
+            agent_id, checkpoint_seq_resume, task_counter_resume
+        );
+        assert_ne!(
+            buggy_key_run1, buggy_key_run2,
+            "Old buggy format would have produced different keys"
+        );
     }
 
     /// Test the actual generate_task_idempotency_key format.
@@ -935,7 +964,11 @@ mod tests {
 
         // Verify format
         let parts: Vec<&str> = key.split(':').collect();
-        assert_eq!(parts.len(), 3, "Key should have 3 parts: agent_id:task:index");
+        assert_eq!(
+            parts.len(),
+            3,
+            "Key should have 3 parts: agent_id:task:index"
+        );
         assert_eq!(parts[1], "task", "Second part should be 'task'");
         assert_eq!(parts[2], "42", "Third part should be the index");
 

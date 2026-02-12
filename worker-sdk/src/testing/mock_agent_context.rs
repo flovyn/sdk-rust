@@ -1,9 +1,7 @@
 //! Mock agent context for unit testing agents in isolation.
 
 use crate::agent::combinators::AgentTaskHandle;
-use crate::agent::context::{
-    AgentContext, EntryRole, LoadedMessage, ScheduleAgentTaskOptions,
-};
+use crate::agent::context::{AgentContext, EntryRole, LoadedMessage, ScheduleAgentTaskOptions};
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
@@ -410,13 +408,13 @@ impl AgentContext for MockAgentContext {
         }
     }
 
-    async fn schedule_task_handle(
-        &self,
-        task_kind: &str,
-        input: Value,
-    ) -> Result<AgentTaskHandle> {
-        self.schedule_task_handle_with_options(task_kind, input, ScheduleAgentTaskOptions::default())
-            .await
+    async fn schedule_task_handle(&self, task_kind: &str, input: Value) -> Result<AgentTaskHandle> {
+        self.schedule_task_handle_with_options(
+            task_kind,
+            input,
+            ScheduleAgentTaskOptions::default(),
+        )
+        .await
     }
 
     async fn schedule_task_handle_with_options(
@@ -453,22 +451,20 @@ impl AgentContext for MockAgentContext {
                     .map(|t| t.task_kind.clone());
 
                 match task_kind {
-                    Some(kind) => {
-                        match self.inner.task_results.read().get(&kind) {
-                            Some(result) => BatchTaskResult {
-                                task_execution_id: *task_id,
-                                status: "COMPLETED".to_string(),
-                                output: Some(result.clone()),
-                                error: None,
-                            },
-                            None => BatchTaskResult {
-                                task_execution_id: *task_id,
-                                status: "PENDING".to_string(),
-                                output: None,
-                                error: None,
-                            },
-                        }
-                    }
+                    Some(kind) => match self.inner.task_results.read().get(&kind) {
+                        Some(result) => BatchTaskResult {
+                            task_execution_id: *task_id,
+                            status: "COMPLETED".to_string(),
+                            output: Some(result.clone()),
+                            error: None,
+                        },
+                        None => BatchTaskResult {
+                            task_execution_id: *task_id,
+                            status: "PENDING".to_string(),
+                            output: None,
+                            error: None,
+                        },
+                    },
                     None => BatchTaskResult {
                         task_execution_id: *task_id,
                         status: "NOT_FOUND".to_string(),
@@ -858,10 +854,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result2, expected_result,
-            "Task result should be consistent across suspension/resume");
-        assert_eq!(result1, result2,
-            "Same task should return same result on resume");
+        assert_eq!(
+            result2, expected_result,
+            "Task result should be consistent across suspension/resume"
+        );
+        assert_eq!(
+            result1, result2,
+            "Same task should return same result on resume"
+        );
     }
 
     /// Test that demonstrates the importance of stable idempotency keys.
@@ -885,7 +885,10 @@ mod tests {
             .build();
 
         // First task scheduling (simulating first execution)
-        let result1 = ctx.schedule_task_raw("llm-request", json!({})).await.unwrap();
+        let result1 = ctx
+            .schedule_task_raw("llm-request", json!({}))
+            .await
+            .unwrap();
         assert_eq!(result1, llm_result);
 
         // Checkpoint (simulating suspension)
@@ -894,7 +897,10 @@ mod tests {
 
         // Second task scheduling (simulating resume)
         // Even though checkpoint_seq changed from 0 to 1, the result should be the same
-        let result2 = ctx.schedule_task_raw("llm-request", json!({})).await.unwrap();
+        let result2 = ctx
+            .schedule_task_raw("llm-request", json!({}))
+            .await
+            .unwrap();
         assert_eq!(result2, llm_result);
 
         // More checkpoints (simulating multiple suspension/resume cycles)
@@ -903,9 +909,14 @@ mod tests {
         assert_eq!(ctx.checkpoint_sequence(), 3);
 
         // Task result should still be the same
-        let result3 = ctx.schedule_task_raw("llm-request", json!({})).await.unwrap();
-        assert_eq!(result3, llm_result,
-            "Task result must be stable regardless of checkpoint_seq changes");
+        let result3 = ctx
+            .schedule_task_raw("llm-request", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            result3, llm_result,
+            "Task result must be stable regardless of checkpoint_seq changes"
+        );
     }
 
     /// Test that verifies the format of idempotency keys used in AgentContextImpl.
@@ -919,16 +930,22 @@ mod tests {
         // CORRECT format (current implementation):
         // "{agent_id}:task:{counter}"
         let correct_key_0 = format!("{}:task:{}", agent_id, 0);
-        let correct_key_1 = format!("{}:task:{}", agent_id, 1);
+        let _correct_key_1 = format!("{}:task:{}", agent_id, 1);
 
         // The key should NOT include checkpoint_seq
-        assert!(!correct_key_0.contains(":-1:"), "Key must not include checkpoint_seq");
-        assert!(correct_key_0.contains(":task:"), "Key must use ':task:' separator");
+        assert!(
+            !correct_key_0.contains(":-1:"),
+            "Key must not include checkpoint_seq"
+        );
+        assert!(
+            correct_key_0.contains(":task:"),
+            "Key must use ':task:' separator"
+        );
 
         // BUGGY format (old implementation that caused infinite task creation):
         // "{agent_id}:{checkpoint_seq}:{counter}"
         let _buggy_key_run1 = format!("{}:{}:{}", agent_id, -1, 0); // First run
-        let _buggy_key_run2 = format!("{}:{}:{}", agent_id, 5, 0);  // After resume
+        let _buggy_key_run2 = format!("{}:{}:{}", agent_id, 5, 0); // After resume
 
         // The buggy keys would be different even for the same logical task,
         // causing the server to create a new task instead of returning the existing one.

@@ -75,8 +75,11 @@ impl DynamicAgent for MultiTurnAgent {
             .unwrap_or("Hello");
 
         // Append system message
-        ctx.append_entry(EntryRole::System, &json!({"text": "You are a helpful assistant."}))
-            .await?;
+        ctx.append_entry(
+            EntryRole::System,
+            &json!({"text": "You are a helpful assistant."}),
+        )
+        .await?;
 
         // Append user message
         ctx.append_entry(EntryRole::User, &json!({"text": prompt}))
@@ -258,10 +261,7 @@ impl DynamicAgent for CheckpointAgent {
         ctx: &dyn AgentContext,
         input: DynamicAgentInput,
     ) -> Result<DynamicAgentOutput> {
-        let steps = input
-            .get("steps")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(3) as i32;
+        let steps = input.get("steps").and_then(|v| v.as_u64()).unwrap_or(3) as i32;
 
         // Get starting point from checkpoint state (for resume)
         let start_step = ctx
@@ -435,9 +435,7 @@ impl DynamicAgent for RacingTasksAgent {
         }))
         .await?;
 
-        // Schedule both tasks - fallback first so it gets picked up first with sequential execution
-        // In a sequential task worker, the first scheduled task is picked up first.
-        // To test the "faster wins" behavior, we schedule the faster task first.
+        // Schedule fallback first - with sequential execution, it gets picked up first
         let fallback = ctx
             .schedule_task_handle(
                 "slow-task",
@@ -458,15 +456,17 @@ impl DynamicAgent for RacingTasksAgent {
             )
             .await?;
 
-        // Race - first to complete wins (fallback at index 0, primary at index 1)
+        // Race: fallback is index 0, primary is index 1
         let (winner_index, result) = agent_select(ctx, vec![fallback, primary]).await?;
 
-        // Checkpoint after race
         ctx.checkpoint(&json!({"phase": "post-race", "winnerIndex": winner_index}))
             .await?;
 
-        // Log winner (fallback is index 0, primary is index 1)
-        let winner_name = if winner_index == 0 { "fallback" } else { "primary" };
+        let winner_name = if winner_index == 0 {
+            "fallback"
+        } else {
+            "primary"
+        };
         ctx.append_entry(
             EntryRole::Assistant,
             &json!({"text": format!("{} task won the race", winner_name)}),
@@ -728,10 +728,7 @@ impl DynamicAgent for TimeoutTasksAgent {
         input: DynamicAgentInput,
     ) -> Result<DynamicAgentOutput> {
         // Get configuration
-        let task_count = input
-            .get("taskCount")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(3) as usize;
+        let task_count = input.get("taskCount").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
         let task_delay_ms = input
             .get("taskDelayMs")
             .and_then(|v| v.as_u64())
@@ -777,8 +774,8 @@ impl DynamicAgent for TimeoutTasksAgent {
 
         // Wait with timeout
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        let result = agent_join_all_with_timeout(ctx, handles, timeout, Some("Timeout exceeded"))
-            .await?;
+        let result =
+            agent_join_all_with_timeout(ctx, handles, timeout, Some("Timeout exceeded")).await?;
 
         // Checkpoint after timeout
         ctx.checkpoint(&json!({
@@ -949,7 +946,9 @@ impl DynamicAgent for CancelAndReplaceAgent {
         tokio::time::sleep(std::time::Duration::from_millis(wait_before_cancel_ms)).await;
 
         // Cancel the slow task
-        let cancel_result = ctx.cancel_task(&slow_task, Some("Replacing with faster task")).await?;
+        let cancel_result = ctx
+            .cancel_task(&slow_task, Some("Replacing with faster task"))
+            .await?;
 
         // Schedule faster replacement
         let fast_task = ctx
@@ -967,7 +966,8 @@ impl DynamicAgent for CancelAndReplaceAgent {
         let result = results.into_iter().next().unwrap_or(json!(null));
 
         // Checkpoint after replacement completes
-        ctx.checkpoint(&json!({"phase": "post-replacement"})).await?;
+        ctx.checkpoint(&json!({"phase": "post-replacement"}))
+            .await?;
 
         // Log completion
         ctx.append_entry(
@@ -978,7 +978,10 @@ impl DynamicAgent for CancelAndReplaceAgent {
 
         // Return output
         let mut output = DynamicAgentOutput::new();
-        output.insert("slowTaskCancelled".to_string(), json!(cancel_result.cancelled));
+        output.insert(
+            "slowTaskCancelled".to_string(),
+            json!(cancel_result.cancelled),
+        );
         output.insert("slowTaskStatus".to_string(), json!(cancel_result.status));
         output.insert("replacementResult".to_string(), result);
         output.insert("success".to_string(), json!(true));
@@ -1121,7 +1124,9 @@ impl DynamicAgent for JoinAllWithCancelledHandleAgent {
             .await?;
 
         // Cancel task1 before joining
-        let cancel_result = ctx.cancel_task(&task1, Some("Testing cancelled handle")).await?;
+        let cancel_result = ctx
+            .cancel_task(&task1, Some("Testing cancelled handle"))
+            .await?;
 
         // Now try to join both - task1 is already cancelled
         let mut output = DynamicAgentOutput::new();
@@ -1166,7 +1171,10 @@ impl DynamicAgent for JoinAllWithCancelledHandleAgent {
                     // Unexpected success
                     output.insert("joinAllSucceeded".to_string(), json!(true));
                     output.insert("success".to_string(), json!(false));
-                    output.insert("error".to_string(), json!("Expected join_all to fail with cancelled task"));
+                    output.insert(
+                        "error".to_string(),
+                        json!("Expected join_all to fail with cancelled task"),
+                    );
                 }
                 Err(e) => {
                     // Expected failure
@@ -1216,7 +1224,10 @@ impl DynamicAgent for MixedParallelSequentialAgent {
             .await?;
 
         let phase1_results = agent_join_all(ctx, vec![task1, task2]).await?;
-        output.insert("phase1".to_string(), serde_json::Value::Array(phase1_results));
+        output.insert(
+            "phase1".to_string(),
+            serde_json::Value::Array(phase1_results),
+        );
 
         ctx.checkpoint(&json!({"completedPhase": 1})).await?;
 
@@ -1252,7 +1263,10 @@ impl DynamicAgent for MixedParallelSequentialAgent {
             .await?;
 
         let phase3_results = agent_join_all(ctx, vec![task3, task4, task5]).await?;
-        output.insert("phase3".to_string(), serde_json::Value::Array(phase3_results));
+        output.insert(
+            "phase3".to_string(),
+            serde_json::Value::Array(phase3_results),
+        );
 
         ctx.checkpoint(&json!({"completedPhase": 3})).await?;
 

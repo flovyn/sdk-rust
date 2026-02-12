@@ -496,48 +496,45 @@ impl FlovynClient {
         };
 
         // Start agent worker if there are registered agents
-        let (agent_handle, agent_ready, agent_running) =
-            if self.agent_registry.has_registrations() {
-                let config = AgentWorkerConfig {
-                    worker_id: self.worker_id.clone(),
-                    org_id: self.org_id,
-                    queue: self.queue.clone(),
-                    poll_timeout: self.poll_timeout,
-                    no_work_backoff: Duration::from_millis(100),
-                    heartbeat_interval: self.heartbeat_interval,
-                    worker_name: self.worker_name.clone(),
-                    worker_version: self.worker_version.clone(),
-                    team_id: self.team_id,
-                    enable_auto_registration: false, // Unified registration already done
-                    worker_token: self.worker_token.clone(),
-                    lifecycle_hooks: self.lifecycle_hooks.clone(),
-                    reconnection_strategy: self.reconnection_strategy.clone(),
-                    server_worker_id,
-                };
-
-                let worker = AgentExecutorWorker::new(
-                    config,
-                    self.agent_registry.clone(),
-                    self.channel.clone(),
-                )
-                .with_internals(internals.clone())
-                .with_shutdown_signal(shutdown_rx.clone());
-
-                let ready_notify = worker.ready_notify();
-                let running_flag = worker.running_flag();
-
-                let handle = tokio::spawn(async move {
-                    let mut worker = worker;
-                    if let Err(e) = worker.start().await {
-                        error!("Agent worker error: {}", e);
-                    }
-                });
-
-                (Some(handle), Some(ready_notify), Some(running_flag))
-            } else {
-                debug!("No agents registered, skipping agent worker");
-                (None, None, None)
+        let (agent_handle, agent_ready, agent_running) = if self.agent_registry.has_registrations()
+        {
+            let config = AgentWorkerConfig {
+                worker_id: self.worker_id.clone(),
+                org_id: self.org_id,
+                queue: self.queue.clone(),
+                poll_timeout: self.poll_timeout,
+                no_work_backoff: Duration::from_millis(100),
+                heartbeat_interval: self.heartbeat_interval,
+                worker_name: self.worker_name.clone(),
+                worker_version: self.worker_version.clone(),
+                team_id: self.team_id,
+                enable_auto_registration: false, // Unified registration already done
+                worker_token: self.worker_token.clone(),
+                lifecycle_hooks: self.lifecycle_hooks.clone(),
+                reconnection_strategy: self.reconnection_strategy.clone(),
+                server_worker_id,
             };
+
+            let worker =
+                AgentExecutorWorker::new(config, self.agent_registry.clone(), self.channel.clone())
+                    .with_internals(internals.clone())
+                    .with_shutdown_signal(shutdown_rx.clone());
+
+            let ready_notify = worker.ready_notify();
+            let running_flag = worker.running_flag();
+
+            let handle = tokio::spawn(async move {
+                let mut worker = worker;
+                if let Err(e) = worker.start().await {
+                    error!("Agent worker error: {}", e);
+                }
+            });
+
+            (Some(handle), Some(ready_notify), Some(running_flag))
+        } else {
+            debug!("No agents registered, skipping agent worker");
+            (None, None, None)
+        };
 
         // Store the internals for later access
         *self.worker_internals.write() = Some(internals.clone());

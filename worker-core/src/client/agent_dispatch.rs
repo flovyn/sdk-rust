@@ -169,10 +169,7 @@ impl TaskResult {
 
     /// Check if task is in a terminal state (COMPLETED, FAILED, or CANCELLED)
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self.status.as_str(),
-            "COMPLETED" | "FAILED" | "CANCELLED"
-        )
+        matches!(self.status.as_str(), "COMPLETED" | "FAILED" | "CANCELLED")
     }
 }
 
@@ -221,10 +218,7 @@ impl BatchTaskResult {
 
     /// Check if task is in a terminal state
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self.status.as_str(),
-            "COMPLETED" | "FAILED" | "CANCELLED"
-        )
+        matches!(self.status.as_str(), "COMPLETED" | "FAILED" | "CANCELLED")
     }
 }
 
@@ -359,24 +353,22 @@ impl AgentDispatch {
         let response = self.inner.poll_agent(request).await?;
 
         let poll_response = response.into_inner();
-        Ok(poll_response
-            .agent_execution
-            .map(|ae| AgentExecutionInfo {
-                id: ae.id.parse().unwrap_or_default(),
-                kind: ae.kind,
-                org_id: ae.org_id.parse().unwrap_or_default(),
-                input: serde_json::from_slice(&ae.input).unwrap_or(Value::Null),
-                queue: ae.queue,
-                created_at_ms: ae.created_at_ms,
-                current_checkpoint_seq: ae.current_checkpoint_seq,
-                persistence_mode: ae.persistence_mode,
-                agent_definition_id: ae.agent_definition_id.and_then(|s| s.parse().ok()),
-                metadata: if ae.metadata.is_empty() {
-                    None
-                } else {
-                    serde_json::from_slice(&ae.metadata).ok()
-                },
-            }))
+        Ok(poll_response.agent_execution.map(|ae| AgentExecutionInfo {
+            id: ae.id.parse().unwrap_or_default(),
+            kind: ae.kind,
+            org_id: ae.org_id.parse().unwrap_or_default(),
+            input: serde_json::from_slice(&ae.input).unwrap_or(Value::Null),
+            queue: ae.queue,
+            created_at_ms: ae.created_at_ms,
+            current_checkpoint_seq: ae.current_checkpoint_seq,
+            persistence_mode: ae.persistence_mode,
+            agent_definition_id: ae.agent_definition_id.and_then(|s| s.parse().ok()),
+            metadata: if ae.metadata.is_empty() {
+                None
+            } else {
+                serde_json::from_slice(&ae.metadata).ok()
+            },
+        }))
     }
 
     /// Load conversation entries (server-side streaming)
@@ -408,6 +400,7 @@ impl AgentDispatch {
     /// If `idempotency_key` is provided, the server will return an existing entry
     /// if one already exists with the same key, preventing duplicate entries on
     /// agent resume.
+    #[allow(clippy::too_many_arguments)]
     pub async fn append_entry(
         &mut self,
         agent_execution_id: Uuid,
@@ -499,6 +492,7 @@ impl AgentDispatch {
     }
 
     /// Schedule a task for the agent (client-side streaming for large inputs)
+    #[allow(clippy::too_many_arguments)]
     pub async fn schedule_task(
         &mut self,
         agent_execution_id: Uuid,
@@ -509,7 +503,6 @@ impl AgentDispatch {
         timeout_ms: Option<i64>,
         idempotency_key: Option<&str>,
     ) -> CoreResult<ScheduleTaskResult> {
-        
         // Serialize input
         let input_bytes = serde_json::to_vec(input)?;
 
@@ -705,7 +698,9 @@ impl AgentDispatch {
 
         Ok(TaskResult {
             status: resp.status,
-            output: resp.output.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+            output: resp
+                .output
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok()),
             error: resp.error,
         })
     }
@@ -758,7 +753,9 @@ impl AgentDispatch {
             .map(|entry| BatchTaskResult {
                 task_execution_id: entry.task_execution_id.parse().unwrap_or_default(),
                 status: entry.status,
-                output: entry.output.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+                output: entry
+                    .output
+                    .and_then(|bytes| serde_json::from_slice(&bytes).ok()),
                 error: entry.error,
             })
             .collect())
@@ -874,7 +871,6 @@ impl AgentDispatch {
         payload: &str,
         timestamp_ms: i64,
     ) -> CoreResult<bool> {
-        
         let request = flovyn_v1::StreamAgentDataRequest {
             agent_execution_id: agent_execution_id.to_string(),
             sequence,
