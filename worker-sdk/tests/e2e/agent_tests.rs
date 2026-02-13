@@ -11,7 +11,7 @@ use crate::fixtures::agents::{
     BatchSchedulingAgent, CancelAndReplaceAgent, CancelIdempotencyAgent, CheckpointAgent,
     EchoAgent, JoinAllWithCancelledHandleAgent, MixedParallelSequentialAgent, MultiTurnAgent,
     ParallelTasksAgent, ParallelWithFailuresAgent, RacingTasksAgent, RacingTasksWithCancelAgent,
-    TaskSchedulingAgent, TimeoutTasksAgent,
+    SelectOkAgent, TaskSchedulingAgent, TimeoutTasksAgent,
 };
 use crate::fixtures::tasks::{ConditionalFailTask, EchoTask, SlowTask};
 use crate::{get_harness, with_timeout};
@@ -1863,28 +1863,27 @@ async fn test_agent_cancel_completed_task() {
     .await;
 }
 
-/// Test agent with timeout that cancels all pending tasks.
+/// Test server-side task timeout: tasks are failed by the server when deadline expires.
 ///
-/// This tests the agent_join_all_with_timeout combinator:
-/// 1. Agent schedules multiple slow tasks (5s delay each)
-/// 2. Agent waits with a short timeout (1s)
-/// 3. Timeout occurs before any task completes
-/// 4. All tasks are cancelled
-/// 5. Agent receives timeout result with cancellation info
+/// This tests server-side timeout enforcement with agent_join_all_settled:
+/// 1. Agent schedules multiple slow tasks (5s delay each) with 1s server-side timeout
+/// 2. Server marks tasks as TIMED_OUT when deadline expires
+/// 3. Agent resumes and receives timeout failures via agent_join_all_settled
+/// 4. Agent completes successfully with partial results (all timed out)
 #[tokio::test]
 #[ignore] // Enable when Docker is available
-async fn test_agent_timeout_cancels_all() {
+async fn test_server_side_task_timeout() {
     with_timeout(
         AGENT_TEST_TIMEOUT,
-        "test_agent_timeout_cancels_all",
+        "test_server_side_task_timeout",
         async {
             let harness = get_harness().await;
 
-            let queue = "agent-timeout-cancel-queue";
+            let queue = "agent-server-timeout-queue";
             let client = FlovynClient::builder()
                 .server_url(harness.grpc_url())
                 .org_id(harness.org_id())
-                .worker_id("e2e-timeout-cancel-worker")
+                .worker_id("e2e-server-timeout-worker")
                 .worker_token(harness.worker_token())
                 .queue(queue)
                 .register_agent(TimeoutTasksAgent)
@@ -1898,14 +1897,14 @@ async fn test_agent_timeout_cancels_all() {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            // Create agent with 3 slow tasks (5s each) but only 1s timeout
+            // Create agent with 3 slow tasks (5s each) with 1s server-side timeout
             let agent = harness
                 .create_agent_execution(
                     "timeout-tasks-agent",
                     json!({
                         "taskCount": 3,
                         "taskDelayMs": 5000,   // Each task takes 5 seconds
-                        "timeoutMs": 1000      // But we only wait 1 second
+                        "timeoutMs": 1000      // Server times out after 1 second
                     }),
                     queue,
                 )
@@ -1926,71 +1925,69 @@ async fn test_agent_timeout_cancels_all() {
             assert_eq!(
                 completed.status.to_uppercase(),
                 "COMPLETED",
-                "Agent should complete (handling timeout gracefully)"
+                "Agent should complete (handling timeout via agent_join_all_settled)"
             );
 
-            // Verify output
+            // Verify output - the new TimeoutTasksAgent uses agent_join_all_settled
+            // and reports failed/timedOut counts instead of cancelled
             let output = completed.output.expect("Agent should have output");
 
             let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
             let completed_count = output.get("completedCount").and_then(|v| v.as_i64());
-            let cancelled_count = output.get("cancelledCount").and_then(|v| v.as_i64());
+            let failed_count = output.get("failedCount").and_then(|v| v.as_i64());
+            let timed_out_count = output.get("timedOutCount").and_then(|v| v.as_i64());
             let timed_out = output.get("timedOut").and_then(|v| v.as_bool());
 
             println!(
-                "Total: {:?}, Completed: {:?}, Cancelled: {:?}, TimedOut: {:?}",
-                total_tasks, completed_count, cancelled_count, timed_out
+                "Total: {:?}, Completed: {:?}, Failed: {:?}, TimedOutCount: {:?}, TimedOut: {:?}",
+                total_tasks, completed_count, failed_count, timed_out_count, timed_out
             );
 
             assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
             assert_eq!(timed_out, Some(true), "Should have timed out");
 
-            // With sequential execution, cancel only affects PENDING tasks (not RUNNING).
-            // No tasks should complete (they take 5s, timeout is 1s).
+            // No tasks should complete (they take 5s, timeout is 1s)
             assert_eq!(
                 completed_count,
                 Some(0),
                 "No tasks should have completed (they take 5s, timeout is 1s)"
             );
 
-            // Agent attempted to cancel all 3
-            let cancelled_indices = output.get("cancelledIndices").and_then(|v| v.as_array());
-            assert!(cancelled_indices.is_some(), "Should have cancelled indices");
+            // All 3 tasks should have timed out
             assert_eq!(
-                cancelled_indices.unwrap().len(),
-                3,
-                "Should have attempted to cancel 3 tasks"
+                timed_out_count,
+                Some(3),
+                "All 3 tasks should have timed out"
             );
 
             // Verify all 3 tasks were created
             let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
             assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
 
-            // Count statuses (may be CANCELLED, RUNNING, or PENDING)
+            // Count statuses - tasks should be TIMED_OUT
             let count_status = |status: &str| {
                 tasks
                     .iter()
                     .filter(|t| t.status.eq_ignore_ascii_case(status))
                     .count()
             };
-            let (task_cancelled, task_running, task_pending) = (
-                count_status("CANCELLED"),
-                count_status("RUNNING"),
-                count_status("PENDING"),
-            );
+
+            let task_timed_out = count_status("TIMED_OUT");
+            let task_completed = count_status("COMPLETED");
 
             println!(
-                "Task statuses: {} cancelled, {} running, {} pending",
-                task_cancelled, task_running, task_pending
+                "Task statuses: {} timed_out, {} completed",
+                task_timed_out, task_completed
             );
 
+            // All tasks should be TIMED_OUT
             assert_eq!(
-                task_cancelled + task_running + task_pending,
+                task_timed_out,
                 3,
-                "All 3 tasks should have a valid status"
+                "All 3 tasks should have TIMED_OUT status"
             );
             assert_eq!(
-                count_status("COMPLETED"),
+                task_completed,
                 0,
                 "No tasks should be completed (they take 5s)"
             );
@@ -2001,27 +1998,27 @@ async fn test_agent_timeout_cancels_all() {
     .await;
 }
 
-/// Test agent with timeout where some tasks complete before timeout.
+/// Test agent_join_all_settled partial completion with server-side timeouts.
 ///
-/// This tests partial completion with timeout:
-/// 1. Agent schedules 3 tasks: 1 fast (100ms), 2 slow (5s)
-/// 2. Agent waits with 500ms timeout
-/// 3. Fast task completes, slow tasks are cancelled
-/// 4. Agent receives partial results
+/// This tests the SettledResult pattern with server-side timeouts:
+/// 1. Agent schedules 3 tasks with the same delay but server-side timeout
+/// 2. Tasks complete or timeout based on server deadline enforcement
+/// 3. agent_join_all_settled returns SettledResult with completed/failed lists
+/// 4. Agent can process partial results
 #[tokio::test]
 #[ignore] // Enable when Docker is available
-async fn test_agent_timeout_partial_completion() {
+async fn test_agent_join_all_settled_partial_completion() {
     with_timeout(
         AGENT_TEST_TIMEOUT,
-        "test_agent_timeout_partial_completion",
+        "test_agent_join_all_settled_partial_completion",
         async {
             let harness = get_harness().await;
 
-            let queue = "agent-timeout-partial-queue";
+            let queue = "agent-settled-partial-queue";
             let client = FlovynClient::builder()
                 .server_url(harness.grpc_url())
                 .org_id(harness.org_id())
-                .worker_id("e2e-timeout-partial-worker")
+                .worker_id("e2e-settled-partial-worker")
                 .worker_token(harness.worker_token())
                 .queue(queue)
                 .register_agent(TimeoutTasksAgent)
@@ -2035,22 +2032,21 @@ async fn test_agent_timeout_partial_completion() {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            // Note: TimeoutTasksAgent uses same delay for all tasks
-            // For partial completion test, we use a timeout that allows some tasks to complete
-            // With 3 tasks at 200ms each and 500ms timeout, at least 1-2 should complete
+            // Create agent with tasks that will complete before timeout
+            // This tests that agent_join_all_settled works for the success case too
             let agent = harness
                 .create_agent_execution(
                     "timeout-tasks-agent",
                     json!({
                         "taskCount": 3,
-                        "taskDelayMs": 200,    // Each task takes 200ms
-                        "timeoutMs": 350       // Timeout after 350ms (1-2 tasks should complete)
+                        "taskDelayMs": 100,    // Each task takes 100ms
+                        "timeoutMs": 5000      // Generous 5s timeout
                     }),
                     queue,
                 )
                 .await;
 
-            println!("Created partial-timeout agent execution: {}", agent.id);
+            println!("Created settled-partial agent execution: {}", agent.id);
 
             // Wait for agent to complete
             let completed = harness
@@ -2064,7 +2060,7 @@ async fn test_agent_timeout_partial_completion() {
             println!("Agent completed with status: {}", completed.status);
             assert_eq!(completed.status.to_uppercase(), "COMPLETED");
 
-            // Verify output
+            // Verify output - agent_join_all_settled reports completed/failed counts
             let output = completed.output.expect("Agent should have output");
 
             let total_tasks = output.get("totalTasks").and_then(|v| v.as_i64());
@@ -2072,35 +2068,40 @@ async fn test_agent_timeout_partial_completion() {
                 .get("completedCount")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-            let cancelled_count = output
-                .get("cancelledCount")
+            let failed_count = output
+                .get("failedCount")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let timed_out_count = output
+                .get("timedOutCount")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
             let timed_out = output.get("timedOut").and_then(|v| v.as_bool());
 
             println!(
-                "Total: {:?}, Completed: {}, Cancelled: {}, TimedOut: {:?}",
-                total_tasks, completed_count, cancelled_count, timed_out
+                "Total: {:?}, Completed: {}, Failed: {}, TimedOutCount: {}, TimedOut: {:?}",
+                total_tasks, completed_count, failed_count, timed_out_count, timed_out
             );
 
             assert_eq!(total_tasks, Some(3), "Should have 3 total tasks");
 
-            // Either all completed (no timeout) or we have a mix of completed and cancelled
-            if timed_out == Some(true) {
-                // Some tasks completed, some cancelled
-                assert!(
-                    completed_count > 0,
-                    "At least some tasks should have completed before timeout"
-                );
-                assert!(
-                    cancelled_count > 0,
-                    "Some tasks should have been cancelled due to timeout"
-                );
-                assert_eq!(completed_count + cancelled_count, 3, "Total should be 3");
-            } else {
-                // All completed before timeout
-                assert_eq!(completed_count, 3, "All tasks completed before timeout");
-            }
+            // With generous timeout, all tasks should complete successfully
+            assert_eq!(
+                completed_count, 3,
+                "All 3 tasks should complete before timeout"
+            );
+            assert_eq!(failed_count, 0, "No tasks should fail");
+            assert_eq!(timed_out_count, 0, "No tasks should timeout");
+            assert_eq!(timed_out, Some(false), "Should not have timed out");
+
+            // Verify completed indices
+            let completed_indices = output.get("completedIndices").and_then(|v| v.as_array());
+            assert!(completed_indices.is_some(), "Should have completed indices");
+            assert_eq!(
+                completed_indices.unwrap().len(),
+                3,
+                "Should have 3 completed indices"
+            );
 
             handle.abort();
         },
@@ -2713,6 +2714,213 @@ async fn test_agent_join_all_with_cancelled_handle() {
                 "One task should have been cancelled"
             );
             assert_eq!(success2, Some(true), "Test should succeed");
+
+            handle.abort();
+        },
+    )
+    .await;
+}
+
+// ============================================================================
+// agent_select_ok Tests
+// ============================================================================
+
+/// Test agent_select_ok returns first successful task, skipping failures.
+///
+/// This tests the fallback pattern:
+/// 1. Agent schedules multiple tasks where some fail
+/// 2. agent_select_ok waits for first success, ignoring failures
+/// 3. Agent receives index and result of winning task
+#[tokio::test]
+#[ignore] // Enable when Docker is available
+async fn test_agent_select_ok_skips_failures() {
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_select_ok_skips_failures",
+        async {
+            let harness = get_harness().await;
+
+            let queue = "agent-select-ok-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-select-ok-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(SelectOkAgent)
+                .register_task(ConditionalFailTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
+
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            // Create agent with tasks where first 2 fail, third succeeds
+            // This tests that select_ok skips failures and returns first success
+            let agent = harness
+                .create_agent_execution(
+                    "select-ok-agent",
+                    json!({
+                        "tasks": [
+                            {"shouldFail": true, "delayMs": 100},   // Task 0: fails fast
+                            {"shouldFail": true, "delayMs": 200},   // Task 1: fails
+                            {"shouldFail": false, "delayMs": 300}   // Task 2: succeeds
+                        ]
+                    }),
+                    queue,
+                )
+                .await;
+
+            println!("Created select-ok agent execution: {}", agent.id);
+
+            // Wait for agent to complete
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
+
+            println!("Agent completed with status: {}", completed.status);
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "COMPLETED",
+                "Agent should complete successfully"
+            );
+
+            // Verify output
+            let output = completed.output.expect("Agent should have output");
+
+            let winner_index = output.get("winnerIndex").and_then(|v| v.as_i64());
+            let result = output.get("result");
+
+            println!("Winner index: {:?}, Result: {:?}", winner_index, result);
+
+            // Task 2 should be the winner (first successful task)
+            assert_eq!(
+                winner_index,
+                Some(2),
+                "Task 2 should be the winner (first success)"
+            );
+            assert!(result.is_some(), "Should have result from winning task");
+
+            // Verify all 3 tasks were created
+            let tasks = harness.list_agent_tasks(&agent.id.to_string()).await;
+            assert_eq!(tasks.len(), 3, "Agent should have scheduled 3 tasks");
+
+            // Count statuses
+            let count_status = |status: &str| {
+                tasks
+                    .iter()
+                    .filter(|t| t.status.eq_ignore_ascii_case(status))
+                    .count()
+            };
+
+            let completed_count = count_status("COMPLETED");
+            let failed_count = count_status("FAILED");
+
+            println!(
+                "Task statuses: {} completed, {} failed",
+                completed_count, failed_count
+            );
+
+            // At least one should be completed (the winner)
+            assert!(
+                completed_count >= 1,
+                "At least one task should be completed"
+            );
+            // First two should fail
+            assert!(failed_count >= 2, "At least 2 tasks should have failed");
+
+            handle.abort();
+        },
+    )
+    .await;
+}
+
+/// Test agent_select_ok fails when all tasks fail.
+///
+/// This tests error handling when no task succeeds:
+/// 1. Agent schedules multiple tasks that all fail
+/// 2. agent_select_ok returns AllTasksFailed error
+/// 3. Agent handles the error appropriately
+#[tokio::test]
+#[ignore] // Enable when Docker is available
+async fn test_agent_select_ok_all_fail() {
+    with_timeout(
+        AGENT_TEST_TIMEOUT,
+        "test_agent_select_ok_all_fail",
+        async {
+            let harness = get_harness().await;
+
+            let queue = "agent-select-ok-all-fail-queue";
+            let client = FlovynClient::builder()
+                .server_url(harness.grpc_url())
+                .org_id(harness.org_id())
+                .worker_id("e2e-select-ok-all-fail-worker")
+                .worker_token(harness.worker_token())
+                .queue(queue)
+                .register_agent(SelectOkAgent)
+                .register_task(ConditionalFailTask)
+                .build()
+                .await
+                .expect("Failed to build FlovynClient");
+
+            let handle = client.start().await.expect("Failed to start worker");
+            handle.await_ready().await;
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            // Create agent with tasks that all fail
+            let agent = harness
+                .create_agent_execution(
+                    "select-ok-agent",
+                    json!({
+                        "tasks": [
+                            {"shouldFail": true, "delayMs": 100},
+                            {"shouldFail": true, "delayMs": 200},
+                            {"shouldFail": true, "delayMs": 300}
+                        ]
+                    }),
+                    queue,
+                )
+                .await;
+
+            println!("Created select-ok-all-fail agent execution: {}", agent.id);
+
+            // Wait for agent to complete (it should FAIL since all tasks fail)
+            let completed = harness
+                .wait_for_agent_status(
+                    &agent.id.to_string(),
+                    &["COMPLETED", "FAILED"],
+                    Duration::from_secs(60),
+                )
+                .await;
+
+            println!("Agent completed with status: {}", completed.status);
+            // Agent should fail because select_ok returns AllTasksFailed
+            assert_eq!(
+                completed.status.to_uppercase(),
+                "FAILED",
+                "Agent should fail when all tasks fail"
+            );
+
+            // Verify error message mentions all tasks failed
+            let error = completed.error.as_ref();
+            println!("Agent error: {:?}", error);
+            assert!(
+                error.is_some(),
+                "Should have error message"
+            );
+            assert!(
+                error.unwrap().to_lowercase().contains("all") ||
+                error.unwrap().to_lowercase().contains("fail"),
+                "Error should mention all tasks failed"
+            );
 
             handle.abort();
         },

@@ -55,11 +55,7 @@ pub mod storage;
 pub mod tracer;
 
 // Re-export commonly used types
-pub use combinators::{
-    agent_join_all, agent_join_all_outcomes, agent_join_all_settled, agent_select, agent_select_ok,
-    agent_select_with_cancel, AgentTaskHandle, CancelAttempt, SelectWithCancelResult,
-    SettledResult, TaskOutcome,
-};
+pub use combinators::TaskOutcome;
 pub use context::{AgentContext, AgentContextExt, EntryRole, EntryType, ScheduleAgentTaskOptions};
 pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};

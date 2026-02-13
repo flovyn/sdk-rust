@@ -92,6 +92,18 @@ pub enum FlovynError {
     #[error("Task failed: {0}")]
     TaskFailed(String),
 
+    /// Task exceeded its deadline
+    #[error("Task timed out: {task_id}")]
+    TaskTimedOut {
+        task_id: String,
+        /// The error message from the server
+        error: String,
+    },
+
+    /// All tasks in a combinator failed (none succeeded)
+    #[error("All tasks failed: {0}")]
+    AllTasksFailed(String),
+
     /// Workflow was cancelled
     #[error("Workflow cancelled: {0}")]
     WorkflowCancelled(String),

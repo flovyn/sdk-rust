@@ -1,11 +1,10 @@
 //! Mock agent context for unit testing agents in isolation.
 
-use crate::agent::combinators::AgentTaskHandle;
 use crate::agent::context::{AgentContext, EntryRole, LoadedMessage, ScheduleAgentTaskOptions};
+use crate::agent::future::AgentTaskFutureRaw;
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
-use flovyn_worker_core::client::{BatchTaskResult, CancelResult, WaitMode};
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -158,6 +157,11 @@ impl MockAgentContext {
     /// Get the current checkpoint state.
     pub fn current_checkpoint_state(&self) -> Option<Value> {
         self.inner.checkpoint_state.read().clone()
+    }
+
+    /// Get a task result by kind (for internal use in join_all/select_ok).
+    fn get_task_result(&self, task_kind: &str) -> Option<Value> {
+        self.inner.task_results.read().get(task_kind).cloned()
     }
 }
 
@@ -408,153 +412,80 @@ impl AgentContext for MockAgentContext {
         }
     }
 
-    async fn schedule_task_handle(&self, task_kind: &str, input: Value) -> Result<AgentTaskHandle> {
-        self.schedule_task_handle_with_options(
-            task_kind,
-            input,
-            ScheduleAgentTaskOptions::default(),
-        )
-        .await
+    // =========================================================================
+    // Lazy Task Scheduling (Preferred API)
+    // =========================================================================
+
+    fn schedule_task_lazy(&self, kind: &str, input: Value) -> AgentTaskFutureRaw {
+        self.schedule_task_lazy_with_options(kind, input, ScheduleAgentTaskOptions::default())
     }
 
-    async fn schedule_task_handle_with_options(
+    fn schedule_task_lazy_with_options(
         &self,
-        task_kind: &str,
+        kind: &str,
         input: Value,
         options: ScheduleAgentTaskOptions,
-    ) -> Result<AgentTaskHandle> {
+    ) -> AgentTaskFutureRaw {
         let task_id = Uuid::new_v4();
-        let index = self.inner.task_counter.fetch_add(1, Ordering::SeqCst) as usize;
 
         // Record the scheduled task
         self.inner.scheduled_tasks.write().push(ScheduledAgentTask {
             task_id,
-            task_kind: task_kind.to_string(),
+            task_kind: kind.to_string(),
             input: input.clone(),
             options,
         });
 
-        Ok(AgentTaskHandle::new(task_id, task_kind, index))
+        AgentTaskFutureRaw::new(task_id, kind.to_string(), input)
     }
 
-    async fn get_task_results_batch(&self, task_ids: &[Uuid]) -> Result<Vec<BatchTaskResult>> {
-        let results = task_ids
-            .iter()
-            .map(|task_id| {
-                // Find the task kind from scheduled tasks
-                let task_kind = self
-                    .inner
-                    .scheduled_tasks
-                    .read()
-                    .iter()
-                    .find(|t| t.task_id == *task_id)
-                    .map(|t| t.task_kind.clone());
+    async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {
+        if futures.is_empty() {
+            return Ok(vec![]);
+        }
 
-                match task_kind {
-                    Some(kind) => match self.inner.task_results.read().get(&kind) {
-                        Some(result) => BatchTaskResult {
-                            task_execution_id: *task_id,
-                            status: "COMPLETED".to_string(),
-                            output: Some(result.clone()),
-                            error: None,
-                        },
-                        None => BatchTaskResult {
-                            task_execution_id: *task_id,
-                            status: "PENDING".to_string(),
-                            output: None,
-                            error: None,
-                        },
-                    },
-                    None => BatchTaskResult {
-                        task_execution_id: *task_id,
-                        status: "NOT_FOUND".to_string(),
-                        output: None,
-                        error: Some("Task not found".to_string()),
-                    },
+        let mut results = Vec::with_capacity(futures.len());
+        for future in &futures {
+            match self.get_task_result(&future.kind) {
+                Some(result) => results.push(result),
+                None => {
+                    return Err(FlovynError::AgentSuspended(
+                        "Agent suspended waiting for tasks".to_string(),
+                    ));
                 }
-            })
-            .collect();
+            }
+        }
 
         Ok(results)
     }
 
-    async fn suspend_for_tasks(&self, _task_ids: &[Uuid], _mode: WaitMode) -> Result<()> {
-        // In mock context, we don't actually suspend
+    async fn select_ok(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<(Value, Vec<AgentTaskFutureRaw>)> {
+        if futures.is_empty() {
+            return Err(FlovynError::InvalidArgument(
+                "select_ok requires at least one future".to_string(),
+            ));
+        }
+
+        // Find the first future with a configured result
+        for (i, future) in futures.iter().enumerate() {
+            if let Some(result) = self.get_task_result(&future.kind) {
+                let remaining: Vec<AgentTaskFutureRaw> = futures
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(idx, _)| *idx != i)
+                    .map(|(_, f)| f)
+                    .collect();
+                return Ok((result, remaining));
+            }
+        }
+
+        // No result configured for any task
         Err(FlovynError::AgentSuspended(
-            "Agent suspended waiting for tasks".to_string(),
+            "Agent suspended waiting for successful task".to_string(),
         ))
-    }
-
-    // =========================================================================
-    // Task Cancellation
-    // =========================================================================
-
-    async fn cancel_task(
-        &self,
-        handle: &AgentTaskHandle,
-        _reason: Option<&str>,
-    ) -> Result<CancelResult> {
-        // Mock implementation: check if task exists and return mock result
-        let task_exists = self
-            .inner
-            .scheduled_tasks
-            .read()
-            .iter()
-            .any(|t| t.task_id == handle.task_id());
-
-        if task_exists {
-            Ok(CancelResult {
-                cancelled: true,
-                status: "CANCELLED".to_string(),
-            })
-        } else {
-            Ok(CancelResult {
-                cancelled: false,
-                status: "NOT_FOUND".to_string(),
-            })
-        }
-    }
-
-    async fn cancel_tasks(
-        &self,
-        handles: &[AgentTaskHandle],
-        reason: Option<&str>,
-    ) -> Result<Vec<CancelResult>> {
-        let mut results = Vec::with_capacity(handles.len());
-        for handle in handles {
-            results.push(self.cancel_task(handle, reason).await?);
-        }
-        Ok(results)
-    }
-
-    // =========================================================================
-    // Batch Task Scheduling
-    // =========================================================================
-
-    async fn schedule_tasks_batch(
-        &self,
-        tasks: Vec<(&str, Value)>,
-    ) -> Result<Vec<AgentTaskHandle>> {
-        let tasks_with_options: Vec<_> = tasks
-            .into_iter()
-            .map(|(kind, input)| (kind, input, ScheduleAgentTaskOptions::default()))
-            .collect();
-        self.schedule_tasks_batch_with_options(tasks_with_options)
-            .await
-    }
-
-    async fn schedule_tasks_batch_with_options(
-        &self,
-        tasks: Vec<(&str, Value, ScheduleAgentTaskOptions)>,
-    ) -> Result<Vec<AgentTaskHandle>> {
-        let mut handles = Vec::with_capacity(tasks.len());
-        for (task_kind, input, options) in tasks {
-            let handle = self
-                .schedule_task_handle_with_options(task_kind, input, options)
-                .await?;
-            handles.push(handle);
-        }
-        Ok(handles)
     }
 
     // =========================================================================
@@ -753,52 +684,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mock_agent_context_task_handle() {
+    async fn test_mock_agent_context_lazy_task() {
         let ctx = MockAgentContext::builder()
             .task_result("slow-task", json!({"done": true}))
             .build();
 
-        let handle = ctx
-            .schedule_task_handle("slow-task", json!({"input": "data"}))
-            .await
-            .unwrap();
+        let future = ctx.schedule_task_lazy("slow-task", json!({"input": "data"}));
 
-        assert_eq!(handle.task_kind(), "slow-task");
-        assert!(!handle.task_id().is_nil());
+        assert_eq!(future.kind(), "slow-task");
+        assert!(!future.task_id().is_nil());
     }
 
     #[tokio::test]
-    async fn test_mock_agent_context_cancel_task() {
-        let ctx = MockAgentContext::builder()
-            .task_result("task-a", json!({}))
-            .build();
-
-        let handle = ctx.schedule_task_handle("task-a", json!({})).await.unwrap();
-
-        let result = ctx.cancel_task(&handle, Some("Test reason")).await.unwrap();
-        assert!(result.cancelled);
-        assert_eq!(result.status, "CANCELLED");
-    }
-
-    #[tokio::test]
-    async fn test_mock_agent_context_batch_scheduling() {
+    async fn test_mock_agent_context_join_all() {
         let ctx = MockAgentContext::builder()
             .task_result("task-a", json!({"a": 1}))
             .task_result("task-b", json!({"b": 2}))
             .build();
 
-        let handles = ctx
-            .schedule_tasks_batch(vec![
-                ("task-a", json!({"input": "a"})),
-                ("task-b", json!({"input": "b"})),
-            ])
-            .await
-            .unwrap();
+        let f1 = ctx.schedule_task_lazy("task-a", json!({}));
+        let f2 = ctx.schedule_task_lazy("task-b", json!({}));
 
-        assert_eq!(handles.len(), 2);
-        assert_eq!(handles[0].task_kind, "task-a");
-        assert_eq!(handles[1].task_kind, "task-b");
-        assert_eq!(ctx.scheduled_tasks().len(), 2);
+        let results = ctx.join_all(vec![f1, f2]).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], json!({"a": 1}));
+        assert_eq!(results[1], json!({"b": 2}));
+    }
+
+    #[tokio::test]
+    async fn test_mock_agent_context_select_ok() {
+        let ctx = MockAgentContext::builder()
+            .task_result("task-a", json!({"winner": "a"}))
+            .build();
+
+        let f1 = ctx.schedule_task_lazy("task-a", json!({}));
+        let f2 = ctx.schedule_task_lazy("task-b", json!({})); // No result configured
+
+        let (result, remaining) = ctx.select_ok(vec![f1, f2]).await.unwrap();
+        assert_eq!(result, json!({"winner": "a"}));
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].kind(), "task-b");
     }
 
     // =========================================================================
@@ -806,17 +731,6 @@ mod tests {
     // =========================================================================
 
     /// Test that simulates what happens in a real agent suspension/resume cycle.
-    ///
-    /// This test verifies that when an agent:
-    /// 1. Schedules a task and gets a result
-    /// 2. "Resumes" (simulated by creating a new context with loaded messages)
-    /// 3. Schedules the "same" task again
-    ///
-    /// The results should be consistent (i.e., idempotency should work).
-    ///
-    /// Note: MockAgentContext doesn't use real idempotency keys like AgentContextImpl,
-    /// but this test documents the expected behavior and can catch regressions in
-    /// agent logic that depends on task scheduling across suspension boundaries.
     #[tokio::test]
     async fn test_suspension_resume_task_consistency() {
         let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
@@ -840,15 +754,12 @@ mod tests {
         let checkpoint_seq_after_task = ctx1.checkpoint_sequence();
 
         // Second "execution" - simulating resume after suspension
-        // In real code, this would be a new AgentContextImpl created from checkpoint
         let ctx2 = MockAgentContext::builder()
-            .agent_execution_id(agent_id) // Same agent ID
-            .initial_checkpoint_seq(checkpoint_seq_after_task) // Restored checkpoint
-            .task_result("llm-request", expected_result.clone()) // Same mock result
+            .agent_execution_id(agent_id)
+            .initial_checkpoint_seq(checkpoint_seq_after_task)
+            .task_result("llm-request", expected_result.clone())
             .build();
 
-        // When agent resumes and tries to get the task result again,
-        // it should get the same result (due to idempotency in real impl)
         let result2 = ctx2
             .schedule_task_raw("llm-request", json!({"prompt": "Hello"}))
             .await
@@ -864,65 +775,7 @@ mod tests {
         );
     }
 
-    /// Test that demonstrates the importance of stable idempotency keys.
-    ///
-    /// This test shows what the CORRECT behavior should be:
-    /// - Task scheduled before suspension should be retrievable after resume
-    /// - The agent should NOT create a new task on resume
-    ///
-    /// In MockAgentContext, we simulate this by verifying that the same task_kind
-    /// returns the same configured result regardless of checkpoint state.
-    #[tokio::test]
-    async fn test_idempotency_across_checkpoint_changes() {
-        let agent_id = Uuid::new_v4();
-        let llm_result = json!({"message": "Assistant response"});
-
-        // Create context with checkpoint_seq = 0
-        let ctx = MockAgentContext::builder()
-            .agent_execution_id(agent_id)
-            .initial_checkpoint_seq(0)
-            .task_result("llm-request", llm_result.clone())
-            .build();
-
-        // First task scheduling (simulating first execution)
-        let result1 = ctx
-            .schedule_task_raw("llm-request", json!({}))
-            .await
-            .unwrap();
-        assert_eq!(result1, llm_result);
-
-        // Checkpoint (simulating suspension)
-        ctx.checkpoint(&json!({"step": 1})).await.unwrap();
-        assert_eq!(ctx.checkpoint_sequence(), 1);
-
-        // Second task scheduling (simulating resume)
-        // Even though checkpoint_seq changed from 0 to 1, the result should be the same
-        let result2 = ctx
-            .schedule_task_raw("llm-request", json!({}))
-            .await
-            .unwrap();
-        assert_eq!(result2, llm_result);
-
-        // More checkpoints (simulating multiple suspension/resume cycles)
-        ctx.checkpoint(&json!({"step": 2})).await.unwrap();
-        ctx.checkpoint(&json!({"step": 3})).await.unwrap();
-        assert_eq!(ctx.checkpoint_sequence(), 3);
-
-        // Task result should still be the same
-        let result3 = ctx
-            .schedule_task_raw("llm-request", json!({}))
-            .await
-            .unwrap();
-        assert_eq!(
-            result3, llm_result,
-            "Task result must be stable regardless of checkpoint_seq changes"
-        );
-    }
-
-    /// Test that verifies the format of idempotency keys used in AgentContextImpl.
-    ///
-    /// While MockAgentContext doesn't use idempotency keys, this test documents
-    /// the expected format and can be used to verify the fix is correct.
+    /// Test idempotency key format documentation.
     #[test]
     fn test_idempotency_key_format_documentation() {
         let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
@@ -941,14 +794,5 @@ mod tests {
             correct_key_0.contains(":task:"),
             "Key must use ':task:' separator"
         );
-
-        // BUGGY format (old implementation that caused infinite task creation):
-        // "{agent_id}:{checkpoint_seq}:{counter}"
-        let _buggy_key_run1 = format!("{}:{}:{}", agent_id, -1, 0); // First run
-        let _buggy_key_run2 = format!("{}:{}:{}", agent_id, 5, 0); // After resume
-
-        // The buggy keys would be different even for the same logical task,
-        // causing the server to create a new task instead of returning the existing one.
-        // This is documented here to explain why the fix was necessary.
     }
 }

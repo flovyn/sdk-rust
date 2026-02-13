@@ -361,6 +361,51 @@ impl AgentContextImpl {
     pub fn current_sequence(&self) -> u64 {
         self.current_sequence.load(Ordering::SeqCst)
     }
+
+    /// Batch fetch results for multiple tasks.
+    ///
+    /// This is an internal helper used by `join_all` and `select_ok` to efficiently
+    /// check the status of multiple tasks in a single call.
+    async fn get_task_results_batch(
+        &self,
+        task_ids: &[Uuid],
+    ) -> Result<Vec<flovyn_worker_core::client::BatchTaskResult>> {
+        let mut client = self.client.lock().await;
+        Ok(client
+            .get_task_results_batch(self.agent_execution_id, task_ids)
+            .await?)
+    }
+
+    /// Suspend the agent waiting for multiple tasks.
+    ///
+    /// This is an internal helper used by `join_all` and `select_ok` to suspend
+    /// the agent while waiting for tasks to complete.
+    async fn suspend_for_tasks(
+        &self,
+        task_ids: &[Uuid],
+        mode: flovyn_worker_core::client::WaitMode,
+    ) -> Result<()> {
+        // Commit pending batch first (ensures all scheduled tasks are submitted)
+        // This is critical: tasks must be committed before we can wait for them
+        self.commit_pending_batch(None).await?;
+
+        // Checkpoint current state before suspending
+        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
+        AgentContext::checkpoint(self, &current_state).await?;
+
+        // Suspend waiting for tasks
+        let mut client = self.client.lock().await;
+        client
+            .suspend_agent_for_tasks(
+                self.agent_execution_id,
+                task_ids,
+                mode,
+                Some("Waiting for parallel tasks"),
+            )
+            .await?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -925,214 +970,6 @@ impl AgentContext for AgentContextImpl {
         }
     }
 
-    // =========================================================================
-    // Parallel Task Support
-    // =========================================================================
-
-    async fn schedule_task_handle(
-        &self,
-        task_kind: &str,
-        input: Value,
-    ) -> Result<crate::agent::combinators::AgentTaskHandle> {
-        self.schedule_task_handle_with_options(
-            task_kind,
-            input,
-            ScheduleAgentTaskOptions::default(),
-        )
-        .await
-    }
-
-    async fn schedule_task_handle_with_options(
-        &self,
-        task_kind: &str,
-        input: Value,
-        options: ScheduleAgentTaskOptions,
-    ) -> Result<crate::agent::combinators::AgentTaskHandle> {
-        use crate::agent::storage::TaskOptions;
-
-        // Generate deterministic task ID (stable across suspension/resume)
-        let task_id = self.next_task_id();
-
-        // Get the current index for ordering (number of tasks scheduled so far)
-        let index = self.scheduled_task_counter.fetch_add(1, Ordering::SeqCst) as usize;
-
-        // Buffer command for batch commit at suspension point (no immediate RPC)
-        self.add_pending_command(AgentCommand::ScheduleTask {
-            task_id,
-            kind: task_kind.to_string(),
-            input: input.clone(),
-            options: TaskOptions {
-                queue: options.queue.clone(),
-                max_retries: options.max_retries.map(|r| r as i32),
-                timeout_ms: options.timeout.map(|t| t.as_millis() as i64),
-            },
-        });
-
-        Ok(crate::agent::combinators::AgentTaskHandle::new(
-            task_id,
-            task_kind,
-            index,
-        ))
-    }
-
-    async fn get_task_results_batch(
-        &self,
-        task_ids: &[Uuid],
-    ) -> Result<Vec<flovyn_worker_core::client::BatchTaskResult>> {
-        let mut client = self.client.lock().await;
-        Ok(client
-            .get_task_results_batch(self.agent_execution_id, task_ids)
-            .await?)
-    }
-
-    async fn suspend_for_tasks(
-        &self,
-        task_ids: &[Uuid],
-        mode: flovyn_worker_core::client::WaitMode,
-    ) -> Result<()> {
-        // Commit pending batch first (ensures all scheduled tasks are submitted)
-        // This is critical: tasks must be committed before we can wait for them
-        self.commit_pending_batch(None).await?;
-
-        // Checkpoint current state before suspending
-        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
-        self.checkpoint(&current_state).await?;
-
-        // Suspend waiting for tasks
-        let mut client = self.client.lock().await;
-        client
-            .suspend_agent_for_tasks(
-                self.agent_execution_id,
-                task_ids,
-                mode,
-                Some("Waiting for parallel tasks"),
-            )
-            .await?;
-
-        Ok(())
-    }
-
-    // =========================================================================
-    // Task Cancellation
-    // =========================================================================
-
-    async fn cancel_task(
-        &self,
-        handle: &crate::agent::combinators::AgentTaskHandle,
-        reason: Option<&str>,
-    ) -> Result<flovyn_worker_core::client::CancelResult> {
-        let mut client = self.client.lock().await;
-        Ok(client
-            .cancel_task(self.agent_execution_id, handle.task_id, reason)
-            .await?)
-    }
-
-    async fn cancel_tasks(
-        &self,
-        handles: &[crate::agent::combinators::AgentTaskHandle],
-        reason: Option<&str>,
-    ) -> Result<Vec<flovyn_worker_core::client::CancelResult>> {
-        let mut results = Vec::with_capacity(handles.len());
-        let mut client = self.client.lock().await;
-
-        for handle in handles {
-            let result = client
-                .cancel_task(self.agent_execution_id, handle.task_id, reason)
-                .await?;
-            results.push(result);
-        }
-
-        Ok(results)
-    }
-
-    // =========================================================================
-    // Batch Task Scheduling
-    // =========================================================================
-
-    async fn schedule_tasks_batch(
-        &self,
-        tasks: Vec<(&str, Value)>,
-    ) -> Result<Vec<crate::agent::combinators::AgentTaskHandle>> {
-        // Convert to batch with default options
-        let tasks_with_options: Vec<_> = tasks
-            .into_iter()
-            .map(|(kind, input)| (kind, input, ScheduleAgentTaskOptions::default()))
-            .collect();
-        self.schedule_tasks_batch_with_options(tasks_with_options)
-            .await
-    }
-
-    async fn schedule_tasks_batch_with_options(
-        &self,
-        tasks: Vec<(&str, Value, ScheduleAgentTaskOptions)>,
-    ) -> Result<Vec<crate::agent::combinators::AgentTaskHandle>> {
-        use flovyn_worker_core::client::BatchScheduleTaskInput;
-
-        if tasks.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // Build batch inputs
-        let mut batch_inputs = Vec::with_capacity(tasks.len());
-        for (task_kind, input, options) in &tasks {
-            let idempotency_key = options
-                .idempotency_key
-                .clone()
-                .unwrap_or_else(|| self.generate_task_idempotency_key());
-
-            let mut batch_input = BatchScheduleTaskInput::new(*task_kind, input.clone())
-                .with_idempotency_key(idempotency_key);
-
-            if let Some(ref queue) = options.queue {
-                batch_input = batch_input.with_queue(queue);
-            }
-            if let Some(max_retries) = options.max_retries {
-                batch_input = batch_input.with_max_retries(max_retries as i32);
-            }
-            if let Some(timeout) = options.timeout {
-                batch_input = batch_input.with_timeout_ms(timeout.as_millis() as i64);
-            }
-
-            batch_inputs.push(batch_input);
-        }
-
-        // Call batch schedule
-        let results = {
-            let mut client = self.client.lock().await;
-            client
-                .schedule_tasks_batch(
-                    self.agent_execution_id,
-                    &batch_inputs,
-                    None, // default_queue
-                    None, // default_max_retries
-                    None, // default_timeout_ms
-                )
-                .await?
-        };
-
-        // Get the starting index for these tasks
-        // Note: counter was already incremented in generate_task_idempotency_key calls
-        let start_index = self.scheduled_task_counter.load(Ordering::SeqCst) as usize - tasks.len();
-
-        // Build handles
-        let mut handles = Vec::with_capacity(results.len());
-        for (i, (result, (task_kind, _, _))) in results.iter().zip(tasks.iter()).enumerate() {
-            if let Some(ref error) = result.error {
-                return Err(FlovynError::Other(format!(
-                    "Failed to schedule task '{}': {}",
-                    task_kind, error
-                )));
-            }
-
-            handles.push(crate::agent::combinators::AgentTaskHandle::new(
-                result.task_execution_id,
-                *task_kind,
-                start_index + i,
-            ));
-        }
-
-        Ok(handles)
-    }
 }
 
 fn convert_entry_to_message(entry: CoreEntry) -> LoadedMessage {
