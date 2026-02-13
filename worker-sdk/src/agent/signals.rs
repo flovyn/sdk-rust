@@ -157,7 +157,7 @@ mod tests {
     async fn test_remote_signal_source_has_signal_returns_false() {
         let source = RemoteSignalSource::new();
         let result = source.has_signal(Uuid::nil(), "test").await;
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[tokio::test]
@@ -169,9 +169,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_signal_source_default() {
-        let source = RemoteSignalSource::default();
+        let source = RemoteSignalSource;
         let result = source.has_signal(Uuid::nil(), "test").await;
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]

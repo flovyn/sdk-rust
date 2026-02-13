@@ -798,7 +798,7 @@ impl DynamicAgent for RacingTasksWithCancelAgent {
         .await?;
 
         // Schedule 3 tasks with different delays
-        let task_configs = vec![
+        let task_configs = [
             ("fast", fast_delay),
             ("medium", medium_delay),
             ("slow", slow_delay),

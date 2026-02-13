@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_remote_executor_default() {
-        let executor = RemoteTaskExecutor::default();
+        let executor = RemoteTaskExecutor;
         assert!(!executor.supports_local("test"));
     }
 
