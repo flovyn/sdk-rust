@@ -33,12 +33,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
+#[cfg(test)]
+use super::CheckpointData;
 use super::{
     AgentCommand, AgentStorage, CommandBatch, PendingTask, SegmentState, StorageResult, TaskResult,
     TaskStatus,
 };
-#[cfg(test)]
-use super::CheckpointData;
 
 /// In-memory storage backend for testing and ephemeral agents.
 ///

@@ -118,7 +118,7 @@ impl AgentStorage for RemoteStorage {
                             Some(&entry_id.to_string()),
                         )
                         .await
-                        .map_err(|e| FlovynError::from(e))?;
+                        .map_err(FlovynError::from)?;
                 }
                 AgentCommand::ScheduleTask {
                     task_id: _,
@@ -137,7 +137,7 @@ impl AgentStorage for RemoteStorage {
                             None, // idempotency_key will be added in Phase 2
                         )
                         .await
-                        .map_err(|e| FlovynError::from(e))?;
+                        .map_err(FlovynError::from)?;
                 }
                 AgentCommand::WaitForSignal { signal_name: _ } => {
                     // Signal waiting is recorded in checkpoint state, no gRPC call needed
@@ -147,7 +147,10 @@ impl AgentStorage for RemoteStorage {
 
         // Submit checkpoint if provided
         if let Some(checkpoint) = &batch.checkpoint {
-            let token_usage = checkpoint.token_usage.as_ref().map(Self::convert_token_usage);
+            let token_usage = checkpoint
+                .token_usage
+                .as_ref()
+                .map(Self::convert_token_usage);
 
             client
                 .submit_checkpoint(
@@ -157,7 +160,7 @@ impl AgentStorage for RemoteStorage {
                     token_usage,
                 )
                 .await
-                .map_err(|e| FlovynError::from(e))?;
+                .map_err(FlovynError::from)?;
         }
 
         Ok(())
@@ -173,7 +176,7 @@ impl AgentStorage for RemoteStorage {
         let checkpoint = client
             .get_latest_checkpoint(agent_id)
             .await
-            .map_err(|e| FlovynError::from(e))?;
+            .map_err(FlovynError::from)?;
 
         // Convert checkpoint to CheckpointData
         let checkpoint_data = checkpoint.map(|cp| CheckpointData {
@@ -202,7 +205,7 @@ impl AgentStorage for RemoteStorage {
         let checkpoint = client
             .get_latest_checkpoint(agent_id)
             .await
-            .map_err(|e| FlovynError::from(e))?;
+            .map_err(FlovynError::from)?;
 
         // Use checkpoint sequence as segment number
         Ok(checkpoint.map(|cp| cp.sequence as u64).unwrap_or(0))
@@ -251,7 +254,7 @@ impl AgentStorage for RemoteStorage {
         client
             .signal_agent(agent_id, signal_name, &payload)
             .await
-            .map_err(|e| FlovynError::from(e))?;
+            .map_err(FlovynError::from)?;
 
         Ok(())
     }
@@ -264,7 +267,7 @@ impl AgentStorage for RemoteStorage {
         let signals = client
             .consume_signals(agent_id, Some(signal_name))
             .await
-            .map_err(|e| FlovynError::from(e))?;
+            .map_err(FlovynError::from)?;
 
         // Return the first signal's value if any
         Ok(signals.into_iter().next().map(|s| s.signal_value))
@@ -277,7 +280,7 @@ impl AgentStorage for RemoteStorage {
         client
             .has_signal(agent_id, signal_name)
             .await
-            .map_err(|e| FlovynError::from(e))
+            .map_err(FlovynError::from)
     }
 }
 
@@ -299,7 +302,7 @@ impl RemoteStorage {
         let result = client
             .get_task_result(agent_id, task_id)
             .await
-            .map_err(|e| FlovynError::from(e))?;
+            .map_err(FlovynError::from)?;
 
         // Convert to our TaskResult type
         let status = Self::parse_task_status(&result.status);
@@ -332,7 +335,7 @@ impl RemoteStorage {
         let results = client
             .get_task_results_batch(agent_id, task_ids)
             .await
-            .map_err(|e| FlovynError::from(e))?;
+            .map_err(FlovynError::from)?;
 
         // Convert to our TaskResult type, filtering for terminal states
         let task_results = results
@@ -356,12 +359,30 @@ mod tests {
 
     #[test]
     fn test_parse_task_status() {
-        assert_eq!(RemoteStorage::parse_task_status("PENDING"), TaskStatus::Pending);
-        assert_eq!(RemoteStorage::parse_task_status("RUNNING"), TaskStatus::Running);
-        assert_eq!(RemoteStorage::parse_task_status("COMPLETED"), TaskStatus::Completed);
-        assert_eq!(RemoteStorage::parse_task_status("FAILED"), TaskStatus::Failed);
-        assert_eq!(RemoteStorage::parse_task_status("CANCELLED"), TaskStatus::Cancelled);
-        assert_eq!(RemoteStorage::parse_task_status("UNKNOWN"), TaskStatus::Pending);
+        assert_eq!(
+            RemoteStorage::parse_task_status("PENDING"),
+            TaskStatus::Pending
+        );
+        assert_eq!(
+            RemoteStorage::parse_task_status("RUNNING"),
+            TaskStatus::Running
+        );
+        assert_eq!(
+            RemoteStorage::parse_task_status("COMPLETED"),
+            TaskStatus::Completed
+        );
+        assert_eq!(
+            RemoteStorage::parse_task_status("FAILED"),
+            TaskStatus::Failed
+        );
+        assert_eq!(
+            RemoteStorage::parse_task_status("CANCELLED"),
+            TaskStatus::Cancelled
+        );
+        assert_eq!(
+            RemoteStorage::parse_task_status("UNKNOWN"),
+            TaskStatus::Pending
+        );
     }
 
     #[test]

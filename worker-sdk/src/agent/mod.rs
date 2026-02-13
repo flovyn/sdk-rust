@@ -56,10 +56,13 @@ pub mod tracer;
 
 // Re-export commonly used types
 pub use combinators::TaskOutcome;
-pub use context::{AgentContext, AgentContextExt, EntryRole, EntryType, ScheduleAgentTaskOptions};
+pub use context::{
+    AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType, ScheduleAgentTaskOptions,
+};
 pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};
 pub use executor::{ExecutorResult, RemoteTaskExecutor, TaskExecutor};
+pub use future::AgentTaskFutureRaw;
 pub use registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
 pub use signals::{ChannelSignalSource, RemoteSignalSource, SignalResult, SignalSource};
 pub use storage::{
@@ -67,5 +70,4 @@ pub use storage::{
     RemoteStorage as RemoteAgentStorage, SegmentState, StorageResult, TaskOptions, TaskResult,
     TaskStatus, TokenUsage as StorageTokenUsage,
 };
-pub use future::AgentTaskFutureRaw;
 pub use tracer::{AgentTracer, CompositeTracer, NoopTracer, StdoutTracer};

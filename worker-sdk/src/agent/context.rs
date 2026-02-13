@@ -286,52 +286,28 @@ pub trait AgentContext: Send + Sync {
     /// if no checkpoint has been created yet.
     fn checkpoint_sequence(&self) -> i32;
 
+    /// Flush any pending entries/commands to the server.
+    ///
+    /// This is called automatically at checkpoint and suspension points.
+    /// The agent worker also calls this before completing the agent to ensure
+    /// all entries created after the last checkpoint are persisted.
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error if the flush failed.
+    async fn flush_pending(&self) -> Result<()>;
+
     // =========================================================================
-    // Task Scheduling
+    // Task Scheduling (Lazy API - Aligned with Workflow)
     // =========================================================================
 
-    /// Schedule a task and wait for its result.
+    /// Schedule a task and return a future (no immediate RPC).
     ///
-    /// The task input is streamed to the server in chunks to support large inputs.
-    /// Idempotency keys are auto-generated as `{agent_execution_id}:{checkpoint_seq}:{index}`
-    /// to ensure tasks are deduplicated on retry.
+    /// This API matches workflow's `schedule_raw()`. The task is recorded
+    /// locally with a deterministic ID but not submitted until `join_all()`
+    /// or `select_ok()` is called.
     ///
     /// # Arguments
     /// * `task_kind` - The kind of task to schedule (must be registered with a worker)
-    /// * `input` - Task input as JSON Value
-    ///
-    /// # Returns
-    /// The task output as JSON Value
-    ///
-    /// # Example
-    /// ```ignore
-    /// let result = ctx.schedule_task_raw("analyze-code", json!({
-    ///     "code": source_code,
-    ///     "language": "rust"
-    /// })).await?;
-    /// ```
-    async fn schedule_task_raw(&self, task_kind: &str, input: Value) -> Result<Value>;
-
-    /// Schedule a task with custom options.
-    async fn schedule_task_with_options_raw(
-        &self,
-        task_kind: &str,
-        input: Value,
-        options: ScheduleAgentTaskOptions,
-    ) -> Result<Value>;
-
-    // =========================================================================
-    // Lazy Task Scheduling (Preferred API)
-    // =========================================================================
-
-    /// Schedule a task and return a future (lazy, no immediate RPC).
-    ///
-    /// This is the preferred API for parallel task execution. The task is
-    /// recorded locally with a deterministic ID but not submitted until
-    /// `join_all()` or `select_ok()` is called.
-    ///
-    /// # Arguments
-    /// * `kind` - The kind of task to schedule (must be registered with a worker)
     /// * `input` - Task input as JSON Value
     ///
     /// # Returns
@@ -339,18 +315,18 @@ pub trait AgentContext: Send + Sync {
     ///
     /// # Example
     /// ```ignore
-    /// let f1 = ctx.schedule_task_lazy("task-a", json!({"x": 1}));
-    /// let f2 = ctx.schedule_task_lazy("task-b", json!({"y": 2}));
+    /// let f1 = ctx.schedule_raw("task-a", json!({"x": 1}));
+    /// let f2 = ctx.schedule_raw("task-b", json!({"y": 2}));
     /// let results = ctx.join_all(vec![f1, f2]).await?;
     /// ```
-    fn schedule_task_lazy(&self, kind: &str, input: Value) -> AgentTaskFutureRaw;
+    fn schedule_raw(&self, task_kind: &str, input: Value) -> AgentTaskFutureRaw;
 
-    /// Schedule a task with options and return a future (lazy, no immediate RPC).
+    /// Schedule a task with options and return a future (no immediate RPC).
     ///
-    /// Similar to `schedule_task_lazy` but allows specifying task options.
-    fn schedule_task_lazy_with_options(
+    /// Similar to `schedule_raw` but allows specifying task options.
+    fn schedule_with_options_raw(
         &self,
-        kind: &str,
+        task_kind: &str,
         input: Value,
         options: ScheduleAgentTaskOptions,
     ) -> AgentTaskFutureRaw;
@@ -362,7 +338,7 @@ pub trait AgentContext: Send + Sync {
     /// the input futures.
     ///
     /// # Arguments
-    /// * `futures` - Task futures from `schedule_task_lazy()`
+    /// * `futures` - Task futures from `schedule_raw()`
     ///
     /// # Returns
     /// A vector of task outputs in the same order as the input futures.
@@ -372,12 +348,52 @@ pub trait AgentContext: Send + Sync {
     ///
     /// # Example
     /// ```ignore
-    /// let f1 = ctx.schedule_task_lazy("analyze", json!({"data": "a"}));
-    /// let f2 = ctx.schedule_task_lazy("analyze", json!({"data": "b"}));
+    /// let f1 = ctx.schedule_raw("analyze", json!({"data": "a"}));
+    /// let f2 = ctx.schedule_raw("analyze", json!({"data": "b"}));
     /// let results = ctx.join_all(vec![f1, f2]).await?;
     /// // results[0] is from f1, results[1] is from f2
     /// ```
     async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>>;
+
+    /// Wait for all task futures to complete, collecting both successes and failures.
+    ///
+    /// Unlike `join_all`, this method does NOT fail-fast on individual task failures.
+    /// It waits for all tasks to reach a terminal state and returns a `SettledResult`
+    /// containing both completed and failed tasks.
+    ///
+    /// Use this when you want to handle partial failures gracefully.
+    ///
+    /// # Arguments
+    /// * `futures` - Task futures from `schedule_raw()`
+    ///
+    /// # Returns
+    /// A `SettledResult` containing:
+    /// - `completed`: Tasks that succeeded (task_id, output)
+    /// - `failed`: Tasks that failed (task_id, error)
+    /// - `cancelled`: Task IDs that were cancelled
+    ///
+    /// # Example
+    /// ```ignore
+    /// let f1 = ctx.schedule_raw("process", json!({"item": "a"}));
+    /// let f2 = ctx.schedule_raw("process", json!({"item": "b"}));
+    /// let f3 = ctx.schedule_raw("process", json!({"item": "c"}));
+    ///
+    /// let result = ctx.join_all_settled(vec![f1, f2, f3]).await?;
+    ///
+    /// println!("{} succeeded, {} failed", result.completed.len(), result.failed.len());
+    ///
+    /// // Handle partial results
+    /// for (task_id, output) in result.completed {
+    ///     process_output(task_id, output);
+    /// }
+    /// for (task_id, error) in result.failed {
+    ///     log_error(task_id, error);
+    /// }
+    /// ```
+    async fn join_all_settled(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<crate::agent::combinators::SettledResult>;
 
     /// Wait for the first task to complete successfully, return remaining futures.
     ///
@@ -386,7 +402,7 @@ pub trait AgentContext: Send + Sync {
     /// success triggers return.
     ///
     /// # Arguments
-    /// * `futures` - Task futures from `schedule_task_lazy()`
+    /// * `futures` - Task futures from `schedule_raw()`
     ///
     /// # Returns
     /// A tuple of (successful result, remaining unfinished futures).
@@ -396,8 +412,8 @@ pub trait AgentContext: Send + Sync {
     ///
     /// # Example
     /// ```ignore
-    /// let f1 = ctx.schedule_task_lazy("provider-a", input.clone());
-    /// let f2 = ctx.schedule_task_lazy("provider-b", input.clone());
+    /// let f1 = ctx.schedule_raw("provider-a", input.clone());
+    /// let f2 = ctx.schedule_raw("provider-b", input.clone());
     /// let (result, remaining) = ctx.select_ok(vec![f1, f2]).await?;
     /// // result is from whichever succeeded first
     /// // remaining contains futures that haven't completed yet
@@ -406,6 +422,31 @@ pub trait AgentContext: Send + Sync {
         &self,
         futures: Vec<AgentTaskFutureRaw>,
     ) -> Result<(Value, Vec<AgentTaskFutureRaw>)>;
+
+    /// Wait for the first task to complete successfully, then cancel remaining tasks.
+    ///
+    /// Similar to `select_ok`, but automatically cancels all remaining tasks
+    /// after the first success. This is useful for racing multiple providers
+    /// when you only need one result.
+    ///
+    /// # Arguments
+    /// * `futures` - Task futures from `schedule_raw()`
+    ///
+    /// # Returns
+    /// A tuple of (successful result, list of cancelled task IDs).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let f1 = ctx.schedule_raw("provider-a", input.clone());
+    /// let f2 = ctx.schedule_raw("provider-b", input.clone());
+    /// let (result, cancelled_ids) = ctx.select_ok_with_cancel(vec![f1, f2]).await?;
+    /// // result is from whichever succeeded first
+    /// // cancelled_ids contains IDs of tasks that were cancelled
+    /// ```
+    async fn select_ok_with_cancel(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<(Value, Vec<Uuid>)>;
 
     // =========================================================================
     // Signals (User Interaction)
@@ -490,6 +531,49 @@ pub trait AgentContext: Send + Sync {
 
     /// Check for cancellation and return error if cancelled
     async fn check_cancellation(&self) -> Result<()>;
+
+    /// Cancel a scheduled task.
+    ///
+    /// Attempts to cancel a task that was previously scheduled via `schedule_raw()`.
+    /// Only tasks in PENDING or RUNNING state can be cancelled.
+    ///
+    /// # Arguments
+    /// * `task_id` - The UUID of the task to cancel
+    ///
+    /// # Returns
+    /// * `Ok(CancelTaskResult::Cancelled)` - Task was successfully cancelled
+    /// * `Ok(CancelTaskResult::AlreadyCompleted)` - Task already completed before cancel
+    /// * `Ok(CancelTaskResult::AlreadyFailed)` - Task already failed before cancel
+    /// * `Ok(CancelTaskResult::AlreadyCancelled)` - Task was already cancelled
+    /// * `Err(_)` - Task not found or other error
+    ///
+    /// # Example
+    /// ```ignore
+    /// let f1 = ctx.schedule_raw("slow-task", json!({}));
+    /// let f2 = ctx.schedule_raw("fast-task", json!({}));
+    ///
+    /// // Race the tasks, cancel the loser
+    /// let (result, remaining) = ctx.select_ok(vec![f1.clone(), f2.clone()]).await?;
+    ///
+    /// // Cancel remaining tasks
+    /// for task in remaining {
+    ///     ctx.cancel_task(task.task_id).await?;
+    /// }
+    /// ```
+    async fn cancel_task(&self, task_id: Uuid) -> Result<CancelTaskResult>;
+}
+
+/// Result of a task cancellation attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CancelTaskResult {
+    /// Task was successfully cancelled
+    Cancelled,
+    /// Task had already completed before cancellation
+    AlreadyCompleted,
+    /// Task had already failed before cancellation
+    AlreadyFailed,
+    /// Task was already cancelled
+    AlreadyCancelled,
 }
 
 /// Extension trait for typed agent context operations.
@@ -500,7 +584,10 @@ pub trait AgentContextExt: AgentContext {
             .map_err(crate::error::FlovynError::Serialization)
     }
 
-    /// Schedule a typed task and wait for its result.
+    /// Schedule a typed task and wait for its result (convenience wrapper).
+    ///
+    /// This is a convenience method that schedules a single task and waits for it.
+    /// For parallel task execution, use `schedule_raw()` + `join_all()` directly.
     fn schedule_task<I: Serialize + Send, O: DeserializeOwned>(
         &self,
         task_kind: &str,
@@ -512,12 +599,14 @@ pub trait AgentContextExt: AgentContext {
         async move {
             let input_value =
                 serde_json::to_value(input).map_err(crate::error::FlovynError::Serialization)?;
-            let output_value = self.schedule_task_raw(task_kind, input_value).await?;
+            let future = self.schedule_raw(task_kind, input_value);
+            let results = self.join_all(vec![future]).await?;
+            let output_value = results.into_iter().next().unwrap_or(Value::Null);
             serde_json::from_value(output_value).map_err(crate::error::FlovynError::Serialization)
         }
     }
 
-    /// Schedule a typed task with options.
+    /// Schedule a typed task with options (convenience wrapper).
     fn schedule_task_with_options<I: Serialize + Send, O: DeserializeOwned>(
         &self,
         task_kind: &str,
@@ -530,9 +619,9 @@ pub trait AgentContextExt: AgentContext {
         async move {
             let input_value =
                 serde_json::to_value(input).map_err(crate::error::FlovynError::Serialization)?;
-            let output_value = self
-                .schedule_task_with_options_raw(task_kind, input_value, options)
-                .await?;
+            let future = self.schedule_with_options_raw(task_kind, input_value, options);
+            let results = self.join_all(vec![future]).await?;
+            let output_value = results.into_iter().next().unwrap_or(Value::Null);
             serde_json::from_value(output_value).map_err(crate::error::FlovynError::Serialization)
         }
     }

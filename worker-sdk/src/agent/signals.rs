@@ -125,12 +125,7 @@ impl ChannelSignalSource {
     /// # Arguments
     ///
     /// * `buffer` - Channel buffer size
-    pub fn channel(
-        buffer: usize,
-    ) -> (
-        tokio::sync::mpsc::Sender<(String, Value)>,
-        Self,
-    ) {
+    pub fn channel(buffer: usize) -> (tokio::sync::mpsc::Sender<(String, Value)>, Self) {
         let (tx, rx) = tokio::sync::mpsc::channel(buffer);
         (tx, Self::new(rx))
     }

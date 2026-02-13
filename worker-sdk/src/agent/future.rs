@@ -103,7 +103,8 @@ mod tests {
     #[test]
     fn test_agent_task_future_raw_clone() {
         let task_id = Uuid::new_v4();
-        let future = AgentTaskFutureRaw::new(task_id, "process".to_string(), json!({"key": "value"}));
+        let future =
+            AgentTaskFutureRaw::new(task_id, "process".to_string(), json!({"key": "value"}));
 
         let cloned = future.clone();
 

@@ -5,7 +5,7 @@
 //! ## Overview
 //!
 //! Agents can schedule multiple tasks and wait for them using methods on AgentContext:
-//! - `ctx.schedule_task_lazy()` - Schedule a task lazily (no immediate RPC)
+//! - `ctx.schedule_raw()` - Schedule a task lazily (no immediate RPC)
 //! - `ctx.join_all(futures)` - Wait for ALL tasks to complete
 //! - `ctx.select_ok(futures)` - Wait for first successful task
 //!
@@ -13,9 +13,9 @@
 //!
 //! ```rust,ignore
 //! // Schedule tasks lazily (no RPC call yet)
-//! let f1 = ctx.schedule_task_lazy("process-item", json!({"item": "a"}));
-//! let f2 = ctx.schedule_task_lazy("process-item", json!({"item": "b"}));
-//! let f3 = ctx.schedule_task_lazy("process-item", json!({"item": "c"}));
+//! let f1 = ctx.schedule_raw("process-item", json!({"item": "a"}));
+//! let f2 = ctx.schedule_raw("process-item", json!({"item": "b"}));
+//! let f3 = ctx.schedule_raw("process-item", json!({"item": "c"}));
 //!
 //! // Wait for all to complete (batched RPC, then await)
 //! let results = ctx.join_all(vec![f1, f2, f3]).await?;
@@ -72,6 +72,77 @@ impl TaskOutcome {
             Self::Cancelled => Err(FlovynError::TaskFailed("Task was cancelled".to_string())),
             Self::Pending => Err(FlovynError::TaskFailed("Task is still pending".to_string())),
         }
+    }
+}
+
+/// Result of a `join_all_settled` operation.
+///
+/// Contains all task results, regardless of success or failure.
+/// Use this when you want to wait for all tasks to complete and handle
+/// partial failures gracefully.
+///
+/// ## Example
+///
+/// ```rust,ignore
+/// let result = ctx.join_all_settled(vec![f1, f2, f3]).await?;
+///
+/// println!("Completed: {} tasks", result.completed.len());
+/// println!("Failed: {} tasks", result.failed.len());
+///
+/// // Process successful results
+/// for (task_id, output) in &result.completed {
+///     println!("Task {} completed: {:?}", task_id, output);
+/// }
+///
+/// // Handle failures
+/// for (task_id, error) in &result.failed {
+///     println!("Task {} failed: {}", task_id, error);
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct SettledResult {
+    /// Tasks that completed successfully: (task_id, output)
+    pub completed: Vec<(String, Value)>,
+    /// Tasks that failed: (task_id, error_message)
+    pub failed: Vec<(String, String)>,
+    /// Tasks that were cancelled: task_ids
+    pub cancelled: Vec<String>,
+}
+
+impl SettledResult {
+    /// Create a new empty settled result
+    pub fn new() -> Self {
+        Self {
+            completed: Vec::new(),
+            failed: Vec::new(),
+            cancelled: Vec::new(),
+        }
+    }
+
+    /// Total number of tasks
+    pub fn total(&self) -> usize {
+        self.completed.len() + self.failed.len() + self.cancelled.len()
+    }
+
+    /// Check if all tasks succeeded
+    pub fn all_succeeded(&self) -> bool {
+        self.failed.is_empty() && self.cancelled.is_empty()
+    }
+
+    /// Check if any task succeeded
+    pub fn any_succeeded(&self) -> bool {
+        !self.completed.is_empty()
+    }
+
+    /// Check if all tasks failed
+    pub fn all_failed(&self) -> bool {
+        self.completed.is_empty() && !self.failed.is_empty()
+    }
+}
+
+impl Default for SettledResult {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

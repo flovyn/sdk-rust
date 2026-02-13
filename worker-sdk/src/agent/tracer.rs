@@ -105,7 +105,8 @@ impl AgentTracer for NoopTracer {
 
     fn trace_tool_call(&self, _agent_id: Uuid, _tool: &str, _input: &Value, _latency: Duration) {}
 
-    fn trace_tokens(&self, _agent_id: Uuid, _input_tokens: u64, _output_tokens: u64, _model: &str) {}
+    fn trace_tokens(&self, _agent_id: Uuid, _input_tokens: u64, _output_tokens: u64, _model: &str) {
+    }
 
     fn trace_turn_end(&self, _agent_id: Uuid, _turn: u64, _output: &Value) {}
 

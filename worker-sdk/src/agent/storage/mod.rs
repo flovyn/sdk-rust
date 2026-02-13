@@ -354,7 +354,10 @@ mod tests {
         let json = serde_json::to_string(&checkpoint).unwrap();
         let deserialized: CheckpointData = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(deserialized.state, json!({"conversation_id": "abc123", "turn": 5}));
+        assert_eq!(
+            deserialized.state,
+            json!({"conversation_id": "abc123", "turn": 5})
+        );
         assert_eq!(deserialized.leaf_entry_id, Some(Uuid::nil()));
         assert!(deserialized.token_usage.is_some());
     }

@@ -1,6 +1,8 @@
 //! Mock agent context for unit testing agents in isolation.
 
-use crate::agent::context::{AgentContext, EntryRole, LoadedMessage, ScheduleAgentTaskOptions};
+use crate::agent::context::{
+    AgentContext, CancelTaskResult, EntryRole, LoadedMessage, ScheduleAgentTaskOptions,
+};
 use crate::agent::future::AgentTaskFutureRaw;
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
@@ -8,7 +10,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -64,8 +66,6 @@ struct MockAgentContextInner {
     streamed_events: RwLock<Vec<StreamEvent>>,
     // Cancellation
     cancellation_requested: AtomicBool,
-    // Counter for generating task indices
-    task_counter: AtomicU64,
 }
 
 impl Clone for MockAgentContext {
@@ -258,7 +258,6 @@ impl MockAgentContextBuilder {
                 signal_queues: RwLock::new(self.signal_queues),
                 streamed_events: RwLock::new(Vec::new()),
                 cancellation_requested: AtomicBool::new(false),
-                task_counter: AtomicU64::new(0),
             }),
         }
     }
@@ -378,49 +377,14 @@ impl AgentContext for MockAgentContext {
     }
 
     // =========================================================================
-    // Task Scheduling
+    // Task Scheduling (Lazy API - Aligned with Workflow)
     // =========================================================================
 
-    async fn schedule_task_raw(&self, task_kind: &str, input: Value) -> Result<Value> {
-        self.schedule_task_with_options_raw(task_kind, input, ScheduleAgentTaskOptions::default())
-            .await
+    fn schedule_raw(&self, kind: &str, input: Value) -> AgentTaskFutureRaw {
+        self.schedule_with_options_raw(kind, input, ScheduleAgentTaskOptions::default())
     }
 
-    async fn schedule_task_with_options_raw(
-        &self,
-        task_kind: &str,
-        input: Value,
-        options: ScheduleAgentTaskOptions,
-    ) -> Result<Value> {
-        let task_id = Uuid::new_v4();
-
-        // Record the scheduled task
-        self.inner.scheduled_tasks.write().push(ScheduledAgentTask {
-            task_id,
-            task_kind: task_kind.to_string(),
-            input: input.clone(),
-            options,
-        });
-
-        // Look up the mock result
-        match self.inner.task_results.read().get(task_kind) {
-            Some(result) => Ok(result.clone()),
-            None => Err(FlovynError::Other(format!(
-                "No mock result configured for task kind: {}",
-                task_kind
-            ))),
-        }
-    }
-
-    // =========================================================================
-    // Lazy Task Scheduling (Preferred API)
-    // =========================================================================
-
-    fn schedule_task_lazy(&self, kind: &str, input: Value) -> AgentTaskFutureRaw {
-        self.schedule_task_lazy_with_options(kind, input, ScheduleAgentTaskOptions::default())
-    }
-
-    fn schedule_task_lazy_with_options(
+    fn schedule_with_options_raw(
         &self,
         kind: &str,
         input: Value,
@@ -488,6 +452,45 @@ impl AgentContext for MockAgentContext {
         ))
     }
 
+    async fn select_ok_with_cancel(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<(Value, Vec<Uuid>)> {
+        // Use select_ok and convert remaining to cancelled IDs
+        let (result, remaining) = self.select_ok(futures).await?;
+        let cancelled_ids: Vec<Uuid> = remaining.iter().map(|f| f.task_id).collect();
+        Ok((result, cancelled_ids))
+    }
+
+    async fn join_all_settled(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<crate::agent::combinators::SettledResult> {
+        let mut result = crate::agent::combinators::SettledResult::new();
+
+        for future in futures {
+            match self.get_task_result(&future.kind) {
+                Some(output) => {
+                    result.completed.push((future.task_id.to_string(), output));
+                }
+                None => {
+                    // In mock context, treat missing result as failure
+                    result.failed.push((
+                        future.task_id.to_string(),
+                        "No mock result configured".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn flush_pending(&self) -> Result<()> {
+        // Mock context: no-op since there's no actual server to flush to
+        Ok(())
+    }
+
     // =========================================================================
     // Signals
     // =========================================================================
@@ -553,6 +556,12 @@ impl AgentContext for MockAgentContext {
             Ok(())
         }
     }
+
+    async fn cancel_task(&self, _task_id: Uuid) -> Result<CancelTaskResult> {
+        // In mock context, always return Cancelled for simplicity
+        // Real tests can extend this if needed
+        Ok(CancelTaskResult::Cancelled)
+    }
 }
 
 #[cfg(test)]
@@ -605,19 +614,22 @@ mod tests {
             .task_result("llm-request", json!({"response": "Hello!"}))
             .build();
 
-        let result = ctx
-            .schedule_task_raw("llm-request", json!({"prompt": "Hi"}))
-            .await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), json!({"response": "Hello!"}));
+        // Use the new lazy API: schedule_raw + join_all
+        let future = ctx.schedule_raw("llm-request", json!({"prompt": "Hi"}));
+        let results = ctx.join_all(vec![future]).await;
+        assert!(results.is_ok());
+        assert_eq!(results.unwrap()[0], json!({"response": "Hello!"}));
         assert!(ctx.was_task_scheduled("llm-request"));
     }
 
     #[tokio::test]
     async fn test_mock_agent_context_task_not_configured() {
         let ctx = MockAgentContext::new();
-        let result = ctx.schedule_task_raw("unknown-task", json!({})).await;
-        assert!(result.is_err());
+        // Use the new lazy API: schedule_raw + join_all
+        let future = ctx.schedule_raw("unknown-task", json!({}));
+        let result = ctx.join_all(vec![future]).await;
+        // Should suspend (no result configured)
+        assert!(matches!(result, Err(FlovynError::AgentSuspended(_))));
     }
 
     #[tokio::test]
@@ -689,7 +701,7 @@ mod tests {
             .task_result("slow-task", json!({"done": true}))
             .build();
 
-        let future = ctx.schedule_task_lazy("slow-task", json!({"input": "data"}));
+        let future = ctx.schedule_raw("slow-task", json!({"input": "data"}));
 
         assert_eq!(future.kind(), "slow-task");
         assert!(!future.task_id().is_nil());
@@ -702,8 +714,8 @@ mod tests {
             .task_result("task-b", json!({"b": 2}))
             .build();
 
-        let f1 = ctx.schedule_task_lazy("task-a", json!({}));
-        let f2 = ctx.schedule_task_lazy("task-b", json!({}));
+        let f1 = ctx.schedule_raw("task-a", json!({}));
+        let f2 = ctx.schedule_raw("task-b", json!({}));
 
         let results = ctx.join_all(vec![f1, f2]).await.unwrap();
         assert_eq!(results.len(), 2);
@@ -717,8 +729,8 @@ mod tests {
             .task_result("task-a", json!({"winner": "a"}))
             .build();
 
-        let f1 = ctx.schedule_task_lazy("task-a", json!({}));
-        let f2 = ctx.schedule_task_lazy("task-b", json!({})); // No result configured
+        let f1 = ctx.schedule_raw("task-a", json!({}));
+        let f2 = ctx.schedule_raw("task-b", json!({})); // No result configured
 
         let (result, remaining) = ctx.select_ok(vec![f1, f2]).await.unwrap();
         assert_eq!(result, json!({"winner": "a"}));
@@ -736,16 +748,15 @@ mod tests {
         let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
         let expected_result = json!({"response": "Hello from LLM!"});
 
-        // First "execution" - agent schedules task
+        // First "execution" - agent schedules task using lazy API
         let ctx1 = MockAgentContext::builder()
             .agent_execution_id(agent_id)
             .task_result("llm-request", expected_result.clone())
             .build();
 
-        let result1 = ctx1
-            .schedule_task_raw("llm-request", json!({"prompt": "Hello"}))
-            .await
-            .unwrap();
+        let future1 = ctx1.schedule_raw("llm-request", json!({"prompt": "Hello"}));
+        let results1 = ctx1.join_all(vec![future1]).await.unwrap();
+        let result1 = results1.into_iter().next().unwrap();
 
         assert_eq!(result1, expected_result);
 
@@ -760,10 +771,9 @@ mod tests {
             .task_result("llm-request", expected_result.clone())
             .build();
 
-        let result2 = ctx2
-            .schedule_task_raw("llm-request", json!({"prompt": "Hello"}))
-            .await
-            .unwrap();
+        let future2 = ctx2.schedule_raw("llm-request", json!({"prompt": "Hello"}));
+        let results2 = ctx2.join_all(vec![future2]).await.unwrap();
+        let result2 = results2.into_iter().next().unwrap();
 
         assert_eq!(
             result2, expected_result,
@@ -794,5 +804,250 @@ mod tests {
             correct_key_0.contains(":task:"),
             "Key must use ':task:' separator"
         );
+    }
+
+    // =========================================================================
+    // Tests for Lazy Scheduling and Order Preservation
+    // =========================================================================
+
+    /// Test that schedule_raw records tasks immediately (synchronous, no RPC).
+    ///
+    /// This verifies the lazy scheduling behavior:
+    /// - schedule_raw() is synchronous and returns immediately
+    /// - Task is recorded in scheduled_tasks immediately
+    /// - No RPC is made until join_all() or select_ok() is called
+    #[test]
+    fn test_schedule_raw_is_synchronous_and_records_task() {
+        let ctx = MockAgentContext::new();
+
+        // Initially no tasks scheduled
+        assert_eq!(
+            ctx.scheduled_tasks().len(),
+            0,
+            "No tasks should be scheduled initially"
+        );
+
+        // schedule_raw is synchronous - it returns immediately
+        let future1 = ctx.schedule_raw("task-a", json!({"item": 1}));
+        let future2 = ctx.schedule_raw("task-b", json!({"item": 2}));
+
+        // Tasks should be recorded immediately (no RPC needed)
+        let scheduled = ctx.scheduled_tasks();
+        assert_eq!(
+            scheduled.len(),
+            2,
+            "Both tasks should be recorded immediately after schedule_raw"
+        );
+
+        // Verify task details
+        assert_eq!(scheduled[0].task_kind, "task-a");
+        assert_eq!(scheduled[0].input, json!({"item": 1}));
+        assert_eq!(scheduled[1].task_kind, "task-b");
+        assert_eq!(scheduled[1].input, json!({"item": 2}));
+
+        // Task IDs should match the futures
+        assert_eq!(scheduled[0].task_id, future1.task_id());
+        assert_eq!(scheduled[1].task_id, future2.task_id());
+
+        // Futures are just data - no async operation has occurred
+        assert!(!future1.task_id().is_nil());
+        assert!(!future2.task_id().is_nil());
+    }
+
+    /// Test that join_all preserves order when using same task kind.
+    ///
+    /// This is a critical test: when scheduling multiple tasks of the same kind,
+    /// join_all must return results in the SAME order as futures were passed.
+    #[tokio::test]
+    async fn test_join_all_preserves_order_same_task_kind() {
+        // Configure a single result for the task kind
+        // (In mock, result is keyed by kind, so all get same result)
+        let ctx = MockAgentContext::builder()
+            .task_result("process", json!({"processed": true}))
+            .build();
+
+        // Schedule multiple tasks of the same kind with different inputs
+        let f1 = ctx.schedule_raw("process", json!({"id": "first"}));
+        let f2 = ctx.schedule_raw("process", json!({"id": "second"}));
+        let f3 = ctx.schedule_raw("process", json!({"id": "third"}));
+
+        // Verify tasks are recorded in order
+        let scheduled = ctx.scheduled_tasks();
+        assert_eq!(scheduled[0].input, json!({"id": "first"}));
+        assert_eq!(scheduled[1].input, json!({"id": "second"}));
+        assert_eq!(scheduled[2].input, json!({"id": "third"}));
+
+        // Call join_all with futures in specific order
+        let results = ctx.join_all(vec![f1, f2, f3]).await.unwrap();
+
+        // Results length must match futures length
+        assert_eq!(
+            results.len(),
+            3,
+            "join_all must return same number of results as futures"
+        );
+    }
+
+    /// Test that join_all returns results in order matching futures.
+    ///
+    /// This explicitly tests: results[i] corresponds to futures[i]
+    #[tokio::test]
+    async fn test_join_all_result_order_matches_future_order() {
+        let ctx = MockAgentContext::builder()
+            .task_result("analyze", json!({"type": "analyze"}))
+            .task_result("transform", json!({"type": "transform"}))
+            .task_result("load", json!({"type": "load"}))
+            .build();
+
+        // Schedule in specific order: analyze, transform, load
+        let f_analyze = ctx.schedule_raw("analyze", json!({}));
+        let f_transform = ctx.schedule_raw("transform", json!({}));
+        let f_load = ctx.schedule_raw("load", json!({}));
+
+        // Pass futures in ORDER: analyze, transform, load
+        let results = ctx
+            .join_all(vec![f_analyze, f_transform, f_load])
+            .await
+            .unwrap();
+
+        // Results MUST be in same order
+        assert_eq!(
+            results[0],
+            json!({"type": "analyze"}),
+            "results[0] must be analyze"
+        );
+        assert_eq!(
+            results[1],
+            json!({"type": "transform"}),
+            "results[1] must be transform"
+        );
+        assert_eq!(
+            results[2],
+            json!({"type": "load"}),
+            "results[2] must be load"
+        );
+
+        // Now test with different order
+        let ctx2 = MockAgentContext::builder()
+            .task_result("analyze", json!({"type": "analyze"}))
+            .task_result("transform", json!({"type": "transform"}))
+            .task_result("load", json!({"type": "load"}))
+            .build();
+
+        let f_analyze = ctx2.schedule_raw("analyze", json!({}));
+        let f_transform = ctx2.schedule_raw("transform", json!({}));
+        let f_load = ctx2.schedule_raw("load", json!({}));
+
+        // Pass futures in DIFFERENT order: load, analyze, transform
+        let results = ctx2
+            .join_all(vec![f_load, f_analyze, f_transform])
+            .await
+            .unwrap();
+
+        // Results MUST match the new order
+        assert_eq!(
+            results[0],
+            json!({"type": "load"}),
+            "results[0] must be load (as passed)"
+        );
+        assert_eq!(
+            results[1],
+            json!({"type": "analyze"}),
+            "results[1] must be analyze (as passed)"
+        );
+        assert_eq!(
+            results[2],
+            json!({"type": "transform"}),
+            "results[2] must be transform (as passed)"
+        );
+    }
+
+    /// Test that empty join_all returns empty results.
+    #[tokio::test]
+    async fn test_join_all_empty_returns_empty() {
+        let ctx = MockAgentContext::new();
+
+        let results = ctx.join_all(vec![]).await.unwrap();
+
+        assert!(results.is_empty(), "join_all([]) must return []");
+    }
+
+    /// Test select_ok returns first successful task in order.
+    #[tokio::test]
+    async fn test_select_ok_returns_first_success_by_order() {
+        // Only configure result for task-b (second in order)
+        let ctx = MockAgentContext::builder()
+            .task_result("task-b", json!({"winner": "b"}))
+            .build();
+
+        // Schedule two tasks - first has no result, second has result
+        let f_a = ctx.schedule_raw("task-a", json!({})); // No result configured
+        let f_b = ctx.schedule_raw("task-b", json!({})); // Has result
+
+        // select_ok should find task-b (index 1) as first success
+        let (result, remaining) = ctx.select_ok(vec![f_a.clone(), f_b.clone()]).await.unwrap();
+
+        assert_eq!(result, json!({"winner": "b"}));
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].kind(), "task-a"); // task-a should remain
+    }
+
+    /// Test command batching pattern: multiple operations before await.
+    ///
+    /// This demonstrates the key pattern enabled by lazy scheduling:
+    /// - Multiple schedule_raw() calls are synchronous and return immediately
+    /// - Commands are batched and only committed when join_all() is called
+    /// - This enables efficient batching of task submissions
+    ///
+    /// In the real implementation, commands are buffered in memory and sent
+    /// to the server atomically at suspension points (join_all, checkpoint).
+    #[tokio::test]
+    async fn test_command_batching_pattern() {
+        let ctx = MockAgentContext::builder()
+            .task_result("fetch", json!({"data": "response"}))
+            .task_result("process", json!({"result": "processed"}))
+            .task_result("store", json!({"stored": true}))
+            .build();
+
+        // PHASE 1: Record entries (would be batched in real impl)
+        ctx.append_entry(EntryRole::User, &json!({"text": "Process this data"}))
+            .await
+            .unwrap();
+        ctx.append_entry(
+            EntryRole::Assistant,
+            &json!({"text": "Starting parallel processing"}),
+        )
+        .await
+        .unwrap();
+
+        // PHASE 2: Schedule multiple tasks synchronously (no RPC yet)
+        let f1 = ctx.schedule_raw("fetch", json!({"url": "https://api.example.com"}));
+        let f2 = ctx.schedule_raw("process", json!({"data": "raw"}));
+        let f3 = ctx.schedule_raw("store", json!({"key": "result"}));
+
+        // At this point:
+        // - 3 tasks are scheduled (recorded in scheduled_tasks)
+        // - No RPC has been made yet
+        // - Tasks will be submitted when join_all is called
+        assert_eq!(
+            ctx.scheduled_tasks().len(),
+            3,
+            "All tasks should be scheduled before join_all"
+        );
+
+        // PHASE 3: Await all tasks (this triggers batch commit in real impl)
+        let results = ctx.join_all(vec![f1, f2, f3]).await.unwrap();
+
+        // Verify all results received in order
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0], json!({"data": "response"}));
+        assert_eq!(results[1], json!({"result": "processed"}));
+        assert_eq!(results[2], json!({"stored": true}));
+
+        // Verify entries were recorded
+        let entries = ctx.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].role, EntryRole::User);
+        assert_eq!(entries[1].role, EntryRole::Assistant);
     }
 }

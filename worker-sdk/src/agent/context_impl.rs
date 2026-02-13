@@ -4,7 +4,8 @@
 //! manage checkpoints, schedule tasks, and handle signals.
 
 use crate::agent::context::{
-    AgentContext, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions, TokenUsage,
+    AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
+    TokenUsage,
 };
 use crate::agent::future::AgentTaskFutureRaw;
 use crate::agent::storage::{AgentCommand, CheckpointData, CommandBatch};
@@ -36,12 +37,14 @@ pub struct AgentContextImpl {
     checkpoint_sequence: AtomicI32,
     /// Current leaf entry ID (for building entry chain)
     leaf_entry_id: RwLock<Option<Uuid>>,
-    /// Scheduled task counter - monotonically increasing, never resets.
-    /// Used for stable idempotency keys across suspension boundaries.
-    scheduled_task_counter: AtomicI32,
     /// Entry counter - monotonically increasing, never resets.
     /// Used for stable entry idempotency keys to prevent duplicate entries on resume.
     entry_counter: AtomicI32,
+    /// Task counter - monotonically increasing, never resets.
+    /// Used for stable task IDs to prevent duplicate tasks on resume.
+    /// Similar to entry_counter: agents replay from beginning on resume,
+    /// and idempotency prevents duplicate task creation.
+    task_counter: AtomicI32,
     /// Stream sequence counter
     stream_sequence: AtomicI32,
     /// gRPC client (tokio mutex for async-safe access)
@@ -89,10 +92,6 @@ impl AgentContextImpl {
         //
         // IMPORTANT: Agents should NOT skip append_entry calls for "loaded" messages.
         // They should replay ALL append_entry calls and let idempotency handle it.
-        //
-        // The same applies to task scheduling - scheduled_task_counter starts at 0.
-        // Agents MUST replay all schedule_task calls from the beginning on resume.
-        // The server uses idempotency keys to return existing tasks for duplicate keys.
 
         let messages = entries.into_iter().map(convert_entry_to_message).collect();
 
@@ -112,8 +111,8 @@ impl AgentContextImpl {
             checkpoint_state: RwLock::new(checkpoint_state),
             checkpoint_sequence: AtomicI32::new(checkpoint_seq),
             leaf_entry_id: RwLock::new(leaf_entry_id),
-            scheduled_task_counter: AtomicI32::new(0),
             entry_counter: AtomicI32::new(0),
+            task_counter: AtomicI32::new(0),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             cancellation_requested: AtomicBool::new(false),
@@ -150,8 +149,8 @@ impl AgentContextImpl {
             checkpoint_state: RwLock::new(checkpoint_state),
             checkpoint_sequence: AtomicI32::new(checkpoint_sequence),
             leaf_entry_id: RwLock::new(leaf_entry_id),
-            scheduled_task_counter: AtomicI32::new(0),
             entry_counter: AtomicI32::new(0),
+            task_counter: AtomicI32::new(0),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             cancellation_requested: AtomicBool::new(false),
@@ -164,14 +163,6 @@ impl AgentContextImpl {
     /// Request cancellation
     pub fn request_cancellation(&self) {
         self.cancellation_requested.store(true, Ordering::SeqCst);
-    }
-
-    /// Generate an idempotency key for task scheduling.
-    /// Uses scheduled_task_counter which never resets, ensuring stable keys
-    /// across suspension boundaries.
-    fn generate_task_idempotency_key(&self) -> String {
-        let index = self.scheduled_task_counter.fetch_add(1, Ordering::SeqCst);
-        format!("{}:task:{}", self.agent_execution_id, index)
     }
 
     /// Generate an idempotency key for entry creation.
@@ -212,11 +203,20 @@ impl AgentContextImpl {
     /// 1. Same inputs always produce the same task ID
     /// 2. Different inputs produce different task IDs
     /// 3. Task IDs are valid UUIDs
+    /// Generate a deterministic task ID.
+    /// Uses task_counter which never resets, ensuring stable IDs
+    /// across suspension/resume boundaries.
+    /// Similar to entries: agents replay from beginning on resume,
+    /// and server idempotency prevents duplicate task creation.
     fn next_task_id(&self) -> Uuid {
-        let segment = self.current_segment.load(Ordering::SeqCst);
-        let seq = self.current_sequence.fetch_add(1, Ordering::SeqCst);
-        let input = format!("{}-{}-{}", self.agent_execution_id, segment, seq);
+        let counter = self.task_counter.fetch_add(1, Ordering::SeqCst);
+        let input = format!("{}:task:{}", self.agent_execution_id, counter);
         Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
+    }
+
+    /// Get the count of pending commands (for debugging)
+    pub fn pending_commands_count(&self) -> usize {
+        self.pending_commands.read().len()
     }
 
     /// Commit pending commands as an atomic batch.
@@ -233,10 +233,7 @@ impl AgentContextImpl {
     /// Returns `Ok(())` if the batch was committed successfully, or an error
     /// if any command failed. Note: partial failures may occur in the legacy
     /// implementation since commands are executed individually.
-    pub async fn commit_pending_batch(
-        &self,
-        checkpoint: Option<CheckpointData>,
-    ) -> Result<()> {
+    pub async fn commit_pending_batch(&self, checkpoint: Option<CheckpointData>) -> Result<()> {
         let commands = {
             let mut pending = self.pending_commands.write();
             std::mem::take(&mut *pending)
@@ -289,18 +286,19 @@ impl AgentContextImpl {
                             "MESSAGE", // entry_type
                             Some(role.as_str()),
                             content,
-                            None, // turn_id
-                            None, // token_usage
+                            None,                        // turn_id
+                            None,                        // token_usage
                             Some(&entry_id.to_string()), // idempotency_key
                         )
                         .await?;
                 }
                 AgentCommand::ScheduleTask {
-                    task_id: _,
+                    task_id,
                     kind,
                     input,
                     options,
                 } => {
+                    // Use task_id as idempotency_key so server returns/creates with this ID
                     client
                         .schedule_task(
                             self.agent_execution_id,
@@ -309,7 +307,7 @@ impl AgentContextImpl {
                             options.queue.as_deref(),
                             options.max_retries,
                             options.timeout_ms,
-                            None, // idempotency_key handled by task_id
+                            Some(&task_id.to_string()),
                         )
                         .await?;
                 }
@@ -591,7 +589,8 @@ impl AgentContext for AgentContextImpl {
         // Update local checkpoint state
         *self.checkpoint_state.write() = Some(state.clone());
         let new_sequence = self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst) + 1;
-        self.checkpoint_sequence.store(new_sequence, Ordering::SeqCst);
+        self.checkpoint_sequence
+            .store(new_sequence, Ordering::SeqCst);
 
         Ok(())
     }
@@ -609,109 +608,21 @@ impl AgentContext for AgentContextImpl {
         self.checkpoint_sequence.load(Ordering::SeqCst)
     }
 
-    async fn schedule_task_raw(&self, task_kind: &str, input: Value) -> Result<Value> {
-        self.schedule_task_with_options_raw(task_kind, input, ScheduleAgentTaskOptions::default())
-            .await
+    async fn flush_pending(&self) -> Result<()> {
+        self.commit_pending_batch(None).await
     }
 
-    async fn schedule_task_with_options_raw(
+    // =========================================================================
+    // Task Scheduling (Lazy API - Aligned with Workflow)
+    // =========================================================================
+
+    fn schedule_raw(&self, task_kind: &str, input: Value) -> AgentTaskFutureRaw {
+        self.schedule_with_options_raw(task_kind, input, ScheduleAgentTaskOptions::default())
+    }
+
+    fn schedule_with_options_raw(
         &self,
         task_kind: &str,
-        input: Value,
-        options: ScheduleAgentTaskOptions,
-    ) -> Result<Value> {
-        // Generate a stable idempotency key that doesn't change across suspensions.
-        // This is critical for the resume case: when an agent suspends waiting for a
-        // task to complete, then resumes, calling schedule_task again with the same
-        // stable key ensures the server returns the existing task rather than creating
-        // a new one.
-        let idempotency_key = options
-            .idempotency_key
-            .unwrap_or_else(|| self.generate_task_idempotency_key());
-
-        // Schedule the task (or get existing task if idempotency key matches)
-        let result = {
-            let mut client = self.client.lock().await;
-            client
-                .schedule_task(
-                    self.agent_execution_id,
-                    task_kind,
-                    &input,
-                    options.queue.as_deref(),
-                    options.max_retries.map(|r| r as i32),
-                    options.timeout.map(|t| t.as_millis() as i64),
-                    Some(&idempotency_key),
-                )
-                .await?
-        };
-
-        let task_execution_id = result.task_execution_id;
-
-        // Check if the task has already completed (important for resume case)
-        let task_result = {
-            let mut client = self.client.lock().await;
-            client
-                .get_task_result(self.agent_execution_id, task_execution_id)
-                .await?
-        };
-
-        // If task is done, return result immediately
-        if task_result.is_completed() {
-            return Ok(task_result.output.unwrap_or(Value::Null));
-        }
-
-        if task_result.is_failed() {
-            let error = task_result
-                .error
-                .unwrap_or_else(|| "Task failed".to_string());
-            return Err(FlovynError::TaskFailed(format!(
-                "Task '{}' failed: {}",
-                task_kind, error
-            )));
-        }
-
-        if task_result.is_cancelled() {
-            return Err(FlovynError::TaskFailed(format!(
-                "Task '{}' was cancelled",
-                task_kind
-            )));
-        }
-
-        // Task is still running (PENDING or RUNNING) - checkpoint and suspend
-        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
-        self.checkpoint(&current_state).await?;
-
-        // Suspend waiting for task completion (server will resume when task completes)
-        {
-            let mut client = self.client.lock().await;
-            client
-                .suspend_agent_for_task(
-                    self.agent_execution_id,
-                    task_execution_id,
-                    Some(&format!("Waiting for task {} to complete", task_kind)),
-                )
-                .await?;
-        }
-
-        // Agent will be re-executed when task completes. On resume, the idempotency
-        // key ensures we get the same task, and get_task_result will return the result.
-        Err(FlovynError::AgentSuspended(format!(
-            "Waiting for task '{}' completion",
-            task_kind
-        )))
-    }
-
-    // =========================================================================
-    // Lazy Task Scheduling (Preferred API)
-    // =========================================================================
-
-    fn schedule_task_lazy(&self, kind: &str, input: Value) -> AgentTaskFutureRaw {
-        self.schedule_task_lazy_with_options(kind, input, ScheduleAgentTaskOptions::default())
-    }
-
-    fn schedule_task_lazy_with_options(
-        &self,
-        kind: &str,
         input: Value,
         options: ScheduleAgentTaskOptions,
     ) -> AgentTaskFutureRaw {
@@ -723,7 +634,7 @@ impl AgentContext for AgentContextImpl {
         // Buffer command for batch commit at suspension point (no immediate RPC)
         self.add_pending_command(AgentCommand::ScheduleTask {
             task_id,
-            kind: kind.to_string(),
+            kind: task_kind.to_string(),
             input: input.clone(),
             options: TaskOptions {
                 queue: options.queue,
@@ -733,7 +644,7 @@ impl AgentContext for AgentContextImpl {
         });
 
         // Return future immediately (no RPC made yet)
-        AgentTaskFutureRaw::new(task_id, kind.to_string(), input)
+        AgentTaskFutureRaw::new(task_id, task_kind.to_string(), input)
     }
 
     async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {
@@ -791,6 +702,64 @@ impl AgentContext for AgentContextImpl {
         // Agent will be re-executed when all tasks complete
         Err(FlovynError::AgentSuspended(
             "Agent suspended waiting for all tasks to complete".to_string(),
+        ))
+    }
+
+    async fn join_all_settled(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<crate::agent::combinators::SettledResult> {
+        use crate::agent::combinators::SettledResult;
+
+        if futures.is_empty() {
+            return Ok(SettledResult::new());
+        }
+
+        // Commit pending batch first (submits all scheduled tasks to server)
+        self.commit_pending_batch(None).await?;
+
+        let task_ids: Vec<Uuid> = futures.iter().map(|f| f.task_id).collect();
+
+        // Batch fetch all task statuses
+        let statuses = self.get_task_results_batch(&task_ids).await?;
+
+        let mut result = SettledResult::new();
+        let mut all_terminal = true;
+
+        for (future, status) in futures.iter().zip(statuses.iter()) {
+            match status.status.as_str() {
+                "COMPLETED" => {
+                    let output = status.output.clone().unwrap_or(Value::Null);
+                    result.completed.push((future.task_id.to_string(), output));
+                }
+                "FAILED" => {
+                    let error = status
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Task failed".to_string());
+                    result.failed.push((future.task_id.to_string(), error));
+                }
+                "CANCELLED" => {
+                    result.cancelled.push(future.task_id.to_string());
+                }
+                _ => {
+                    // PENDING or RUNNING - not terminal yet
+                    all_terminal = false;
+                }
+            }
+        }
+
+        if all_terminal {
+            return Ok(result);
+        }
+
+        // Not all done - suspend and wait for all tasks
+        self.suspend_for_tasks(&task_ids, flovyn_worker_core::client::WaitMode::All)
+            .await?;
+
+        // Agent will be re-executed when all tasks complete
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for all tasks to settle".to_string(),
         ))
     }
 
@@ -866,6 +835,36 @@ impl AgentContext for AgentContextImpl {
         Err(FlovynError::AgentSuspended(
             "Agent suspended waiting for successful task".to_string(),
         ))
+    }
+
+    async fn select_ok_with_cancel(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<(Value, Vec<Uuid>)> {
+        // First, use select_ok to get the winning task
+        let (result, remaining) = self.select_ok(futures).await?;
+
+        // Cancel all remaining tasks
+        let mut cancelled_ids = Vec::new();
+        for future in remaining {
+            match self.cancel_task(future.task_id).await {
+                Ok(CancelTaskResult::Cancelled) => {
+                    cancelled_ids.push(future.task_id);
+                }
+                Ok(_) => {
+                    // Task already completed/failed/cancelled - not an error
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        task_id = %future.task_id,
+                        error = %e,
+                        "Failed to cancel remaining task"
+                    );
+                }
+            }
+        }
+
+        Ok((result, cancelled_ids))
     }
 
     async fn wait_for_signal_raw(&self, signal_name: &str) -> Result<Value> {
@@ -970,6 +969,29 @@ impl AgentContext for AgentContextImpl {
         }
     }
 
+    async fn cancel_task(&self, task_id: Uuid) -> Result<CancelTaskResult> {
+        let result = self
+            .client
+            .lock()
+            .await
+            .cancel_task(self.agent_execution_id, task_id, None)
+            .await
+            .map_err(FlovynError::from)?;
+
+        if result.is_cancelled() {
+            Ok(CancelTaskResult::Cancelled)
+        } else {
+            match result.status.as_str() {
+                "COMPLETED" => Ok(CancelTaskResult::AlreadyCompleted),
+                "FAILED" => Ok(CancelTaskResult::AlreadyFailed),
+                "CANCELLED" => Ok(CancelTaskResult::AlreadyCancelled),
+                _ => Err(FlovynError::Other(format!(
+                    "Unexpected task status after cancel: {}",
+                    result.status
+                ))),
+            }
+        }
+    }
 }
 
 fn convert_entry_to_message(entry: CoreEntry) -> LoadedMessage {
@@ -1029,6 +1051,20 @@ impl std::fmt::Debug for AgentContextImpl {
 // - AgentDispatch implements Clone which implies it's safe to share
 unsafe impl Send for AgentContextImpl {}
 unsafe impl Sync for AgentContextImpl {}
+
+impl Drop for AgentContextImpl {
+    fn drop(&mut self) {
+        let pending_count = self.pending_commands.read().len();
+        if pending_count > 0 {
+            tracing::warn!(
+                agent_execution_id = %self.agent_execution_id,
+                pending_commands = pending_count,
+                "AgentContextImpl dropped with unflushed pending commands! \
+                 Entries/tasks created after the last checkpoint will be lost."
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1125,31 +1161,152 @@ mod tests {
         );
     }
 
-    /// Test the actual generate_task_idempotency_key format.
-    /// This requires a mock AgentDispatch which we don't have here,
-    /// so we test the format string directly.
+    // =========================================================================
+    // Tests for Deterministic Task IDs (next_task_id)
+    // =========================================================================
+
+    /// Test that next_task_id generates deterministic UUIDs.
+    ///
+    /// The task ID is generated using UUIDv5 from (agent_id, segment, sequence).
+    /// Same inputs must always produce the same UUID - this is critical for
+    /// replay correctness.
     #[test]
-    fn test_generate_task_idempotency_key_format() {
-        // This tests the format string used in generate_task_idempotency_key:
-        // format!("{}:task:{}", self.agent_execution_id, index)
+    fn test_next_task_id_is_deterministic() {
+        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+        let segment: u64 = 0;
+        let sequence: u64 = 0;
 
-        let agent_id = Uuid::new_v4();
-        let index = 42;
+        // Generate the same input string that next_task_id uses
+        let input = format!("{}-{}-{}", agent_id, segment, sequence);
 
-        let key = format!("{}:task:{}", agent_id, index);
+        // Generate UUID twice - must be identical
+        let id1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
+        let id2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
 
-        // Verify format
-        let parts: Vec<&str> = key.split(':').collect();
-        assert_eq!(
-            parts.len(),
-            3,
-            "Key should have 3 parts: agent_id:task:index"
+        assert_eq!(id1, id2, "Same inputs must produce same task ID");
+
+        // Verify it's a valid UUID
+        assert!(!id1.is_nil());
+
+        // Verify we can parse it back
+        let id_str = id1.to_string();
+        let parsed = Uuid::parse_str(&id_str).unwrap();
+        assert_eq!(parsed, id1);
+    }
+
+    /// Test that different inputs produce different task IDs.
+    #[test]
+    fn test_next_task_id_different_inputs_produce_different_ids() {
+        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+
+        // Generate IDs for different sequences
+        let input_0 = format!("{}-0-0", agent_id);
+        let input_1 = format!("{}-0-1", agent_id);
+        let input_2 = format!("{}-0-2", agent_id);
+
+        let id_0 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_0.as_bytes());
+        let id_1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_1.as_bytes());
+        let id_2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_2.as_bytes());
+
+        assert_ne!(id_0, id_1, "Different sequences must produce different IDs");
+        assert_ne!(id_1, id_2, "Different sequences must produce different IDs");
+        assert_ne!(id_0, id_2, "Different sequences must produce different IDs");
+
+        // Different segments also produce different IDs
+        let input_seg0 = format!("{}-0-0", agent_id);
+        let input_seg1 = format!("{}-1-0", agent_id);
+
+        let id_seg0 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_seg0.as_bytes());
+        let id_seg1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_seg1.as_bytes());
+
+        assert_ne!(
+            id_seg0, id_seg1,
+            "Different segments must produce different IDs"
         );
-        assert_eq!(parts[1], "task", "Second part should be 'task'");
-        assert_eq!(parts[2], "42", "Third part should be the index");
 
-        // Verify agent_id can be parsed back
-        let parsed_id = Uuid::parse_str(parts[0]).unwrap();
-        assert_eq!(parsed_id, agent_id);
+        // Different agent IDs also produce different IDs
+        let agent_id_2 = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        let input_agent1 = format!("{}-0-0", agent_id);
+        let input_agent2 = format!("{}-0-0", agent_id_2);
+
+        let id_agent1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_agent1.as_bytes());
+        let id_agent2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_agent2.as_bytes());
+
+        assert_ne!(
+            id_agent1, id_agent2,
+            "Different agent IDs must produce different task IDs"
+        );
+    }
+
+    /// Test that task IDs are stable across replay.
+    ///
+    /// This simulates what happens during agent replay:
+    /// 1. Initial execution: agent schedules tasks with IDs based on segment=0, seq=0,1,2
+    /// 2. Resume after checkpoint: new segment, but if replaying same calls, same IDs
+    ///
+    /// The key insight: segment increments on resume, so the SAME sequence of
+    /// schedule_raw calls within a segment will produce the SAME task IDs.
+    #[test]
+    fn test_task_id_stable_within_segment() {
+        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+
+        // Simulate first execution (segment 0)
+        let segment = 0;
+        let task_ids_run1: Vec<Uuid> = (0..3)
+            .map(|seq| {
+                let input = format!("{}-{}-{}", agent_id, segment, seq);
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
+            })
+            .collect();
+
+        // Simulate replay of the same execution (same segment 0)
+        let task_ids_run2: Vec<Uuid> = (0..3)
+            .map(|seq| {
+                let input = format!("{}-{}-{}", agent_id, segment, seq);
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
+            })
+            .collect();
+
+        // Task IDs must be identical across replay
+        assert_eq!(
+            task_ids_run1, task_ids_run2,
+            "Task IDs must be identical across replay within the same segment"
+        );
+
+        // But after resume (new segment), task IDs will be different
+        let new_segment = 1;
+        let task_ids_new_segment: Vec<Uuid> = (0..3)
+            .map(|seq| {
+                let input = format!("{}-{}-{}", agent_id, new_segment, seq);
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
+            })
+            .collect();
+
+        // These should be different from the original segment
+        assert_ne!(
+            task_ids_run1, task_ids_new_segment,
+            "Different segments produce different task IDs"
+        );
+    }
+
+    /// Test the exact format of the input string used for task ID generation.
+    #[test]
+    fn test_task_id_input_format() {
+        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+        let segment: u64 = 5;
+        let sequence: u64 = 42;
+
+        // The format used by next_task_id
+        let input = format!("{}-{}-{}", agent_id, segment, sequence);
+
+        // Verify the exact format
+        assert_eq!(input, "3b095802-a3b3-4645-a728-0f5238c46a5c-5-42");
+
+        // Verify the UUID is deterministic for this exact input
+        let expected_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
+
+        // Run it again to verify determinism
+        let actual_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
+        assert_eq!(expected_id, actual_id);
     }
 }

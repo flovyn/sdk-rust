@@ -431,7 +431,7 @@ impl AgentExecutorWorker {
 
         // Execute the agent
         let ctx_arc: Arc<dyn crate::agent::context::AgentContext + Send + Sync> = Arc::new(ctx);
-        let result = agent.execute(ctx_arc, agent_input).await;
+        let result = agent.execute(ctx_arc.clone(), agent_input).await;
 
         // Record work completion metrics
         let duration = start_time.elapsed();
@@ -443,6 +443,15 @@ impl AgentExecutorWorker {
                     agent_execution_id = %agent_execution_id,
                     "Agent completed successfully"
                 );
+                // Flush any pending entries before completing.
+                // This ensures entries created after the last checkpoint are persisted.
+                if let Err(e) = ctx_arc.flush_pending().await {
+                    warn!(
+                        agent_execution_id = %agent_execution_id,
+                        error = %e,
+                        "Failed to flush pending entries before completion"
+                    );
+                }
                 self.client
                     .complete_agent(agent_execution_id, &output)
                     .await
@@ -462,7 +471,7 @@ impl AgentExecutorWorker {
                         "Agent suspended"
                     );
                     // Agent is already suspended via the context's wait_for_signal method
-                    // or schedule_task_raw/combinators. No need to report as failure.
+                    // or schedule_raw/join_all/select_ok. No need to report as failure.
                     self.internals
                         .record_work_completed(WorkType::Agent, agent_execution_id, duration)
                         .await;
