@@ -48,6 +48,7 @@ pub mod context;
 pub mod context_impl;
 pub mod definition;
 pub mod executor;
+pub mod future;
 pub mod registry;
 pub mod signals;
 pub mod storage;
@@ -70,4 +71,5 @@ pub use storage::{
     RemoteStorage as RemoteAgentStorage, SegmentState, StorageResult, TaskOptions, TaskResult,
     TaskStatus, TokenUsage as StorageTokenUsage,
 };
+pub use future::AgentTaskFutureRaw;
 pub use tracer::{AgentTracer, CompositeTracer, NoopTracer, StdoutTracer};
