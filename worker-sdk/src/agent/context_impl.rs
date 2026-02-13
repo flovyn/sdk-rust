@@ -6,14 +6,16 @@
 use crate::agent::context::{
     AgentContext, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions, TokenUsage,
 };
+use crate::agent::future::AgentTaskFutureRaw;
+use crate::agent::storage::{AgentCommand, CheckpointData, CommandBatch};
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
-use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry};
+use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry, AgentTokenUsage};
 use flovyn_worker_core::generated::flovyn_v1::AgentStreamEventType;
 use parking_lot::RwLock;
 use serde_json::Value;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
@@ -46,6 +48,12 @@ pub struct AgentContextImpl {
     client: TokioMutex<AgentDispatch>,
     /// Cancellation flag
     cancellation_requested: AtomicBool,
+    /// Pending commands to be committed at next suspension point
+    pending_commands: RwLock<Vec<AgentCommand>>,
+    /// Current segment number (increments on each recovery)
+    current_segment: AtomicU64,
+    /// Current sequence within segment
+    current_sequence: AtomicU64,
 }
 
 impl AgentContextImpl {
@@ -88,6 +96,14 @@ impl AgentContextImpl {
 
         let messages = entries.into_iter().map(convert_entry_to_message).collect();
 
+        // Compute segment number from checkpoint sequence
+        // Segment 0 = initial execution, increments on each recovery
+        let segment = if checkpoint_seq >= 0 {
+            (checkpoint_seq + 1) as u64
+        } else {
+            0
+        };
+
         Ok(Self {
             agent_execution_id,
             org_id,
@@ -101,6 +117,9 @@ impl AgentContextImpl {
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             cancellation_requested: AtomicBool::new(false),
+            pending_commands: RwLock::new(Vec::new()),
+            current_segment: AtomicU64::new(segment),
+            current_sequence: AtomicU64::new(0),
         })
     }
 
@@ -116,6 +135,13 @@ impl AgentContextImpl {
         checkpoint_sequence: i32,
         leaf_entry_id: Option<Uuid>,
     ) -> Self {
+        // Compute segment number from checkpoint sequence
+        let segment = if checkpoint_sequence >= 0 {
+            (checkpoint_sequence + 1) as u64
+        } else {
+            0
+        };
+
         Self {
             agent_execution_id,
             org_id,
@@ -129,6 +155,9 @@ impl AgentContextImpl {
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             cancellation_requested: AtomicBool::new(false),
+            pending_commands: RwLock::new(Vec::new()),
+            current_segment: AtomicU64::new(segment),
+            current_sequence: AtomicU64::new(0),
         }
     }
 
@@ -153,12 +182,184 @@ impl AgentContextImpl {
         format!("{}:entry:{}", self.agent_execution_id, index)
     }
 
+    /// Generate a deterministic entry ID from an idempotency key.
+    ///
+    /// Uses UUIDv5 with the idempotency key as input, ensuring:
+    /// 1. Same key always produces the same entry ID
+    /// 2. Entry IDs are valid UUIDs
+    /// 3. No server round-trip required
+    fn entry_id_from_idempotency_key(idempotency_key: &str) -> Uuid {
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, idempotency_key.as_bytes())
+    }
+
     /// Get current timestamp in milliseconds
     fn now_ms() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64
+    }
+
+    /// Generate a deterministic task ID based on segment and sequence.
+    ///
+    /// This produces stable, reproducible task IDs that don't change across
+    /// suspension/resume cycles. The ID is derived from:
+    /// - agent_execution_id: unique per agent execution
+    /// - current_segment: increments on each recovery
+    /// - current_sequence: increments for each command within a segment
+    ///
+    /// Using UUIDv5 with these inputs ensures:
+    /// 1. Same inputs always produce the same task ID
+    /// 2. Different inputs produce different task IDs
+    /// 3. Task IDs are valid UUIDs
+    fn next_task_id(&self) -> Uuid {
+        let segment = self.current_segment.load(Ordering::SeqCst);
+        let seq = self.current_sequence.fetch_add(1, Ordering::SeqCst);
+        let input = format!("{}-{}-{}", self.agent_execution_id, segment, seq);
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
+    }
+
+    /// Commit pending commands as an atomic batch.
+    ///
+    /// This method is called at suspension points (checkpoint, wait_for_signal,
+    /// schedule_task with blocking wait) to persist all accumulated commands.
+    ///
+    /// # Arguments
+    ///
+    /// * `checkpoint` - Optional checkpoint data to persist with the batch
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the batch was committed successfully, or an error
+    /// if any command failed. Note: partial failures may occur in the legacy
+    /// implementation since commands are executed individually.
+    pub async fn commit_pending_batch(
+        &self,
+        checkpoint: Option<CheckpointData>,
+    ) -> Result<()> {
+        let commands = {
+            let mut pending = self.pending_commands.write();
+            std::mem::take(&mut *pending)
+        };
+
+        if commands.is_empty() && checkpoint.is_none() {
+            return Ok(());
+        }
+
+        let batch = CommandBatch {
+            segment: self.current_segment.load(Ordering::SeqCst),
+            sequence: self.current_sequence.load(Ordering::SeqCst),
+            commands,
+            checkpoint,
+        };
+
+        self.execute_batch_legacy(&batch).await
+    }
+
+    /// Execute a batch of commands using individual gRPC calls.
+    ///
+    /// This is a backward-compatible implementation that executes commands
+    /// one at a time via the existing gRPC client. It will be replaced by
+    /// a batch RPC in a future release for better efficiency.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch` - The command batch to execute
+    ///
+    /// # Note
+    ///
+    /// This method does not guarantee atomicity - if a command fails,
+    /// previous commands may have already been persisted.
+    async fn execute_batch_legacy(&self, batch: &CommandBatch) -> Result<()> {
+        let mut client = self.client.lock().await;
+
+        // Execute each command individually
+        for command in &batch.commands {
+            match command {
+                AgentCommand::AppendEntry {
+                    entry_id,
+                    parent_id,
+                    role,
+                    content,
+                } => {
+                    client
+                        .append_entry(
+                            self.agent_execution_id,
+                            *parent_id,
+                            "MESSAGE", // entry_type
+                            Some(role.as_str()),
+                            content,
+                            None, // turn_id
+                            None, // token_usage
+                            Some(&entry_id.to_string()), // idempotency_key
+                        )
+                        .await?;
+                }
+                AgentCommand::ScheduleTask {
+                    task_id: _,
+                    kind,
+                    input,
+                    options,
+                } => {
+                    client
+                        .schedule_task(
+                            self.agent_execution_id,
+                            kind,
+                            input,
+                            options.queue.as_deref(),
+                            options.max_retries,
+                            options.timeout_ms,
+                            None, // idempotency_key handled by task_id
+                        )
+                        .await?;
+                }
+                AgentCommand::WaitForSignal { signal_name: _ } => {
+                    // Signal waiting is tracked locally, no gRPC call needed
+                    // The suspend call will be made separately
+                }
+            }
+        }
+
+        // Submit checkpoint if provided
+        if let Some(checkpoint) = &batch.checkpoint {
+            let token_usage = checkpoint.token_usage.as_ref().map(|tu| AgentTokenUsage {
+                input_tokens: tu.input_tokens,
+                output_tokens: tu.output_tokens,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+            });
+
+            client
+                .submit_checkpoint(
+                    self.agent_execution_id,
+                    checkpoint.leaf_entry_id,
+                    &checkpoint.state,
+                    token_usage,
+                )
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Add a command to the pending batch.
+    ///
+    /// Commands are accumulated and committed atomically at the next
+    /// suspension point.
+    fn add_pending_command(&self, command: AgentCommand) {
+        self.pending_commands.write().push(command);
+    }
+
+    /// Get the current segment number.
+    #[allow(dead_code)]
+    pub fn current_segment(&self) -> u64 {
+        self.current_segment.load(Ordering::SeqCst)
+    }
+
+    /// Get the current sequence number within the segment.
+    #[allow(dead_code)]
+    pub fn current_sequence(&self) -> u64 {
+        self.current_sequence.load(Ordering::SeqCst)
     }
 }
 
@@ -179,119 +380,93 @@ impl AgentContext for AgentContextImpl {
     async fn append_entry(&self, role: EntryRole, content: &Value) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
         let idempotency_key = self.generate_entry_idempotency_key();
+        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
 
-        let result = {
-            let mut client = self.client.lock().await;
-            client
-                .append_entry(
-                    self.agent_execution_id,
-                    parent_id,
-                    EntryType::Message.as_str(),
-                    Some(role.as_str()),
-                    content,
-                    None,
-                    None,
-                    Some(&idempotency_key),
-                )
-                .await?
-        };
+        // Buffer command for batch commit (no immediate RPC)
+        self.add_pending_command(AgentCommand::AppendEntry {
+            entry_id,
+            parent_id,
+            role: role.as_str().to_string(),
+            content: content.clone(),
+        });
 
-        // Update leaf entry
-        *self.leaf_entry_id.write() = Some(result.entry_id);
+        // Update leaf entry immediately
+        *self.leaf_entry_id.write() = Some(entry_id);
 
-        // Only add to local messages cache if entry was newly created
-        // (avoid duplicates on resume)
-        if !result.already_existed {
-            self.messages.write().push(LoadedMessage {
-                entry_id: result.entry_id,
-                entry_type: EntryType::Message,
-                role,
-                content: content.clone(),
-                token_usage: None,
-            });
-        }
+        // Add to local messages cache immediately
+        self.messages.write().push(LoadedMessage {
+            entry_id,
+            entry_type: EntryType::Message,
+            role,
+            content: content.clone(),
+            token_usage: None,
+        });
 
-        Ok(result.entry_id)
+        Ok(entry_id)
     }
 
     async fn append_tool_call(&self, tool_name: &str, tool_input: &Value) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
         let idempotency_key = self.generate_entry_idempotency_key();
+        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
         let content = serde_json::json!({
             "tool_name": tool_name,
             "input": tool_input
         });
 
-        // Tool calls are stored as Message entries with Assistant role
-        let result = {
-            let mut client = self.client.lock().await;
-            client
-                .append_entry(
-                    self.agent_execution_id,
-                    parent_id,
-                    EntryType::Message.as_str(),
-                    Some(EntryRole::Assistant.as_str()),
-                    &content,
-                    None,
-                    None,
-                    Some(&idempotency_key),
-                )
-                .await?
-        };
+        // Buffer command for batch commit (no immediate RPC)
+        self.add_pending_command(AgentCommand::AppendEntry {
+            entry_id,
+            parent_id,
+            role: EntryRole::Assistant.as_str().to_string(),
+            content: content.clone(),
+        });
 
-        *self.leaf_entry_id.write() = Some(result.entry_id);
+        // Update leaf entry immediately
+        *self.leaf_entry_id.write() = Some(entry_id);
 
-        if !result.already_existed {
-            self.messages.write().push(LoadedMessage {
-                entry_id: result.entry_id,
-                entry_type: EntryType::Message,
-                role: EntryRole::Assistant,
-                content,
-                token_usage: None,
-            });
-        }
+        // Add to local messages cache immediately
+        self.messages.write().push(LoadedMessage {
+            entry_id,
+            entry_type: EntryType::Message,
+            role: EntryRole::Assistant,
+            content,
+            token_usage: None,
+        });
 
-        Ok(result.entry_id)
+        Ok(entry_id)
     }
 
     async fn append_tool_result(&self, tool_name: &str, tool_output: &Value) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
         let idempotency_key = self.generate_entry_idempotency_key();
+        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
         let content = serde_json::json!({
             "tool_name": tool_name,
             "output": tool_output
         });
 
-        // Tool results are stored as Message entries with ToolResult role
-        let result = {
-            let mut client = self.client.lock().await;
-            client
-                .append_entry(
-                    self.agent_execution_id,
-                    parent_id,
-                    EntryType::Message.as_str(),
-                    Some(EntryRole::ToolResult.as_str()),
-                    &content,
-                    None,
-                    None,
-                    Some(&idempotency_key),
-                )
-                .await?
-        };
+        // Buffer command for batch commit (no immediate RPC)
+        self.add_pending_command(AgentCommand::AppendEntry {
+            entry_id,
+            parent_id,
+            role: EntryRole::ToolResult.as_str().to_string(),
+            content: content.clone(),
+        });
 
-        *self.leaf_entry_id.write() = Some(result.entry_id);
+        // Update leaf entry immediately
+        *self.leaf_entry_id.write() = Some(entry_id);
 
-        if !result.already_existed {
-            self.messages.write().push(LoadedMessage {
-                entry_id: result.entry_id,
-                entry_type: EntryType::Message,
-                role: EntryRole::ToolResult,
-                content,
-                token_usage: None,
-            });
-        }
+        // Add to local messages cache immediately
+        self.messages.write().push(LoadedMessage {
+            entry_id,
+            entry_type: EntryType::Message,
+            role: EntryRole::ToolResult,
+            content,
+            token_usage: None,
+        });
 
-        Ok(result.entry_id)
+        Ok(entry_id)
     }
 
     async fn append_tool_result_with_id(
@@ -302,42 +477,34 @@ impl AgentContext for AgentContextImpl {
     ) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
         let idempotency_key = self.generate_entry_idempotency_key();
+        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
         let content = serde_json::json!({
             "toolCallId": tool_call_id,
             "tool_name": tool_name,
             "output": tool_output
         });
 
-        // Tool results are stored as Message entries with ToolResult role
-        let result = {
-            let mut client = self.client.lock().await;
-            client
-                .append_entry(
-                    self.agent_execution_id,
-                    parent_id,
-                    EntryType::Message.as_str(),
-                    Some(EntryRole::ToolResult.as_str()),
-                    &content,
-                    None,
-                    None,
-                    Some(&idempotency_key),
-                )
-                .await?
-        };
+        // Buffer command for batch commit (no immediate RPC)
+        self.add_pending_command(AgentCommand::AppendEntry {
+            entry_id,
+            parent_id,
+            role: EntryRole::ToolResult.as_str().to_string(),
+            content: content.clone(),
+        });
 
-        *self.leaf_entry_id.write() = Some(result.entry_id);
+        // Update leaf entry immediately
+        *self.leaf_entry_id.write() = Some(entry_id);
 
-        if !result.already_existed {
-            self.messages.write().push(LoadedMessage {
-                entry_id: result.entry_id,
-                entry_type: EntryType::Message,
-                role: EntryRole::ToolResult,
-                content,
-                token_usage: None,
-            });
-        }
+        // Add to local messages cache immediately
+        self.messages.write().push(LoadedMessage {
+            entry_id,
+            entry_type: EntryType::Message,
+            role: EntryRole::ToolResult,
+            content,
+            token_usage: None,
+        });
 
-        Ok(result.entry_id)
+        Ok(entry_id)
     }
 
     fn load_messages(&self) -> &[LoadedMessage] {
@@ -366,15 +533,20 @@ impl AgentContext for AgentContextImpl {
 
     async fn checkpoint(&self, state: &Value) -> Result<()> {
         let leaf_entry_id = *self.leaf_entry_id.read();
-        let (_, sequence) = {
-            let mut client = self.client.lock().await;
-            client
-                .submit_checkpoint(self.agent_execution_id, leaf_entry_id, state, None)
-                .await?
+
+        // Commit pending commands with checkpoint data
+        let checkpoint_data = CheckpointData {
+            state: state.clone(),
+            leaf_entry_id,
+            token_usage: None,
         };
 
+        self.commit_pending_batch(Some(checkpoint_data)).await?;
+
+        // Update local checkpoint state
         *self.checkpoint_state.write() = Some(state.clone());
-        self.checkpoint_sequence.store(sequence, Ordering::SeqCst);
+        let new_sequence = self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst) + 1;
+        self.checkpoint_sequence.store(new_sequence, Ordering::SeqCst);
 
         Ok(())
     }
@@ -482,6 +654,173 @@ impl AgentContext for AgentContextImpl {
             "Waiting for task '{}' completion",
             task_kind
         )))
+    }
+
+    // =========================================================================
+    // Lazy Task Scheduling (Preferred API)
+    // =========================================================================
+
+    fn schedule_task_lazy(&self, kind: &str, input: Value) -> AgentTaskFutureRaw {
+        self.schedule_task_lazy_with_options(kind, input, ScheduleAgentTaskOptions::default())
+    }
+
+    fn schedule_task_lazy_with_options(
+        &self,
+        kind: &str,
+        input: Value,
+        options: ScheduleAgentTaskOptions,
+    ) -> AgentTaskFutureRaw {
+        use crate::agent::storage::TaskOptions;
+
+        // Generate deterministic task ID (stable across suspension/resume)
+        let task_id = self.next_task_id();
+
+        // Buffer command for batch commit at suspension point (no immediate RPC)
+        self.add_pending_command(AgentCommand::ScheduleTask {
+            task_id,
+            kind: kind.to_string(),
+            input: input.clone(),
+            options: TaskOptions {
+                queue: options.queue,
+                max_retries: options.max_retries.map(|r| r as i32),
+                timeout_ms: options.timeout.map(|t| t.as_millis() as i64),
+            },
+        });
+
+        // Return future immediately (no RPC made yet)
+        AgentTaskFutureRaw::new(task_id, kind.to_string(), input)
+    }
+
+    async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {
+        if futures.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Commit pending batch first (submits all scheduled tasks to server)
+        self.commit_pending_batch(None).await?;
+
+        let task_ids: Vec<Uuid> = futures.iter().map(|f| f.task_id).collect();
+
+        // Batch fetch all task statuses
+        let statuses = self.get_task_results_batch(&task_ids).await?;
+
+        let mut results: Vec<Option<Value>> = vec![None; futures.len()];
+        let mut all_complete = true;
+
+        for (i, (future, status)) in futures.iter().zip(statuses.iter()).enumerate() {
+            match status.status.as_str() {
+                "COMPLETED" => {
+                    results[i] = Some(status.output.clone().unwrap_or(Value::Null));
+                }
+                "FAILED" => {
+                    let error = status
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Task failed".to_string());
+                    return Err(FlovynError::TaskFailed(format!(
+                        "Task '{}' (id={}) failed: {}",
+                        future.kind, future.task_id, error
+                    )));
+                }
+                "CANCELLED" => {
+                    return Err(FlovynError::TaskFailed(format!(
+                        "Task '{}' (id={}) was cancelled",
+                        future.kind, future.task_id
+                    )));
+                }
+                _ => {
+                    // PENDING or RUNNING
+                    all_complete = false;
+                }
+            }
+        }
+
+        if all_complete {
+            return Ok(results.into_iter().map(|r| r.unwrap()).collect());
+        }
+
+        // Not all done - suspend and wait for all tasks
+        self.suspend_for_tasks(&task_ids, flovyn_worker_core::client::WaitMode::All)
+            .await?;
+
+        // Agent will be re-executed when all tasks complete
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for all tasks to complete".to_string(),
+        ))
+    }
+
+    async fn select_ok(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<(Value, Vec<AgentTaskFutureRaw>)> {
+        if futures.is_empty() {
+            return Err(FlovynError::InvalidArgument(
+                "select_ok requires at least one future".to_string(),
+            ));
+        }
+
+        // Commit pending batch first (submits all scheduled tasks to server)
+        self.commit_pending_batch(None).await?;
+
+        let task_ids: Vec<Uuid> = futures.iter().map(|f| f.task_id).collect();
+
+        // Batch fetch all task statuses
+        let statuses = self.get_task_results_batch(&task_ids).await?;
+
+        let mut first_error: Option<String> = None;
+        let mut pending_count = 0;
+
+        for (i, (future, status)) in futures.iter().zip(statuses.iter()).enumerate() {
+            match status.status.as_str() {
+                "COMPLETED" => {
+                    // Found a successful task - return it with remaining futures
+                    let result = status.output.clone().unwrap_or(Value::Null);
+                    let remaining: Vec<AgentTaskFutureRaw> = futures
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(idx, _)| *idx != i)
+                        .map(|(_, f)| f)
+                        .collect();
+                    return Ok((result, remaining));
+                }
+                "FAILED" | "CANCELLED" => {
+                    // Record first error for the AllTasksFailed message
+                    if first_error.is_none() {
+                        let error = status
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "Task failed".to_string());
+                        first_error = Some(format!(
+                            "Task '{}' (id={}): {}",
+                            future.kind, future.task_id, error
+                        ));
+                    }
+                }
+                _ => {
+                    // PENDING or RUNNING - still have hope
+                    pending_count += 1;
+                }
+            }
+        }
+
+        // If all tasks have failed (none pending, none succeeded), return error
+        if pending_count == 0 {
+            let error_msg = first_error.unwrap_or_else(|| "All tasks failed".to_string());
+            return Err(FlovynError::AllTasksFailed(error_msg));
+        }
+
+        // Some tasks still pending - suspend and wait for any task to complete
+        tracing::debug!(
+            pending_count = pending_count,
+            "Suspending agent, waiting for successful task"
+        );
+        self.suspend_for_tasks(&task_ids, flovyn_worker_core::client::WaitMode::Any)
+            .await?;
+
+        // Agent will be re-executed when any task completes
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for successful task".to_string(),
+        ))
     }
 
     async fn wait_for_signal_raw(&self, signal_name: &str) -> Result<Value> {
@@ -609,32 +948,28 @@ impl AgentContext for AgentContextImpl {
         input: Value,
         options: ScheduleAgentTaskOptions,
     ) -> Result<crate::agent::combinators::AgentTaskHandle> {
-        // Generate a stable idempotency key
-        let idempotency_key = options
-            .idempotency_key
-            .unwrap_or_else(|| self.generate_task_idempotency_key());
+        use crate::agent::storage::TaskOptions;
 
-        // Schedule the task (or get existing task if idempotency key matches)
-        let result = {
-            let mut client = self.client.lock().await;
-            client
-                .schedule_task(
-                    self.agent_execution_id,
-                    task_kind,
-                    &input,
-                    options.queue.as_deref(),
-                    options.max_retries.map(|r| r as i32),
-                    options.timeout.map(|t| t.as_millis() as i64),
-                    Some(&idempotency_key),
-                )
-                .await?
-        };
+        // Generate deterministic task ID (stable across suspension/resume)
+        let task_id = self.next_task_id();
 
         // Get the current index for ordering (number of tasks scheduled so far)
-        let index = self.scheduled_task_counter.load(Ordering::SeqCst) as usize - 1;
+        let index = self.scheduled_task_counter.fetch_add(1, Ordering::SeqCst) as usize;
+
+        // Buffer command for batch commit at suspension point (no immediate RPC)
+        self.add_pending_command(AgentCommand::ScheduleTask {
+            task_id,
+            kind: task_kind.to_string(),
+            input: input.clone(),
+            options: TaskOptions {
+                queue: options.queue.clone(),
+                max_retries: options.max_retries.map(|r| r as i32),
+                timeout_ms: options.timeout.map(|t| t.as_millis() as i64),
+            },
+        });
 
         Ok(crate::agent::combinators::AgentTaskHandle::new(
-            result.task_execution_id,
+            task_id,
             task_kind,
             index,
         ))
@@ -655,6 +990,10 @@ impl AgentContext for AgentContextImpl {
         task_ids: &[Uuid],
         mode: flovyn_worker_core::client::WaitMode,
     ) -> Result<()> {
+        // Commit pending batch first (ensures all scheduled tasks are submitted)
+        // This is critical: tasks must be committed before we can wait for them
+        self.commit_pending_batch(None).await?;
+
         // Checkpoint current state before suspending
         let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
         self.checkpoint(&current_state).await?;

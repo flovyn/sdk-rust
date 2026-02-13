@@ -7,6 +7,7 @@
 //! - Signal handling
 //! - Real-time streaming
 
+use crate::agent::future::AgentTaskFutureRaw;
 use crate::error::Result;
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
@@ -320,7 +321,94 @@ pub trait AgentContext: Send + Sync {
     ) -> Result<Value>;
 
     // =========================================================================
-    // Parallel Task Support
+    // Lazy Task Scheduling (Preferred API)
+    // =========================================================================
+
+    /// Schedule a task and return a future (lazy, no immediate RPC).
+    ///
+    /// This is the preferred API for parallel task execution. The task is
+    /// recorded locally with a deterministic ID but not submitted until
+    /// `join_all()` or `select_ok()` is called.
+    ///
+    /// # Arguments
+    /// * `kind` - The kind of task to schedule (must be registered with a worker)
+    /// * `input` - Task input as JSON Value
+    ///
+    /// # Returns
+    /// An `AgentTaskFutureRaw` that can be collected with `join_all()` or `select_ok()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let f1 = ctx.schedule_task_lazy("task-a", json!({"x": 1}));
+    /// let f2 = ctx.schedule_task_lazy("task-b", json!({"y": 2}));
+    /// let results = ctx.join_all(vec![f1, f2]).await?;
+    /// ```
+    fn schedule_task_lazy(&self, kind: &str, input: Value) -> AgentTaskFutureRaw;
+
+    /// Schedule a task with options and return a future (lazy, no immediate RPC).
+    ///
+    /// Similar to `schedule_task_lazy` but allows specifying task options.
+    fn schedule_task_lazy_with_options(
+        &self,
+        kind: &str,
+        input: Value,
+        options: ScheduleAgentTaskOptions,
+    ) -> AgentTaskFutureRaw;
+
+    /// Wait for all task futures to complete.
+    ///
+    /// Commits pending task futures as a batch, then waits for all tasks
+    /// to reach a terminal state. Returns results in the same order as
+    /// the input futures.
+    ///
+    /// # Arguments
+    /// * `futures` - Task futures from `schedule_task_lazy()`
+    ///
+    /// # Returns
+    /// A vector of task outputs in the same order as the input futures.
+    ///
+    /// # Errors
+    /// Returns an error if any task fails or is cancelled.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let f1 = ctx.schedule_task_lazy("analyze", json!({"data": "a"}));
+    /// let f2 = ctx.schedule_task_lazy("analyze", json!({"data": "b"}));
+    /// let results = ctx.join_all(vec![f1, f2]).await?;
+    /// // results[0] is from f1, results[1] is from f2
+    /// ```
+    async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>>;
+
+    /// Wait for the first task to complete successfully, return remaining futures.
+    ///
+    /// Commits pending task futures as a batch, then waits for the first
+    /// task to complete successfully. Failed tasks are skipped; only a
+    /// success triggers return.
+    ///
+    /// # Arguments
+    /// * `futures` - Task futures from `schedule_task_lazy()`
+    ///
+    /// # Returns
+    /// A tuple of (successful result, remaining unfinished futures).
+    ///
+    /// # Errors
+    /// Returns an error if all tasks fail.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let f1 = ctx.schedule_task_lazy("provider-a", input.clone());
+    /// let f2 = ctx.schedule_task_lazy("provider-b", input.clone());
+    /// let (result, remaining) = ctx.select_ok(vec![f1, f2]).await?;
+    /// // result is from whichever succeeded first
+    /// // remaining contains futures that haven't completed yet
+    /// ```
+    async fn select_ok(
+        &self,
+        futures: Vec<AgentTaskFutureRaw>,
+    ) -> Result<(Value, Vec<AgentTaskFutureRaw>)>;
+
+    // =========================================================================
+    // Parallel Task Support (Legacy API)
     // =========================================================================
 
     /// Schedule a task and return a handle without waiting for completion.
