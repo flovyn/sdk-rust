@@ -203,11 +203,11 @@ impl AgentContextImpl {
     /// 1. Same inputs always produce the same task ID
     /// 2. Different inputs produce different task IDs
     /// 3. Task IDs are valid UUIDs
-    /// Generate a deterministic task ID.
-    /// Uses task_counter which never resets, ensuring stable IDs
-    /// across suspension/resume boundaries.
-    /// Similar to entries: agents replay from beginning on resume,
-    /// and server idempotency prevents duplicate task creation.
+    ///
+    /// Generates a deterministic task ID using task_counter which never resets,
+    /// ensuring stable IDs across suspension/resume boundaries. Similar to entries:
+    /// agents replay from beginning on resume, and server idempotency prevents
+    /// duplicate task creation.
     fn next_task_id(&self) -> Uuid {
         let counter = self.task_counter.fetch_add(1, Ordering::SeqCst);
         let input = format!("{}:task:{}", self.agent_execution_id, counter);
@@ -383,13 +383,23 @@ impl AgentContextImpl {
         task_ids: &[Uuid],
         mode: flovyn_worker_core::client::WaitMode,
     ) -> Result<()> {
-        // Commit pending batch first (ensures all scheduled tasks are submitted)
-        // This is critical: tasks must be committed before we can wait for them
-        self.commit_pending_batch(None).await?;
-
-        // Checkpoint current state before suspending
+        // Get current state for checkpoint
         let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
-        AgentContext::checkpoint(self, &current_state).await?;
+        let leaf_entry_id = *self.leaf_entry_id.read();
+
+        // Commit pending batch with checkpoint in one operation.
+        // This is critical: tasks must be committed before we can wait for them,
+        // and we checkpoint to preserve state before suspension.
+        let checkpoint_data = CheckpointData {
+            state: current_state.clone(),
+            leaf_entry_id,
+            token_usage: None,
+        };
+        self.commit_pending_batch(Some(checkpoint_data)).await?;
+
+        // Update local checkpoint state
+        *self.checkpoint_state.write() = Some(current_state);
+        self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst);
 
         // Suspend waiting for tasks
         let mut client = self.client.lock().await;
@@ -550,16 +560,8 @@ impl AgentContext for AgentContextImpl {
         Ok(entry_id)
     }
 
-    fn load_messages(&self) -> &[LoadedMessage] {
-        // Safety: This is safe because we're returning a reference to the inner data
-        // and the RwLock ensures thread-safe access. The reference is valid as long
-        // as the context exists.
-        // Note: This requires the caller to not hold the reference across await points
-        // where messages might be mutated.
-        unsafe {
-            let messages = &*self.messages.data_ptr();
-            messages.as_slice()
-        }
+    fn load_messages(&self) -> Vec<LoadedMessage> {
+        self.messages.read().clone()
     }
 
     async fn reload_messages(&self) -> Result<Vec<LoadedMessage>> {
@@ -595,13 +597,8 @@ impl AgentContext for AgentContextImpl {
         Ok(())
     }
 
-    fn state(&self) -> Option<&Value> {
-        // Safety: Similar to load_messages, this requires the caller to not hold
-        // the reference across await points where state might be mutated.
-        unsafe {
-            let state = &*self.checkpoint_state.data_ptr();
-            state.as_ref()
-        }
+    fn state(&self) -> Option<Value> {
+        self.checkpoint_state.read().clone()
     }
 
     fn checkpoint_sequence(&self) -> i32 {
@@ -978,6 +975,12 @@ impl AgentContext for AgentContextImpl {
             .await
             .map_err(FlovynError::from)?;
 
+        // The server returns `cancelled: true` when the task was just cancelled
+        // by this request. When `cancelled: false`, the task is already in a
+        // terminal state - we distinguish by examining the status field.
+        //
+        // `Cancelled` = this request cancelled the task (was PENDING/RUNNING)
+        // `AlreadyCancelled` = task was already cancelled before this request
         if result.is_cancelled() {
             Ok(CancelTaskResult::Cancelled)
         } else {
@@ -1045,12 +1048,19 @@ impl std::fmt::Debug for AgentContextImpl {
     }
 }
 
-// Safety: AgentContextImpl is Send + Sync because all its fields are:
-// - Uuid, Value, AtomicBool, AtomicI32 are all Send + Sync
+// AgentContextImpl is automatically Send + Sync because all its fields are:
+// - Uuid, Value, AtomicBool, AtomicI32, AtomicU64 are all Send + Sync
 // - RwLock<T> is Send + Sync when T is Send + Sync
-// - AgentDispatch implements Clone which implies it's safe to share
-unsafe impl Send for AgentContextImpl {}
-unsafe impl Sync for AgentContextImpl {}
+// - TokioMutex<T> is Send + Sync when T is Send
+// - AgentDispatch wraps a tonic Channel which is Send + Sync
+//
+// Compile-time assertions to verify this:
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    const fn assert_sync<T: Sync>() {}
+    let _ = assert_send::<AgentContextImpl>;
+    let _ = assert_sync::<AgentContextImpl>;
+};
 
 impl Drop for AgentContextImpl {
     fn drop(&mut self) {
@@ -1173,11 +1183,11 @@ mod tests {
     #[test]
     fn test_next_task_id_is_deterministic() {
         let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
-        let segment: u64 = 0;
-        let sequence: u64 = 0;
+        let counter: i32 = 0;
 
         // Generate the same input string that next_task_id uses
-        let input = format!("{}-{}-{}", agent_id, segment, sequence);
+        // Format: "{agent_id}:task:{counter}"
+        let input = format!("{}:task:{}", agent_id, counter);
 
         // Generate UUID twice - must be identical
         let id1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
@@ -1199,35 +1209,24 @@ mod tests {
     fn test_next_task_id_different_inputs_produce_different_ids() {
         let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
 
-        // Generate IDs for different sequences
-        let input_0 = format!("{}-0-0", agent_id);
-        let input_1 = format!("{}-0-1", agent_id);
-        let input_2 = format!("{}-0-2", agent_id);
+        // Generate IDs for different counters
+        // Format: "{agent_id}:task:{counter}"
+        let input_0 = format!("{}:task:0", agent_id);
+        let input_1 = format!("{}:task:1", agent_id);
+        let input_2 = format!("{}:task:2", agent_id);
 
         let id_0 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_0.as_bytes());
         let id_1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_1.as_bytes());
         let id_2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_2.as_bytes());
 
-        assert_ne!(id_0, id_1, "Different sequences must produce different IDs");
-        assert_ne!(id_1, id_2, "Different sequences must produce different IDs");
-        assert_ne!(id_0, id_2, "Different sequences must produce different IDs");
-
-        // Different segments also produce different IDs
-        let input_seg0 = format!("{}-0-0", agent_id);
-        let input_seg1 = format!("{}-1-0", agent_id);
-
-        let id_seg0 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_seg0.as_bytes());
-        let id_seg1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_seg1.as_bytes());
-
-        assert_ne!(
-            id_seg0, id_seg1,
-            "Different segments must produce different IDs"
-        );
+        assert_ne!(id_0, id_1, "Different counters must produce different IDs");
+        assert_ne!(id_1, id_2, "Different counters must produce different IDs");
+        assert_ne!(id_0, id_2, "Different counters must produce different IDs");
 
         // Different agent IDs also produce different IDs
         let agent_id_2 = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
-        let input_agent1 = format!("{}-0-0", agent_id);
-        let input_agent2 = format!("{}-0-0", agent_id_2);
+        let input_agent1 = format!("{}:task:0", agent_id);
+        let input_agent2 = format!("{}:task:0", agent_id_2);
 
         let id_agent1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_agent1.as_bytes());
         let id_agent2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_agent2.as_bytes());
@@ -1241,28 +1240,31 @@ mod tests {
     /// Test that task IDs are stable across replay.
     ///
     /// This simulates what happens during agent replay:
-    /// 1. Initial execution: agent schedules tasks with IDs based on segment=0, seq=0,1,2
-    /// 2. Resume after checkpoint: new segment, but if replaying same calls, same IDs
+    /// 1. Initial execution: agent schedules tasks with counter=0,1,2
+    /// 2. Resume after checkpoint: task_counter never resets, so replay
+    ///    from the beginning produces the SAME task IDs.
     ///
-    /// The key insight: segment increments on resume, so the SAME sequence of
-    /// schedule_raw calls within a segment will produce the SAME task IDs.
+    /// The key insight: task_counter is monotonically increasing and never resets.
+    /// When an agent resumes, it replays all schedule_raw calls from the beginning,
+    /// which produces the same task IDs. The server uses idempotency to prevent
+    /// duplicate task creation.
     #[test]
-    fn test_task_id_stable_within_segment() {
+    fn test_task_id_stable_across_replay() {
         let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
 
-        // Simulate first execution (segment 0)
-        let segment = 0;
+        // Simulate first execution (counter starts at 0)
         let task_ids_run1: Vec<Uuid> = (0..3)
-            .map(|seq| {
-                let input = format!("{}-{}-{}", agent_id, segment, seq);
+            .map(|counter| {
+                let input = format!("{}:task:{}", agent_id, counter);
                 Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
             })
             .collect();
 
-        // Simulate replay of the same execution (same segment 0)
+        // Simulate replay of the same execution (counter still starts at 0 because
+        // agents replay from the beginning and rely on idempotency)
         let task_ids_run2: Vec<Uuid> = (0..3)
-            .map(|seq| {
-                let input = format!("{}-{}-{}", agent_id, segment, seq);
+            .map(|counter| {
+                let input = format!("{}:task:{}", agent_id, counter);
                 Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
             })
             .collect();
@@ -1270,22 +1272,7 @@ mod tests {
         // Task IDs must be identical across replay
         assert_eq!(
             task_ids_run1, task_ids_run2,
-            "Task IDs must be identical across replay within the same segment"
-        );
-
-        // But after resume (new segment), task IDs will be different
-        let new_segment = 1;
-        let task_ids_new_segment: Vec<Uuid> = (0..3)
-            .map(|seq| {
-                let input = format!("{}-{}-{}", agent_id, new_segment, seq);
-                Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
-            })
-            .collect();
-
-        // These should be different from the original segment
-        assert_ne!(
-            task_ids_run1, task_ids_new_segment,
-            "Different segments produce different task IDs"
+            "Task IDs must be identical across replay"
         );
     }
 
@@ -1293,14 +1280,13 @@ mod tests {
     #[test]
     fn test_task_id_input_format() {
         let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
-        let segment: u64 = 5;
-        let sequence: u64 = 42;
+        let counter: i32 = 42;
 
-        // The format used by next_task_id
-        let input = format!("{}-{}-{}", agent_id, segment, sequence);
+        // The format used by next_task_id: "{agent_id}:task:{counter}"
+        let input = format!("{}:task:{}", agent_id, counter);
 
         // Verify the exact format
-        assert_eq!(input, "3b095802-a3b3-4645-a728-0f5238c46a5c-5-42");
+        assert_eq!(input, "3b095802-a3b3-4645-a728-0f5238c46a5c:task:42");
 
         // Verify the UUID is deterministic for this exact input
         let expected_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());

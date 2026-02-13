@@ -266,7 +266,7 @@ impl DynamicAgent for CheckpointAgent {
         // Get starting point from checkpoint state (for resume)
         let start_step = ctx
             .state()
-            .and_then(|s| s.get("completedStep"))
+            .and_then(|s| s.get("completedStep").cloned())
             .and_then(|v| v.as_i64())
             .map(|v| v as i32)
             .unwrap_or(0);

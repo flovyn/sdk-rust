@@ -344,11 +344,8 @@ impl AgentContext for MockAgentContext {
         Ok(id)
     }
 
-    fn load_messages(&self) -> &[LoadedMessage] {
-        // This is a bit tricky since we return a reference.
-        // For mock purposes, we'll return an empty slice and rely on reload_messages.
-        // In real usage, the caller should use reload_messages for dynamic updates.
-        &[]
+    fn load_messages(&self) -> Vec<LoadedMessage> {
+        self.inner.loaded_messages.read().clone()
     }
 
     async fn reload_messages(&self) -> Result<Vec<LoadedMessage>> {
@@ -365,11 +362,8 @@ impl AgentContext for MockAgentContext {
         Ok(())
     }
 
-    fn state(&self) -> Option<&Value> {
-        // This can't return a reference to data behind RwLock,
-        // so for mock purposes we return None.
-        // Tests should use current_checkpoint_state() instead.
-        None
+    fn state(&self) -> Option<Value> {
+        self.inner.checkpoint_state.read().clone()
     }
 
     fn checkpoint_sequence(&self) -> i32 {

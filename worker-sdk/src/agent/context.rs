@@ -239,9 +239,9 @@ pub trait AgentContext: Send + Sync {
     /// Messages are reconstructed from the entry tree, walking from root
     /// to the leaf entry referenced by the current checkpoint.
     ///
-    /// This method returns cached messages loaded during agent construction.
+    /// This method returns a clone of cached messages loaded during agent construction.
     /// Call `reload_messages()` to fetch fresh data from the server.
-    fn load_messages(&self) -> &[LoadedMessage];
+    fn load_messages(&self) -> Vec<LoadedMessage>;
 
     /// Reload messages from the server.
     ///
@@ -276,9 +276,9 @@ pub trait AgentContext: Send + Sync {
 
     /// Get the current checkpoint state.
     ///
-    /// Returns the state from the most recent checkpoint, or `None` if
+    /// Returns a clone of the state from the most recent checkpoint, or `None` if
     /// no checkpoint has been created yet.
-    fn state(&self) -> Option<&Value>;
+    fn state(&self) -> Option<Value>;
 
     /// Get the current checkpoint sequence number.
     ///
