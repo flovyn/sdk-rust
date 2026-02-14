@@ -1,5 +1,7 @@
 //! FlovynClient builder for fluent configuration
 
+use crate::agent::definition::AgentDefinition;
+use crate::agent::registry::AgentRegistry;
 use crate::client::hook::{CompositeWorkflowHook, WorkflowHook};
 use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
@@ -49,6 +51,7 @@ pub struct FlovynClientBuilder {
     heartbeat_interval: Duration,
     workflow_registry: WorkflowRegistry,
     task_registry: TaskRegistry,
+    agent_registry: AgentRegistry,
     hooks: Vec<Box<dyn WorkflowHook>>,
     /// Worker token for gRPC authentication
     worker_token: Option<String>,
@@ -87,6 +90,7 @@ impl FlovynClientBuilder {
             heartbeat_interval: Duration::from_secs(30),
             workflow_registry: WorkflowRegistry::new(),
             task_registry: TaskRegistry::new(),
+            agent_registry: AgentRegistry::new(),
             hooks: Vec::new(),
             worker_token: None,
             enable_telemetry: false,
@@ -426,6 +430,29 @@ impl FlovynClientBuilder {
         self
     }
 
+    /// Register an agent definition
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let client = FlovynClient::builder()
+    ///     .server_url("http://localhost:9090")
+    ///     .org_id(org_id)
+    ///     .register_agent(MyAgent)
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn register_agent<A, I, O>(self, agent: A) -> Self
+    where
+        A: AgentDefinition<Input = I, Output = O> + 'static,
+        I: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        O: Serialize + DeserializeOwned + schemars::JsonSchema + Send + 'static,
+    {
+        // Ignore registration errors during build - they'll be caught at build() time
+        let _ = self.agent_registry.register(agent);
+        self
+    }
+
     /// Build the FlovynClient
     ///
     /// # Errors
@@ -499,6 +526,7 @@ impl FlovynClientBuilder {
             heartbeat_interval: self.heartbeat_interval,
             workflow_registry: Arc::new(self.workflow_registry),
             task_registry: Arc::new(self.task_registry),
+            agent_registry: Arc::new(self.agent_registry),
             workflow_hook,
             running: std::sync::atomic::AtomicBool::new(false),
             worker_token,

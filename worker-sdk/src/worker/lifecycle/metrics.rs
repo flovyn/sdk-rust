@@ -17,11 +17,20 @@ pub struct WorkerMetrics {
     /// Total tasks currently in progress.
     pub tasks_in_progress: usize,
 
+    /// Total agents executed since start.
+    pub agents_executed: u64,
+
+    /// Total agents currently in progress.
+    pub agents_in_progress: usize,
+
     /// Total workflow execution errors.
     pub workflow_errors: u64,
 
     /// Total task execution errors.
     pub task_errors: u64,
+
+    /// Total agent execution errors.
+    pub agent_errors: u64,
 
     /// Average workflow execution time (milliseconds).
     pub avg_workflow_duration_ms: f64,
@@ -29,12 +38,16 @@ pub struct WorkerMetrics {
     /// Average task execution time (milliseconds).
     pub avg_task_duration_ms: f64,
 
+    /// Average agent execution time (milliseconds).
+    pub avg_agent_duration_ms: f64,
+
     /// Time since worker started.
     pub uptime: Duration,
 
     // Internal tracking for average calculation (not exposed)
     total_workflow_duration_ms: u64,
     total_task_duration_ms: u64,
+    total_agent_duration_ms: u64,
 }
 
 impl WorkerMetrics {
@@ -101,19 +114,49 @@ impl WorkerMetrics {
         self.avg_task_duration_ms = self.total_task_duration_ms as f64 / self.tasks_executed as f64;
     }
 
+    /// Records an agent starting execution.
+    pub fn record_agent_started(&mut self) {
+        self.agents_in_progress += 1;
+    }
+
+    /// Records an agent completing successfully.
+    pub fn record_agent_completed(&mut self, duration: Duration) {
+        if self.agents_in_progress > 0 {
+            self.agents_in_progress -= 1;
+        }
+        self.agents_executed += 1;
+        let duration_ms = duration.as_millis() as u64;
+        self.total_agent_duration_ms += duration_ms;
+        self.avg_agent_duration_ms =
+            self.total_agent_duration_ms as f64 / self.agents_executed as f64;
+    }
+
+    /// Records an agent failing.
+    pub fn record_agent_failed(&mut self, duration: Duration) {
+        if self.agents_in_progress > 0 {
+            self.agents_in_progress -= 1;
+        }
+        self.agent_errors += 1;
+        self.agents_executed += 1;
+        let duration_ms = duration.as_millis() as u64;
+        self.total_agent_duration_ms += duration_ms;
+        self.avg_agent_duration_ms =
+            self.total_agent_duration_ms as f64 / self.agents_executed as f64;
+    }
+
     /// Updates the uptime value.
     pub fn update_uptime(&mut self, uptime: Duration) {
         self.uptime = uptime;
     }
 
-    /// Returns the total error count (workflows + tasks).
+    /// Returns the total error count (workflows + tasks + agents).
     pub fn total_errors(&self) -> u64 {
-        self.workflow_errors + self.task_errors
+        self.workflow_errors + self.task_errors + self.agent_errors
     }
 
-    /// Returns the total executions count (workflows + tasks).
+    /// Returns the total executions count (workflows + tasks + agents).
     pub fn total_executions(&self) -> u64 {
-        self.workflows_executed + self.tasks_executed
+        self.workflows_executed + self.tasks_executed + self.agents_executed
     }
 }
 

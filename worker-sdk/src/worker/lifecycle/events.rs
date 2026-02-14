@@ -11,6 +11,8 @@ pub enum WorkType {
     Workflow,
     /// Task execution.
     Task,
+    /// Agent execution.
+    Agent,
 }
 
 /// Events emitted during worker lifecycle.

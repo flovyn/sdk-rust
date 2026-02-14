@@ -68,7 +68,7 @@ impl Default for WorkflowWorkerConfig {
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
             no_work_backoff: Duration::from_millis(100),
-            max_concurrent: 1,
+            max_concurrent: 10,
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
             worker_version: "1.0.0".to_string(),
@@ -969,7 +969,7 @@ mod tests {
         assert_eq!(config.queue, "default");
         assert_eq!(config.poll_timeout, Duration::from_secs(60));
         assert_eq!(config.no_work_backoff, Duration::from_millis(100));
-        assert_eq!(config.max_concurrent, 1);
+        assert_eq!(config.max_concurrent, 10);
         assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
         assert_eq!(config.worker_version, "1.0.0");
         assert!(config.enable_auto_registration);

@@ -26,6 +26,7 @@ impl DynamicTask for EchoTask {
 }
 
 /// Task that sleeps for a configurable duration.
+/// Supports both `sleepMs` and `delay_ms` input fields.
 pub struct SlowTask;
 
 #[async_trait]
@@ -39,10 +40,17 @@ impl DynamicTask for SlowTask {
         input: DynamicTaskInput,
         _ctx: &dyn TaskContext,
     ) -> Result<DynamicTaskOutput> {
+        // Support both sleepMs and delay_ms for compatibility
         let sleep_ms = input
             .get("sleepMs")
+            .or_else(|| input.get("delay_ms"))
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
+
+        let source = input
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
 
@@ -51,6 +59,9 @@ impl DynamicTask for SlowTask {
             "sleptMs".to_string(),
             serde_json::Value::Number(sleep_ms.into()),
         );
+        if let Some(src) = source {
+            output.insert("source".to_string(), serde_json::Value::String(src));
+        }
         Ok(output)
     }
 }
@@ -540,5 +551,57 @@ impl DynamicTask for StreamingAllTypesTask {
 
     fn uses_streaming(&self) -> bool {
         true
+    }
+}
+
+// ============================================================================
+// Conditional Failure Task Fixtures
+// ============================================================================
+
+/// Task that fails if input has `shouldFail: true`.
+/// Used for testing parallel task failure handling.
+pub struct ConditionalFailTask;
+
+#[async_trait]
+impl DynamicTask for ConditionalFailTask {
+    fn kind(&self) -> &str {
+        "conditional-fail-task"
+    }
+
+    async fn execute(
+        &self,
+        input: DynamicTaskInput,
+        _ctx: &dyn TaskContext,
+    ) -> Result<DynamicTaskOutput> {
+        let should_fail = input
+            .get("shouldFail")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let task_name = input
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unnamed");
+
+        // Optional delay before processing
+        let delay_ms = input.get("delayMs").and_then(|v| v.as_u64()).unwrap_or(0);
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+
+        if should_fail {
+            return Err(FlovynError::Other(format!(
+                "Task '{}' intentionally failed",
+                task_name
+            )));
+        }
+
+        let mut output = DynamicTaskOutput::new();
+        output.insert(
+            "name".to_string(),
+            serde_json::Value::String(task_name.to_string()),
+        );
+        output.insert("success".to_string(), serde_json::Value::Bool(true));
+        Ok(output)
     }
 }

@@ -1,13 +1,12 @@
-//! TaskExecutorWorker - Polling service for task execution
+//! AgentExecutorWorker - Polling service for agent execution
 
-use crate::client::{TaskExecutionClient, WorkerLifecycleClient, WorkflowDispatch};
+use crate::agent::context_impl::AgentContextImpl;
+use crate::agent::registry::AgentRegistry;
 use crate::error::{FlovynError, Result};
-use crate::task::executor::{
-    TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
+use crate::worker::lifecycle::{
+    HookChain, ReconnectionStrategy, StopReason, WorkType, WorkerInternals,
 };
-use crate::task::registry::TaskRegistry;
-use crate::telemetry::{task_execute_span, SpanCollector};
-use crate::worker::lifecycle::{HookChain, ReconnectionStrategy, StopReason, WorkerInternals};
+use flovyn_worker_core::client::{AgentDispatch, WorkerLifecycleClient};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,23 +15,21 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-/// Configuration for TaskExecutorWorker
+/// Configuration for AgentExecutorWorker
 #[derive(Clone)]
-pub struct TaskWorkerConfig {
+pub struct AgentWorkerConfig {
     /// Unique worker identifier
     pub worker_id: String,
     /// Org ID
     pub org_id: Uuid,
-    /// Queue to poll tasks from
+    /// Queue to poll agents from
     pub queue: String,
     /// Long polling timeout
     pub poll_timeout: Duration,
-    /// Interval to wait before polling again when no task is available
+    /// Interval to wait before polling again when no agent is available
     pub no_work_backoff: Duration,
-    /// Maximum concurrent task executions
+    /// Maximum concurrent agent executions
     pub max_concurrent: usize,
-    /// Worker labels for task routing
-    pub worker_labels: std::collections::HashMap<String, String>,
     /// Heartbeat interval
     pub heartbeat_interval: Duration,
     /// Human-readable worker name for registration
@@ -45,8 +42,6 @@ pub struct TaskWorkerConfig {
     pub enable_auto_registration: bool,
     /// Worker token for gRPC authentication
     pub worker_token: String,
-    /// Enable telemetry (task.execute spans)
-    pub enable_telemetry: bool,
     /// Worker lifecycle hooks
     pub lifecycle_hooks: HookChain,
     /// Reconnection strategy for connection recovery
@@ -56,7 +51,7 @@ pub struct TaskWorkerConfig {
     pub server_worker_id: Option<Uuid>,
 }
 
-impl Default for TaskWorkerConfig {
+impl Default for AgentWorkerConfig {
     fn default() -> Self {
         Self {
             worker_id: Uuid::new_v4().to_string(),
@@ -64,15 +59,13 @@ impl Default for TaskWorkerConfig {
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
             no_work_backoff: Duration::from_millis(100),
-            max_concurrent: 10,
-            worker_labels: std::collections::HashMap::new(),
+            max_concurrent: 5,
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
             worker_version: "1.0.0".to_string(),
             team_id: None,
             enable_auto_registration: true,
             worker_token: String::new(),
-            enable_telemetry: false,
             lifecycle_hooks: HookChain::new(),
             reconnection_strategy: ReconnectionStrategy::default(),
             server_worker_id: None,
@@ -80,33 +73,30 @@ impl Default for TaskWorkerConfig {
     }
 }
 
-impl std::fmt::Debug for TaskWorkerConfig {
+impl std::fmt::Debug for AgentWorkerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TaskWorkerConfig")
+        f.debug_struct("AgentWorkerConfig")
             .field("worker_id", &self.worker_id)
             .field("org_id", &self.org_id)
             .field("queue", &self.queue)
             .field("poll_timeout", &self.poll_timeout)
             .field("max_concurrent", &self.max_concurrent)
-            .field("worker_labels", &self.worker_labels)
             .field("heartbeat_interval", &self.heartbeat_interval)
             .field("worker_name", &self.worker_name)
             .field("worker_version", &self.worker_version)
             .field("team_id", &self.team_id)
             .field("enable_auto_registration", &self.enable_auto_registration)
             .field("worker_token", &"<redacted>")
-            .field("enable_telemetry", &self.enable_telemetry)
             .field("lifecycle_hooks_count", &self.lifecycle_hooks.len())
             .field("reconnection_strategy", &self.reconnection_strategy)
             .finish()
     }
 }
 
-/// Worker service that polls for tasks and executes them
-pub struct TaskExecutorWorker {
-    config: TaskWorkerConfig,
-    registry: Arc<TaskRegistry>,
-    executor: Arc<TaskExecutor>,
+/// Worker service that polls for agents and executes them
+pub struct AgentExecutorWorker {
+    config: AgentWorkerConfig,
+    registry: Arc<AgentRegistry>,
     channel: Channel,
     running: Arc<AtomicBool>,
     semaphore: Arc<Semaphore>,
@@ -117,18 +107,13 @@ pub struct TaskExecutorWorker {
     ready_notify: Arc<Notify>,
     /// External shutdown signal receiver
     external_shutdown_rx: Option<watch::Receiver<bool>>,
-    /// Span collector for telemetry
-    span_collector: SpanCollector,
     /// Shared internal state for lifecycle tracking
     internals: Arc<WorkerInternals>,
 }
 
-impl TaskExecutorWorker {
-    /// Create a new task worker with the given configuration
-    pub fn new(config: TaskWorkerConfig, registry: Arc<TaskRegistry>, channel: Channel) -> Self {
-        let executor_config = TaskExecutorConfig::default();
-        let executor = Arc::new(TaskExecutor::new(registry.clone(), executor_config));
-        let span_collector = SpanCollector::new(config.enable_telemetry);
+impl AgentExecutorWorker {
+    /// Create a new agent worker with the given configuration
+    pub fn new(config: AgentWorkerConfig, registry: Arc<AgentRegistry>, channel: Channel) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
 
         // Create worker internals with lifecycle hooks from config
@@ -141,7 +126,6 @@ impl TaskExecutorWorker {
         Self {
             config,
             registry,
-            executor,
             channel,
             running: Arc::new(AtomicBool::new(false)),
             semaphore,
@@ -149,7 +133,6 @@ impl TaskExecutorWorker {
             server_worker_id: None,
             ready_notify: Arc::new(Notify::new()),
             external_shutdown_rx: None,
-            span_collector,
             internals,
         }
     }
@@ -242,7 +225,7 @@ impl TaskExecutorWorker {
             worker_id = %self.config.worker_id,
             org_id = %self.config.org_id,
             queue = %self.config.queue,
-            "Starting task worker"
+            "Starting agent worker"
         );
 
         // Only emit Starting event if we're doing auto-registration
@@ -275,8 +258,6 @@ impl TaskExecutorWorker {
         });
 
         // Signal that worker is ready
-        // Use notify_one() instead of notify_waiters() to store a permit
-        // that can be consumed even if await_ready() hasn't been called yet
         self.ready_notify.notify_one();
 
         // Emit Ready event
@@ -285,11 +266,9 @@ impl TaskExecutorWorker {
         // Clone components needed for the polling loop
         let running = self.running.clone();
         let semaphore = self.semaphore.clone();
-        let executor = self.executor.clone();
         let registry = self.registry.clone();
         let config = self.config.clone();
         let channel = self.channel.clone();
-        let span_collector = self.span_collector.clone();
 
         // Polling loop with reconnection and pause support
         let mut reconnect_attempt: u32 = 0;
@@ -299,7 +278,7 @@ impl TaskExecutorWorker {
         while running.load(Ordering::SeqCst) {
             // Check if paused - if so, wait for resume
             if *pause_rx.borrow() {
-                debug!("Task worker is paused, waiting for resume signal");
+                debug!("Agent worker is paused, waiting for resume signal");
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
                         debug!("Received shutdown signal while paused");
@@ -343,12 +322,10 @@ impl TaskExecutorWorker {
                 }
                 result = Self::poll_and_execute(
                     semaphore.clone(),
-                    executor.clone(),
                     registry.clone(),
                     &config,
                     channel.clone(),
                     running.clone(),
-                    span_collector.clone(),
                     self.internals.clone(),
                 ) => {
                     if let Err(e) = result {
@@ -408,7 +385,7 @@ impl TaskExecutorWorker {
         // Emit Stopped event
         self.internals.record_stopped(StopReason::Graceful).await;
 
-        info!("Task worker stopped");
+        info!("Agent worker stopped");
         Ok(())
     }
 
@@ -423,16 +400,14 @@ impl TaskExecutorWorker {
         }
     }
 
-    /// Poll for a task and execute it
+    /// Poll for an agent and execute it (static version for concurrent execution)
     #[allow(clippy::too_many_arguments)]
     async fn poll_and_execute(
         semaphore: Arc<Semaphore>,
-        executor: Arc<TaskExecutor>,
-        _registry: Arc<TaskRegistry>,
-        config: &TaskWorkerConfig,
+        registry: Arc<AgentRegistry>,
+        config: &AgentWorkerConfig,
         channel: Channel,
-        running: Arc<AtomicBool>,
-        span_collector: SpanCollector,
+        _running: Arc<AtomicBool>,
         internals: Arc<WorkerInternals>,
     ) -> Result<()> {
         // Acquire semaphore permit
@@ -441,38 +416,44 @@ impl TaskExecutorWorker {
             .await
             .map_err(|e| FlovynError::Other(format!("Failed to acquire semaphore: {}", e)))?;
 
-        // Create client for polling
-        let mut client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
+        // Get registered agent capabilities
+        let agent_capabilities = registry.get_registered_kinds();
 
-        // Poll for task
-        let task_info = client
-            .poll_task(
-                &config.worker_id,
+        // Use server_worker_id (UUID) for polling, not the client-side worker_id
+        let worker_id = config
+            .server_worker_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| config.worker_id.clone());
+
+        // Create client for polling
+        let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
+
+        // Poll for agent
+        let agent_info = client
+            .poll_agent(
+                &worker_id,
                 &config.org_id.to_string(),
                 &config.queue,
                 config.poll_timeout,
+                agent_capabilities,
             )
-            .await?;
+            .await
+            .map_err(|e| FlovynError::Other(format!("gRPC error: {}", e)))?;
 
-        match task_info {
+        match agent_info {
             Some(info) => {
-                let task_execution_id = info.id;
-                let task_type = info.task_type.clone();
-                let workflow_id = info.workflow_execution_id;
+                let agent_execution_id = info.id;
+                let agent_kind = info.kind.clone();
 
                 // Record work received
                 internals
-                    .record_work_received(
-                        crate::worker::lifecycle::WorkType::Task,
-                        task_execution_id,
-                    )
+                    .record_work_received(WorkType::Agent, agent_execution_id)
                     .await;
 
                 debug!(
-                    task_execution_id = %task_execution_id,
-                    task_type = %task_type,
-                    attempt = info.execution_count,
-                    "Executing task"
+                    agent_execution_id = %agent_execution_id,
+                    agent_kind = %agent_kind,
+                    "Executing agent"
                 );
 
                 // Clone what we need for spawned task
@@ -482,101 +463,158 @@ impl TaskExecutorWorker {
                 // Spawn execution in background
                 tokio::spawn(async move {
                     let _permit = permit; // Keep permit alive during execution
-                    let _running = running; // Keep reference
 
                     let start_time = std::time::Instant::now();
 
-                    // Create task.execute span for telemetry
-                    let span = if span_collector.is_enabled() {
-                        let wf_id = workflow_id
-                            .map(|id| id.to_string())
-                            .unwrap_or_else(|| "standalone".to_string());
-                        Some(
-                            task_execute_span(&wf_id, &task_execution_id.to_string(), &task_type)
-                                .with_attribute("attempt", &info.execution_count.to_string()),
-                        )
-                    } else {
-                        None
+                    // Look up agent in registry
+                    let agent = match registry.get(&agent_kind) {
+                        Some(a) => a,
+                        None => {
+                            error!(
+                                agent_kind = %agent_kind,
+                                "Agent kind not registered"
+                            );
+                            // Fail the agent since we can't execute it
+                            let mut client =
+                                AgentDispatch::new(channel.clone(), &config.worker_token);
+                            if let Err(e) = client
+                                .fail_agent(
+                                    agent_execution_id,
+                                    &format!(
+                                        "Agent kind '{}' not registered on this worker",
+                                        agent_kind
+                                    ),
+                                    None,
+                                    Some("AGENT_NOT_FOUND"),
+                                )
+                                .await
+                            {
+                                error!("Failed to report agent failure: {}", e);
+                            }
+                            return;
+                        }
                     };
 
-                    // Create callbacks for progress/log reporting via gRPC
-                    let callbacks = Self::create_task_callbacks_static(
+                    // Clone input before moving it to context
+                    let agent_input = info.input.clone();
+
+                    // Create context from loaded data
+                    let ctx = match Self::create_agent_context_static(
                         channel.clone(),
                         &config.worker_token,
-                        task_execution_id,
-                    );
-
-                    // Execute the task using TaskExecutor with callbacks
-                    let result = executor
-                        .execute_with_callbacks(
-                            task_execution_id,
-                            &task_type,
-                            info.input,
-                            info.execution_count,
-                            callbacks,
-                        )
-                        .await;
-
-                    // Finish and record the span
-                    if let Some(span) = span {
-                        let finished_span = match &result {
-                            TaskExecutionResult::Completed { .. } => span.finish(),
-                            TaskExecutionResult::Failed { error_message, .. } => {
-                                span.finish_with_error("TaskFailed", error_message)
-                            }
-                            TaskExecutionResult::Cancelled => {
-                                span.finish_with_error("TaskCancelled", "Task was cancelled")
-                            }
-                            TaskExecutionResult::TimedOut => {
-                                span.finish_with_error("TaskTimeout", "Task execution timed out")
-                            }
-                        };
-                        span_collector.record(finished_span);
-
-                        // Flush spans to server
-                        let mut workflow_dispatch =
-                            WorkflowDispatch::new(channel.clone(), &config.worker_token);
-                        span_collector.flush(&mut workflow_dispatch).await;
-                    }
-
-                    // Record work completed/failed
-                    let duration = start_time.elapsed();
-                    let is_success = matches!(result, TaskExecutionResult::Completed { .. });
-
-                    // Report result to server
-                    let mut client =
-                        TaskExecutionClient::new(channel.clone(), &config.worker_token);
-                    if let Err(e) =
-                        Self::report_result_static(&mut client, task_execution_id, result).await
+                        agent_execution_id,
+                        info.org_id,
+                        info.input,
+                        info.current_checkpoint_seq,
+                    )
+                    .await
                     {
-                        error!("Failed to report task result: {}", e);
-                    }
+                        Ok(ctx) => ctx,
+                        Err(e) => {
+                            error!(
+                                agent_execution_id = %agent_execution_id,
+                                error = %e,
+                                "Failed to create agent context"
+                            );
+                            let mut client =
+                                AgentDispatch::new(channel.clone(), &config.worker_token);
+                            if let Err(e) = client
+                                .fail_agent(
+                                    agent_execution_id,
+                                    &format!("Failed to create agent context: {}", e),
+                                    None,
+                                    Some("CONTEXT_CREATION_FAILED"),
+                                )
+                                .await
+                            {
+                                error!("Failed to report agent failure: {}", e);
+                            }
+                            return;
+                        }
+                    };
+
+                    // Execute the agent
+                    let ctx_arc: Arc<dyn crate::agent::context::AgentContext + Send + Sync> =
+                        Arc::new(ctx);
+                    let result = agent.execute(ctx_arc.clone(), agent_input).await;
 
                     // Record work completion metrics
-                    if is_success {
-                        internals
-                            .record_work_completed(
-                                crate::worker::lifecycle::WorkType::Task,
-                                task_execution_id,
-                                duration,
-                            )
-                            .await;
-                    } else {
-                        internals
-                            .record_work_failed(
-                                crate::worker::lifecycle::WorkType::Task,
-                                task_execution_id,
-                                "Task execution failed".to_string(),
-                                duration,
-                            )
-                            .await;
+                    let duration = start_time.elapsed();
+
+                    // Report result to server
+                    let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
+                    match result {
+                        Ok(output) => {
+                            debug!(
+                                agent_execution_id = %agent_execution_id,
+                                "Agent completed successfully"
+                            );
+                            // Flush any pending entries before completing.
+                            if let Err(e) = ctx_arc.flush_pending().await {
+                                warn!(
+                                    agent_execution_id = %agent_execution_id,
+                                    error = %e,
+                                    "Failed to flush pending entries before completion"
+                                );
+                            }
+                            if let Err(e) = client.complete_agent(agent_execution_id, &output).await
+                            {
+                                error!("Failed to report agent completion: {}", e);
+                            }
+
+                            internals
+                                .record_work_completed(
+                                    WorkType::Agent,
+                                    agent_execution_id,
+                                    duration,
+                                )
+                                .await;
+                        }
+                        Err(e) => {
+                            // Check if it's a suspension
+                            if matches!(e, FlovynError::AgentSuspended(_)) {
+                                debug!(
+                                    agent_execution_id = %agent_execution_id,
+                                    reason = %e,
+                                    "Agent suspended"
+                                );
+                                internals
+                                    .record_work_completed(
+                                        WorkType::Agent,
+                                        agent_execution_id,
+                                        duration,
+                                    )
+                                    .await;
+                            } else {
+                                debug!(
+                                    agent_execution_id = %agent_execution_id,
+                                    error = %e,
+                                    "Agent failed"
+                                );
+                                if let Err(err) = client
+                                    .fail_agent(agent_execution_id, &e.to_string(), None, None)
+                                    .await
+                                {
+                                    error!("Failed to report agent failure: {}", err);
+                                }
+
+                                internals
+                                    .record_work_failed(
+                                        WorkType::Agent,
+                                        agent_execution_id,
+                                        e.to_string(),
+                                        duration,
+                                    )
+                                    .await;
+                            }
+                        }
                     }
                 });
 
                 Ok(())
             }
             None => {
-                // No task available - release permit and wait before next poll
+                // No agent available - release permit and wait before next poll
                 drop(permit);
                 tokio::time::sleep(config.no_work_backoff).await;
                 Ok(())
@@ -584,170 +622,33 @@ impl TaskExecutorWorker {
         }
     }
 
-    /// Report task execution result to the server (static version for spawned tasks)
-    async fn report_result_static(
-        client: &mut TaskExecutionClient,
-        task_execution_id: Uuid,
-        result: TaskExecutionResult,
-    ) -> Result<()> {
-        match result {
-            TaskExecutionResult::Completed { output } => {
-                debug!(
-                    task_execution_id = %task_execution_id,
-                    "Task completed successfully"
-                );
-                client.complete_task(task_execution_id, output).await?;
-            }
-            TaskExecutionResult::Failed {
-                error_message,
-                error_type,
-                is_retryable,
-            } => {
-                debug!(
-                    task_execution_id = %task_execution_id,
-                    error = %error_message,
-                    error_type = ?error_type,
-                    is_retryable = is_retryable,
-                    "Task failed"
-                );
-                client.fail_task(task_execution_id, &error_message).await?;
-            }
-            TaskExecutionResult::Cancelled => {
-                debug!(
-                    task_execution_id = %task_execution_id,
-                    "Task was cancelled"
-                );
-                client
-                    .fail_task(task_execution_id, "Task cancelled")
-                    .await?;
-            }
-            TaskExecutionResult::TimedOut => {
-                debug!(
-                    task_execution_id = %task_execution_id,
-                    "Task timed out"
-                );
-                client
-                    .fail_task(task_execution_id, "Task execution timed out")
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Get the task registry
-    pub fn registry(&self) -> &TaskRegistry {
-        &self.registry
-    }
-
-    /// Create callbacks for reporting progress and logs to the server via gRPC.
-    ///
-    /// Uses a single background task with a channel to batch and forward events,
-    /// rather than spawning a task per callback call.
-    fn create_task_callbacks_static(
+    /// Create an AgentContextImpl from loaded agent data (static version for spawned tasks)
+    async fn create_agent_context_static(
         channel: Channel,
         worker_token: &str,
-        task_execution_id: Uuid,
-    ) -> TaskExecutorCallbacks {
-        // Create a channel for sending events to a single background forwarder task
-        let (tx, mut rx) = mpsc::channel::<TaskEvent>(100);
+        agent_execution_id: Uuid,
+        org_id: Uuid,
+        input: serde_json::Value,
+        current_checkpoint_seq: i32,
+    ) -> Result<AgentContextImpl> {
+        // Create a fresh client for the context
+        let ctx_client = AgentDispatch::new(channel, worker_token);
 
-        // Clone token for the forwarder task
-        let worker_token = worker_token.to_string();
-
-        // Spawn a single background task to forward events to the server
-        tokio::spawn(async move {
-            let mut client = TaskExecutionClient::new(channel, &worker_token);
-            debug!(task_id = %task_execution_id, "Progress forwarder task started");
-
-            while let Some(event) = rx.recv().await {
-                match event {
-                    TaskEvent::Progress { progress, message } => {
-                        debug!(
-                            task_id = %task_execution_id,
-                            progress = %progress,
-                            message = ?message,
-                            "Forwarding progress to server via gRPC"
-                        );
-                        match client
-                            .report_progress(task_execution_id, progress, message.as_deref())
-                            .await
-                        {
-                            Ok(_) => {
-                                debug!(
-                                    task_id = %task_execution_id,
-                                    progress = %progress,
-                                    "Progress reported successfully"
-                                );
-                            }
-                            Err(e) => {
-                                debug!(error = %e, "Failed to report progress (non-critical)");
-                            }
-                        }
-                    }
-                    TaskEvent::Log { level, message } => {
-                        if let Err(e) = client
-                            .log_message(task_execution_id, &level, &message)
-                            .await
-                        {
-                            debug!(error = %e, "Failed to send log message (non-critical)");
-                        }
-                    }
-                }
-            }
-            debug!(task_id = %task_execution_id, "Progress forwarder task ended");
-        });
-
-        // Create progress callback that sends to channel
-        let progress_tx = tx.clone();
-        let on_progress: Box<dyn Fn(f64, Option<String>) + Send + Sync> =
-            Box::new(move |progress, message| {
-                match progress_tx.try_send(TaskEvent::Progress {
-                    progress,
-                    message: message.clone(),
-                }) {
-                    Ok(_) => {
-                        tracing::debug!(
-                            progress = %progress,
-                            message = ?message,
-                            "Progress event sent to channel"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            progress = %progress,
-                            "Failed to send progress to channel"
-                        );
-                    }
-                }
-            });
-
-        // Create log callback that sends to channel
-        let log_tx = tx;
-        let on_log: Box<dyn Fn(String, String) + Send + Sync> = Box::new(move |level, message| {
-            let _ = log_tx.try_send(TaskEvent::Log { level, message });
-        });
-
-        TaskExecutorCallbacks {
-            on_progress: Some(on_progress),
-            on_log: Some(on_log),
-            on_heartbeat: None,
-            on_stream: None,
-        }
+        // Create context using the async constructor which loads entries and checkpoint
+        AgentContextImpl::new(
+            ctx_client,
+            agent_execution_id,
+            org_id,
+            input,
+            current_checkpoint_seq,
+        )
+        .await
     }
-}
 
-/// Events sent from task callbacks to the forwarder task
-enum TaskEvent {
-    Progress {
-        progress: f64,
-        message: Option<String>,
-    },
-    Log {
-        level: String,
-        message: String,
-    },
+    /// Get the agent registry
+    pub fn registry(&self) -> &AgentRegistry {
+        &self.registry
+    }
 }
 
 #[cfg(test)]
@@ -755,51 +656,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_task_worker_config_default() {
-        let config = TaskWorkerConfig::default();
+    fn test_agent_worker_config_default() {
+        let config = AgentWorkerConfig::default();
         assert_eq!(config.queue, "default");
         assert_eq!(config.poll_timeout, Duration::from_secs(60));
-        assert!(config.worker_labels.is_empty());
         assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
         assert_eq!(config.worker_version, "1.0.0");
         assert!(config.enable_auto_registration);
         assert!(config.worker_name.is_none());
         assert!(config.team_id.is_none());
-        assert!(!config.enable_telemetry);
     }
 
     #[test]
-    fn test_task_worker_config_custom() {
-        let mut labels = std::collections::HashMap::new();
-        labels.insert("gpu".to_string(), "true".to_string());
-
-        let config = TaskWorkerConfig {
-            worker_id: "task-worker-1".to_string(),
+    fn test_agent_worker_config_custom() {
+        let config = AgentWorkerConfig {
+            worker_id: "agent-worker-1".to_string(),
             org_id: Uuid::new_v4(),
-            queue: "gpu-tasks".to_string(),
+            queue: "agents".to_string(),
             poll_timeout: Duration::from_secs(30),
             no_work_backoff: Duration::from_millis(100),
-            max_concurrent: 20,
-            worker_labels: labels,
+            max_concurrent: 10,
             heartbeat_interval: Duration::from_secs(15),
-            worker_name: Some("GPU Task Worker".to_string()),
+            worker_name: Some("Agent Worker".to_string()),
             worker_version: "2.0.0".to_string(),
             team_id: Some(Uuid::new_v4()),
             enable_auto_registration: false,
             worker_token: "test-token".to_string(),
-            enable_telemetry: true,
             lifecycle_hooks: HookChain::new(),
             reconnection_strategy: ReconnectionStrategy::fixed(Duration::from_secs(5)),
             server_worker_id: None,
         };
 
-        assert_eq!(config.worker_id, "task-worker-1");
-        assert_eq!(config.queue, "gpu-tasks");
-        assert_eq!(config.max_concurrent, 20);
-        assert_eq!(config.worker_labels.get("gpu"), Some(&"true".to_string()));
-        assert_eq!(config.worker_name, Some("GPU Task Worker".to_string()));
+        assert_eq!(config.worker_id, "agent-worker-1");
+        assert_eq!(config.queue, "agents");
+        assert_eq!(config.max_concurrent, 10);
+        assert_eq!(config.worker_name, Some("Agent Worker".to_string()));
         assert_eq!(config.worker_version, "2.0.0");
         assert!(!config.enable_auto_registration);
-        assert!(config.enable_telemetry);
+    }
+
+    #[test]
+    fn test_agent_worker_config_debug() {
+        let config = AgentWorkerConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("AgentWorkerConfig"));
+        assert!(debug_str.contains("queue"));
+        assert!(debug_str.contains("<redacted>")); // Token should be redacted
     }
 }
