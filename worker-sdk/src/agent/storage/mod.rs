@@ -87,7 +87,7 @@ pub enum AgentCommand {
     },
     /// Schedule a task for execution
     ScheduleTask {
-        /// Task execution ID
+        /// Task execution ID (derived from idempotency_key)
         task_id: Uuid,
         /// Task kind (must match a registered task definition)
         kind: String,
@@ -95,6 +95,10 @@ pub enum AgentCommand {
         input: Value,
         /// Task options
         options: TaskOptions,
+        /// Content-based idempotency key for deduplication.
+        /// Key = hash(agent_id + kind + canonical_json(input)).
+        /// Same task + same input = same key = server returns existing task.
+        idempotency_key: String,
     },
     /// Register interest in a signal
     WaitForSignal {
@@ -288,6 +292,7 @@ mod tests {
                     kind: "analyze".to_string(),
                     input: json!({"data": [1, 2, 3]}),
                     options: TaskOptions::default(),
+                    idempotency_key: "task:test-key".to_string(),
                 },
                 AgentCommand::WaitForSignal {
                     signal_name: "userInput".to_string(),

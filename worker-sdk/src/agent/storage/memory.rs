@@ -185,6 +185,7 @@ impl AgentStorage for InMemoryStorage {
                             kind,
                             input: _,
                             options: _,
+                            idempotency_key: _,
                         } => {
                             // Check if we have a result for this task
                             let results = self.task_results.read().unwrap();
@@ -475,6 +476,7 @@ mod tests {
                 kind: "analyze".to_string(),
                 input: json!({"data": [1, 2, 3]}),
                 options: Default::default(),
+                idempotency_key: "task:test-key".to_string(),
             }],
             checkpoint: None,
         };

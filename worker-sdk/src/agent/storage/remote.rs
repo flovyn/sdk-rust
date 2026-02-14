@@ -125,7 +125,10 @@ impl AgentStorage for RemoteStorage {
                     kind,
                     input,
                     options,
+                    idempotency_key,
                 } => {
+                    // Use content-based idempotency_key for deduplication.
+                    // Server will use this to detect duplicate task submissions.
                     client
                         .schedule_task(
                             agent_id,
@@ -134,7 +137,7 @@ impl AgentStorage for RemoteStorage {
                             options.queue.as_deref(),
                             options.max_retries,
                             options.timeout_ms,
-                            None, // idempotency_key will be added in Phase 2
+                            Some(idempotency_key),
                         )
                         .await
                         .map_err(FlovynError::from)?;

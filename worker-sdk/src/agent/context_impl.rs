@@ -21,7 +21,46 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
+/// Serialize JSON to canonical form (sorted keys) for consistent hashing.
+///
+/// This ensures that `{"a":1,"b":2}` and `{"b":2,"a":1}` produce the same string,
+/// which is required for content-based idempotency keys.
+fn canonical_json_string(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut pairs: Vec<_> = map.iter().collect();
+            pairs.sort_by(|a, b| a.0.cmp(b.0));
+            let inner: Vec<String> = pairs
+                .iter()
+                .map(|(k, v)| format!("\"{}\":{}", k, canonical_json_string(v)))
+                .collect();
+            format!("{{{}}}", inner.join(","))
+        }
+        Value::Array(arr) => {
+            let inner: Vec<String> = arr.iter().map(canonical_json_string).collect();
+            format!("[{}]", inner.join(","))
+        }
+        _ => value.to_string(),
+    }
+}
+
 /// Implementation of AgentContext that communicates with the server via gRPC.
+///
+/// # ID Generation
+///
+/// **Entry IDs** use random UUIDs (`Uuid::new_v4()`), NOT counter-based IDs.
+/// This is intentional: agents use checkpoint-based recovery, not deterministic replay.
+/// Counter-based entry IDs fail when:
+/// - Conditional code paths exist (signal handling, branching)
+/// - Compaction changes entry indices
+/// - Branching creates different entry chains
+///
+/// **Task IDs** use content-based hashing for idempotency.
+/// Key = `hash(agent_id + kind + canonical_json(input))`.
+/// This ensures:
+/// - Resume: same task + same input → same key → server returns existing task
+/// - Branching: different tasks → different keys → no collision
+/// - Local mode: same formula works without server
 pub struct AgentContextImpl {
     /// Agent execution ID
     agent_execution_id: Uuid,
@@ -37,14 +76,6 @@ pub struct AgentContextImpl {
     checkpoint_sequence: AtomicI32,
     /// Current leaf entry ID (for building entry chain)
     leaf_entry_id: RwLock<Option<Uuid>>,
-    /// Entry counter - monotonically increasing, never resets.
-    /// Used for stable entry idempotency keys to prevent duplicate entries on resume.
-    entry_counter: AtomicI32,
-    /// Task counter - monotonically increasing, never resets.
-    /// Used for stable task IDs to prevent duplicate tasks on resume.
-    /// Similar to entry_counter: agents replay from beginning on resume,
-    /// and idempotency prevents duplicate task creation.
-    task_counter: AtomicI32,
     /// Stream sequence counter
     stream_sequence: AtomicI32,
     /// gRPC client (tokio mutex for async-safe access)
@@ -82,17 +113,6 @@ impl AgentContextImpl {
 
         // Load entries
         let entries = client.get_entries(agent_execution_id, None).await?;
-
-        // Entry counter starts at 0, NOT entries.len().
-        // Why? Agents MUST replay append_entry calls from the beginning on resume.
-        // The server uses idempotency keys to return existing entries for duplicate
-        // keys, preventing entry duplication. This design ensures that:
-        // 1. All append_entry calls use the same keys on replay
-        // 2. The server handles deduplication via idempotency
-        //
-        // IMPORTANT: Agents should NOT skip append_entry calls for "loaded" messages.
-        // They should replay ALL append_entry calls and let idempotency handle it.
-
         let messages = entries.into_iter().map(convert_entry_to_message).collect();
 
         // Compute segment number from checkpoint sequence
@@ -111,8 +131,6 @@ impl AgentContextImpl {
             checkpoint_state: RwLock::new(checkpoint_state),
             checkpoint_sequence: AtomicI32::new(checkpoint_seq),
             leaf_entry_id: RwLock::new(leaf_entry_id),
-            entry_counter: AtomicI32::new(0),
-            task_counter: AtomicI32::new(0),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             cancellation_requested: AtomicBool::new(false),
@@ -149,8 +167,6 @@ impl AgentContextImpl {
             checkpoint_state: RwLock::new(checkpoint_state),
             checkpoint_sequence: AtomicI32::new(checkpoint_sequence),
             leaf_entry_id: RwLock::new(leaf_entry_id),
-            entry_counter: AtomicI32::new(0),
-            task_counter: AtomicI32::new(0),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             cancellation_requested: AtomicBool::new(false),
@@ -165,24 +181,6 @@ impl AgentContextImpl {
         self.cancellation_requested.store(true, Ordering::SeqCst);
     }
 
-    /// Generate an idempotency key for entry creation.
-    /// Uses entry_counter which never resets, ensuring stable keys
-    /// across suspension boundaries.
-    fn generate_entry_idempotency_key(&self) -> String {
-        let index = self.entry_counter.fetch_add(1, Ordering::SeqCst);
-        format!("{}:entry:{}", self.agent_execution_id, index)
-    }
-
-    /// Generate a deterministic entry ID from an idempotency key.
-    ///
-    /// Uses UUIDv5 with the idempotency key as input, ensuring:
-    /// 1. Same key always produces the same entry ID
-    /// 2. Entry IDs are valid UUIDs
-    /// 3. No server round-trip required
-    fn entry_id_from_idempotency_key(idempotency_key: &str) -> Uuid {
-        Uuid::new_v5(&Uuid::NAMESPACE_OID, idempotency_key.as_bytes())
-    }
-
     /// Get current timestamp in milliseconds
     fn now_ms() -> i64 {
         SystemTime::now()
@@ -191,27 +189,32 @@ impl AgentContextImpl {
             .as_millis() as i64
     }
 
-    /// Generate a deterministic task ID based on segment and sequence.
+    /// Generate task idempotency key from content hash.
     ///
-    /// This produces stable, reproducible task IDs that don't change across
-    /// suspension/resume cycles. The ID is derived from:
-    /// - agent_execution_id: unique per agent execution
-    /// - current_segment: increments on each recovery
-    /// - current_sequence: increments for each command within a segment
+    /// Key = hash(agent_id + kind + canonical_json(input))
     ///
-    /// Using UUIDv5 with these inputs ensures:
-    /// 1. Same inputs always produce the same task ID
-    /// 2. Different inputs produce different task IDs
-    /// 3. Task IDs are valid UUIDs
-    ///
-    /// Generates a deterministic task ID using task_counter which never resets,
-    /// ensuring stable IDs across suspension/resume boundaries. Similar to entries:
-    /// agents replay from beginning on resume, and server idempotency prevents
-    /// duplicate task creation.
-    fn next_task_id(&self) -> Uuid {
-        let counter = self.task_counter.fetch_add(1, Ordering::SeqCst);
-        let input = format!("{}:task:{}", self.agent_execution_id, counter);
-        Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
+    /// This ensures:
+    /// - Resume: same task + same input → same key → server returns existing task
+    /// - Branching: different tasks → different keys → no collision
+    /// - Local mode: same formula works without server
+    fn generate_task_idempotency_key(&self, kind: &str, input: &Value) -> String {
+        use sha2::{Digest, Sha256};
+
+        let canonical = canonical_json_string(input);
+        let mut hasher = Sha256::new();
+        hasher.update(self.agent_execution_id.as_bytes());
+        hasher.update(b":");
+        hasher.update(kind.as_bytes());
+        hasher.update(b":");
+        hasher.update(canonical.as_bytes());
+        // Use first 16 bytes (128 bits) - sufficient for uniqueness
+        let hash = hasher.finalize();
+        format!("task:{}", hex::encode(&hash[..16]))
+    }
+
+    /// Generate task ID from idempotency key (deterministic).
+    fn task_id_from_idempotency_key(&self, idempotency_key: &str) -> Uuid {
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, idempotency_key.as_bytes())
     }
 
     /// Get the count of pending commands (for debugging)
@@ -279,6 +282,8 @@ impl AgentContextImpl {
                     role,
                     content,
                 } => {
+                    // Pass entry_id as idempotency_key - server uses it as the entry ID
+                    // (see DomainAgentEntry::new_with_idempotency which parses UUID from key)
                     client
                         .append_entry(
                             self.agent_execution_id,
@@ -288,17 +293,19 @@ impl AgentContextImpl {
                             content,
                             None,                        // turn_id
                             None,                        // token_usage
-                            Some(&entry_id.to_string()), // idempotency_key
+                            Some(&entry_id.to_string()), // idempotency_key = entry_id
                         )
                         .await?;
                 }
                 AgentCommand::ScheduleTask {
-                    task_id,
+                    task_id: _,
                     kind,
                     input,
                     options,
+                    idempotency_key,
                 } => {
-                    // Use task_id as idempotency_key so server returns/creates with this ID
+                    // Use content-based idempotency_key for deduplication.
+                    // Server will use this to detect duplicate task submissions.
                     client
                         .schedule_task(
                             self.agent_execution_id,
@@ -307,7 +314,7 @@ impl AgentContextImpl {
                             options.queue.as_deref(),
                             options.max_retries,
                             options.timeout_ms,
-                            Some(&task_id.to_string()),
+                            Some(idempotency_key),
                         )
                         .await?;
                 }
@@ -432,8 +439,9 @@ impl AgentContext for AgentContextImpl {
 
     async fn append_entry(&self, role: EntryRole, content: &Value) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
-        let idempotency_key = self.generate_entry_idempotency_key();
-        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
+        // Use random UUID - agents don't need counter-based IDs because they
+        // use checkpoint-based recovery, not deterministic replay.
+        let entry_id = Uuid::new_v4();
 
         // Buffer command for batch commit (no immediate RPC)
         self.add_pending_command(AgentCommand::AppendEntry {
@@ -460,8 +468,7 @@ impl AgentContext for AgentContextImpl {
 
     async fn append_tool_call(&self, tool_name: &str, tool_input: &Value) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
-        let idempotency_key = self.generate_entry_idempotency_key();
-        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
+        let entry_id = Uuid::new_v4();
         let content = serde_json::json!({
             "tool_name": tool_name,
             "input": tool_input
@@ -492,8 +499,7 @@ impl AgentContext for AgentContextImpl {
 
     async fn append_tool_result(&self, tool_name: &str, tool_output: &Value) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
-        let idempotency_key = self.generate_entry_idempotency_key();
-        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
+        let entry_id = Uuid::new_v4();
         let content = serde_json::json!({
             "tool_name": tool_name,
             "output": tool_output
@@ -529,8 +535,7 @@ impl AgentContext for AgentContextImpl {
         tool_output: &Value,
     ) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
-        let idempotency_key = self.generate_entry_idempotency_key();
-        let entry_id = Self::entry_id_from_idempotency_key(&idempotency_key);
+        let entry_id = Uuid::new_v4();
         let content = serde_json::json!({
             "toolCallId": tool_call_id,
             "tool_name": tool_name,
@@ -625,8 +630,13 @@ impl AgentContext for AgentContextImpl {
     ) -> AgentTaskFutureRaw {
         use crate::agent::storage::TaskOptions;
 
-        // Generate deterministic task ID (stable across suspension/resume)
-        let task_id = self.next_task_id();
+        // Generate content-based idempotency key and task ID.
+        // Key = hash(agent_id + kind + canonical_json(input))
+        // This ensures:
+        // - Resume: same task + same input → same key → server returns existing task
+        // - Branching: different tasks → different keys → no collision
+        let idempotency_key = self.generate_task_idempotency_key(task_kind, &input);
+        let task_id = self.task_id_from_idempotency_key(&idempotency_key);
 
         // Buffer command for batch commit at suspension point (no immediate RPC)
         self.add_pending_command(AgentCommand::ScheduleTask {
@@ -638,6 +648,7 @@ impl AgentContext for AgentContextImpl {
                 max_retries: options.max_retries.map(|r| r as i32),
                 timeout_ms: options.timeout.map(|t| t.as_millis() as i64),
             },
+            idempotency_key,
         });
 
         // Return future immediately (no RPC made yet)
@@ -1080,219 +1091,66 @@ impl Drop for AgentContextImpl {
 mod tests {
     use super::*;
 
-    /// Test that idempotency key format is stable and doesn't include checkpoint_seq.
-    ///
-    /// This test verifies the fix for a critical bug where the old code generated keys
-    /// like `{agent_id}:{checkpoint_seq}:{counter}`. When an agent resumed after suspension,
-    /// the checkpoint_seq changed, causing a DIFFERENT idempotency key, which created
-    /// a NEW task instead of returning the existing completed task.
-    ///
-    /// The correct format is `{agent_id}:task:{counter}` which is stable across suspensions.
-    #[test]
-    fn test_idempotency_key_format_is_stable() {
-        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
-
-        // Simulate key generation with different checkpoint sequences
-        // The key should NOT change when checkpoint_seq changes
-
-        // Old buggy format would have been: "{agent_id}:{checkpoint_seq}:{counter}"
-        // Correct format is: "{agent_id}:task:{counter}"
-
-        let key_format_0 = format!("{}:task:{}", agent_id, 0);
-        let key_format_1 = format!("{}:task:{}", agent_id, 1);
-
-        // Verify the format doesn't contain checkpoint sequence pattern
-        // (which would look like a number between two colons before the counter)
-        assert!(
-            key_format_0.contains(":task:"),
-            "Key should use ':task:' format"
-        );
-        assert!(
-            !key_format_0.contains(":-1:"),
-            "Key should NOT include checkpoint_seq"
-        );
-        assert!(
-            !key_format_0.contains(":0:0"),
-            "Key should NOT use old format"
-        );
-
-        // Verify keys for different tasks are different
-        assert_ne!(key_format_0, key_format_1);
-
-        // Verify the exact format
-        assert_eq!(key_format_0, "3b095802-a3b3-4645-a728-0f5238c46a5c:task:0");
-        assert_eq!(key_format_1, "3b095802-a3b3-4645-a728-0f5238c46a5c:task:1");
-    }
-
-    /// Test that idempotency keys are stable across simulated resume scenarios.
-    ///
-    /// This simulates what happens when an agent:
-    /// 1. First execution: generates key for task 0
-    /// 2. Suspends, checkpoint_seq becomes N
-    /// 3. Resumes: should generate THE SAME key for task 0
-    #[test]
-    fn test_idempotency_key_stable_across_checkpoint_changes() {
-        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
-
-        // Simulate first execution (checkpoint_seq = -1 initially)
-        let checkpoint_seq_initial = -1;
-        let task_counter_initial = 0;
-
-        // The correct key generation (current code)
-        let key_run1 = format!("{}:task:{}", agent_id, task_counter_initial);
-
-        // Simulate resume after checkpoint (checkpoint_seq = 5, counter resets to 0)
-        let checkpoint_seq_resume = 5;
-        let task_counter_resume = 0; // Counter resets on resume
-
-        // The key should be the same even though checkpoint_seq changed
-        let key_run2 = format!("{}:task:{}", agent_id, task_counter_resume);
-
-        // CRITICAL: Keys must be identical for the same task across suspensions
-        assert_eq!(
-            key_run1, key_run2,
-            "Idempotency key must be stable across suspension/resume. \
-             checkpoint_seq changed from {} to {} but key should be unchanged.",
-            checkpoint_seq_initial, checkpoint_seq_resume
-        );
-
-        // Verify the buggy format WOULD have been different
-        let buggy_key_run1 = format!(
-            "{}:{}:{}",
-            agent_id, checkpoint_seq_initial, task_counter_initial
-        );
-        let buggy_key_run2 = format!(
-            "{}:{}:{}",
-            agent_id, checkpoint_seq_resume, task_counter_resume
-        );
-        assert_ne!(
-            buggy_key_run1, buggy_key_run2,
-            "Old buggy format would have produced different keys"
-        );
-    }
-
     // =========================================================================
-    // Tests for Deterministic Task IDs (next_task_id)
+    // Tests for Random UUID Generation
     // =========================================================================
+    //
+    // Agents use random UUIDs for entry and task IDs because they use
+    // checkpoint-based recovery, NOT deterministic replay.
+    //
+    // Counter-based IDs were removed because they fail when:
+    // - Conditional code paths exist (signal handling, branching)
+    // - Compaction changes entry indices
+    // - Branching creates different entry chains
+    //
+    // Random UUIDs work in all cases because each entry/task gets a unique ID
+    // regardless of execution order.
 
-    /// Test that next_task_id generates deterministic UUIDs.
-    ///
-    /// The task ID is generated using UUIDv5 from (agent_id, segment, sequence).
-    /// Same inputs must always produce the same UUID - this is critical for
-    /// replay correctness.
+    /// Test that random UUIDs are unique
     #[test]
-    fn test_next_task_id_is_deterministic() {
-        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
-        let counter: i32 = 0;
+    fn test_random_uuid_is_unique() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
 
-        // Generate the same input string that next_task_id uses
-        // Format: "{agent_id}:task:{counter}"
-        let input = format!("{}:task:{}", agent_id, counter);
-
-        // Generate UUID twice - must be identical
-        let id1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
-        let id2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
-
-        assert_eq!(id1, id2, "Same inputs must produce same task ID");
-
-        // Verify it's a valid UUID
-        assert!(!id1.is_nil());
-
-        // Verify we can parse it back
-        let id_str = id1.to_string();
-        let parsed = Uuid::parse_str(&id_str).unwrap();
-        assert_eq!(parsed, id1);
+        assert_ne!(id1, id2);
+        assert_ne!(id2, id3);
+        assert_ne!(id1, id3);
     }
 
-    /// Test that different inputs produce different task IDs.
+    /// Test that random UUIDs can be used as idempotency keys
     #[test]
-    fn test_next_task_id_different_inputs_produce_different_ids() {
-        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+    fn test_random_uuid_as_idempotency_key() {
+        let entry_id = Uuid::new_v4();
+        let idempotency_key = entry_id.to_string();
 
-        // Generate IDs for different counters
-        // Format: "{agent_id}:task:{counter}"
-        let input_0 = format!("{}:task:0", agent_id);
-        let input_1 = format!("{}:task:1", agent_id);
-        let input_2 = format!("{}:task:2", agent_id);
-
-        let id_0 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_0.as_bytes());
-        let id_1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_1.as_bytes());
-        let id_2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_2.as_bytes());
-
-        assert_ne!(id_0, id_1, "Different counters must produce different IDs");
-        assert_ne!(id_1, id_2, "Different counters must produce different IDs");
-        assert_ne!(id_0, id_2, "Different counters must produce different IDs");
-
-        // Different agent IDs also produce different IDs
-        let agent_id_2 = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
-        let input_agent1 = format!("{}:task:0", agent_id);
-        let input_agent2 = format!("{}:task:0", agent_id_2);
-
-        let id_agent1 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_agent1.as_bytes());
-        let id_agent2 = Uuid::new_v5(&Uuid::NAMESPACE_OID, input_agent2.as_bytes());
-
-        assert_ne!(
-            id_agent1, id_agent2,
-            "Different agent IDs must produce different task IDs"
-        );
+        // Server parses idempotency_key back to UUID and uses it as entry_id
+        // (see DomainAgentEntry::new_with_idempotency)
+        let parsed_id = Uuid::parse_str(&idempotency_key).unwrap();
+        assert_eq!(entry_id, parsed_id);
     }
 
-    /// Test that task IDs are stable across replay.
-    ///
-    /// This simulates what happens during agent replay:
-    /// 1. Initial execution: agent schedules tasks with counter=0,1,2
-    /// 2. Resume after checkpoint: task_counter never resets, so replay
-    ///    from the beginning produces the SAME task IDs.
-    ///
-    /// The key insight: task_counter is monotonically increasing and never resets.
-    /// When an agent resumes, it replays all schedule_raw calls from the beginning,
-    /// which produces the same task IDs. The server uses idempotency to prevent
-    /// duplicate task creation.
+    /// Test that entry IDs work correctly with parent-child chains
     #[test]
-    fn test_task_id_stable_across_replay() {
-        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
+    fn test_entry_chain_with_random_ids() {
+        // Simulate a conversation chain
+        let entry1_id = Uuid::new_v4();
+        let entry2_id = Uuid::new_v4();
+        let entry3_id = Uuid::new_v4();
 
-        // Simulate first execution (counter starts at 0)
-        let task_ids_run1: Vec<Uuid> = (0..3)
-            .map(|counter| {
-                let input = format!("{}:task:{}", agent_id, counter);
-                Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
-            })
-            .collect();
+        // Each entry has a parent pointer - this is how conversation structure is maintained
+        let _parent1: Option<Uuid> = None; // Root entry
+        let parent2: Option<Uuid> = Some(entry1_id);
+        let parent3: Option<Uuid> = Some(entry2_id);
 
-        // Simulate replay of the same execution (counter still starts at 0 because
-        // agents replay from the beginning and rely on idempotency)
-        let task_ids_run2: Vec<Uuid> = (0..3)
-            .map(|counter| {
-                let input = format!("{}:task:{}", agent_id, counter);
-                Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
-            })
-            .collect();
+        // leaf_entry_id tracks current position
+        let leaf_entry_id = entry3_id;
 
-        // Task IDs must be identical across replay
-        assert_eq!(
-            task_ids_run1, task_ids_run2,
-            "Task IDs must be identical across replay"
-        );
-    }
-
-    /// Test the exact format of the input string used for task ID generation.
-    #[test]
-    fn test_task_id_input_format() {
-        let agent_id = Uuid::parse_str("3b095802-a3b3-4645-a728-0f5238c46a5c").unwrap();
-        let counter: i32 = 42;
-
-        // The format used by next_task_id: "{agent_id}:task:{counter}"
-        let input = format!("{}:task:{}", agent_id, counter);
-
-        // Verify the exact format
-        assert_eq!(input, "3b095802-a3b3-4645-a728-0f5238c46a5c:task:42");
-
-        // Verify the UUID is deterministic for this exact input
-        let expected_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
-
-        // Run it again to verify determinism
-        let actual_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes());
-        assert_eq!(expected_id, actual_id);
+        // All IDs are unique and chain is valid
+        assert_ne!(entry1_id, entry2_id);
+        assert_ne!(entry2_id, entry3_id);
+        assert_eq!(parent2, Some(entry1_id));
+        assert_eq!(parent3, Some(entry2_id));
+        assert_eq!(leaf_entry_id, entry3_id);
     }
 }
