@@ -3110,9 +3110,16 @@ async fn test_concurrent_agent_execution_timing() {
             // Wait for all agents to complete
             for agent_id in &agent_ids {
                 let completed = harness
-                    .wait_for_agent_status(agent_id, &["COMPLETED", "FAILED"], Duration::from_secs(60))
+                    .wait_for_agent_status(
+                        agent_id,
+                        &["COMPLETED", "FAILED"],
+                        Duration::from_secs(60),
+                    )
                     .await;
-                println!("Agent {} completed with status: {}", agent_id, completed.status);
+                println!(
+                    "Agent {} completed with status: {}",
+                    agent_id, completed.status
+                );
                 assert_eq!(
                     completed.status.to_uppercase(),
                     "COMPLETED",

@@ -462,7 +462,10 @@ impl TaskExecutorWorker {
 
                 // Record work received
                 internals
-                    .record_work_received(crate::worker::lifecycle::WorkType::Task, task_execution_id)
+                    .record_work_received(
+                        crate::worker::lifecycle::WorkType::Task,
+                        task_execution_id,
+                    )
                     .await;
 
                 debug!(
@@ -531,7 +534,8 @@ impl TaskExecutorWorker {
                         span_collector.record(finished_span);
 
                         // Flush spans to server
-                        let mut workflow_dispatch = WorkflowDispatch::new(channel.clone(), &config.worker_token);
+                        let mut workflow_dispatch =
+                            WorkflowDispatch::new(channel.clone(), &config.worker_token);
                         span_collector.flush(&mut workflow_dispatch).await;
                     }
 
@@ -540,8 +544,11 @@ impl TaskExecutorWorker {
                     let is_success = matches!(result, TaskExecutionResult::Completed { .. });
 
                     // Report result to server
-                    let mut client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
-                    if let Err(e) = Self::report_result_static(&mut client, task_execution_id, result).await {
+                    let mut client =
+                        TaskExecutionClient::new(channel.clone(), &config.worker_token);
+                    if let Err(e) =
+                        Self::report_result_static(&mut client, task_execution_id, result).await
+                    {
                         error!("Failed to report task result: {}", e);
                     }
 
@@ -603,9 +610,7 @@ impl TaskExecutorWorker {
                     is_retryable = is_retryable,
                     "Task failed"
                 );
-                client
-                    .fail_task(task_execution_id, &error_message)
-                    .await?;
+                client.fail_task(task_execution_id, &error_message).await?;
             }
             TaskExecutionResult::Cancelled => {
                 debug!(

@@ -6,7 +6,7 @@ use crate::error::{FlovynError, Result};
 use crate::worker::lifecycle::{
     HookChain, ReconnectionStrategy, StopReason, WorkType, WorkerInternals,
 };
-use flovyn_worker_core::client::AgentDispatch;
+use flovyn_worker_core::client::{AgentDispatch, WorkerLifecycleClient};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -172,6 +172,43 @@ impl AgentExecutorWorker {
         self.running.load(Ordering::SeqCst)
     }
 
+    /// Run heartbeat loop
+    async fn heartbeat_loop(
+        channel: Channel,
+        worker_token: String,
+        server_worker_id: Option<Uuid>,
+        heartbeat_interval: Duration,
+        running: Arc<AtomicBool>,
+        internals: Arc<WorkerInternals>,
+    ) {
+        if server_worker_id.is_none() {
+            debug!("No server worker ID, skipping heartbeat loop");
+            return;
+        }
+
+        let worker_id = server_worker_id.unwrap();
+        let mut client = WorkerLifecycleClient::new(channel, &worker_token);
+
+        while running.load(Ordering::SeqCst) {
+            tokio::time::sleep(heartbeat_interval).await;
+
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
+
+            match client.send_heartbeat(worker_id).await {
+                Ok(()) => {
+                    debug!("Heartbeat sent successfully");
+                    internals.record_heartbeat_success().await;
+                }
+                Err(e) => {
+                    warn!("Failed to send heartbeat: {}", e);
+                    internals.record_heartbeat_failure(e.to_string()).await;
+                }
+            }
+        }
+    }
+
     /// Start the worker
     pub async fn start(&mut self) -> Result<()> {
         if self.running.swap(true, Ordering::SeqCst) {
@@ -199,6 +236,26 @@ impl AgentExecutorWorker {
 
         // Use the server_worker_id from config (set by unified registration in FlovynClient)
         self.server_worker_id = self.config.server_worker_id;
+
+        // Start heartbeat loop in background
+        let heartbeat_running = self.running.clone();
+        let heartbeat_channel = self.channel.clone();
+        let heartbeat_worker_token = self.config.worker_token.clone();
+        let heartbeat_worker_id = self.server_worker_id;
+        let heartbeat_interval = self.config.heartbeat_interval;
+        let heartbeat_internals = self.internals.clone();
+
+        tokio::spawn(async move {
+            Self::heartbeat_loop(
+                heartbeat_channel,
+                heartbeat_worker_token,
+                heartbeat_worker_id,
+                heartbeat_interval,
+                heartbeat_running,
+                heartbeat_internals,
+            )
+            .await;
+        });
 
         // Signal that worker is ready
         self.ready_notify.notify_one();
@@ -418,11 +475,15 @@ impl AgentExecutorWorker {
                                 "Agent kind not registered"
                             );
                             // Fail the agent since we can't execute it
-                            let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
+                            let mut client =
+                                AgentDispatch::new(channel.clone(), &config.worker_token);
                             if let Err(e) = client
                                 .fail_agent(
                                     agent_execution_id,
-                                    &format!("Agent kind '{}' not registered on this worker", agent_kind),
+                                    &format!(
+                                        "Agent kind '{}' not registered on this worker",
+                                        agent_kind
+                                    ),
                                     None,
                                     Some("AGENT_NOT_FOUND"),
                                 )
@@ -455,7 +516,8 @@ impl AgentExecutorWorker {
                                 error = %e,
                                 "Failed to create agent context"
                             );
-                            let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
+                            let mut client =
+                                AgentDispatch::new(channel.clone(), &config.worker_token);
                             if let Err(e) = client
                                 .fail_agent(
                                     agent_execution_id,
@@ -472,7 +534,8 @@ impl AgentExecutorWorker {
                     };
 
                     // Execute the agent
-                    let ctx_arc: Arc<dyn crate::agent::context::AgentContext + Send + Sync> = Arc::new(ctx);
+                    let ctx_arc: Arc<dyn crate::agent::context::AgentContext + Send + Sync> =
+                        Arc::new(ctx);
                     let result = agent.execute(ctx_arc.clone(), agent_input).await;
 
                     // Record work completion metrics
@@ -494,12 +557,17 @@ impl AgentExecutorWorker {
                                     "Failed to flush pending entries before completion"
                                 );
                             }
-                            if let Err(e) = client.complete_agent(agent_execution_id, &output).await {
+                            if let Err(e) = client.complete_agent(agent_execution_id, &output).await
+                            {
                                 error!("Failed to report agent completion: {}", e);
                             }
 
                             internals
-                                .record_work_completed(WorkType::Agent, agent_execution_id, duration)
+                                .record_work_completed(
+                                    WorkType::Agent,
+                                    agent_execution_id,
+                                    duration,
+                                )
                                 .await;
                         }
                         Err(e) => {
@@ -511,7 +579,11 @@ impl AgentExecutorWorker {
                                     "Agent suspended"
                                 );
                                 internals
-                                    .record_work_completed(WorkType::Agent, agent_execution_id, duration)
+                                    .record_work_completed(
+                                        WorkType::Agent,
+                                        agent_execution_id,
+                                        duration,
+                                    )
                                     .await;
                             } else {
                                 debug!(
