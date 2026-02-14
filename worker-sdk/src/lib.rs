@@ -86,7 +86,8 @@ pub use error::{DeterminismViolationError, FlovynError, Result};
 
 // Re-export config types
 pub use config::{
-    FlovynClientConfig, TaskExecutorConfig as ClientTaskExecutorConfig,
+    AgentExecutorConfig as ClientAgentExecutorConfig, FlovynClientConfig,
+    TaskExecutorConfig as ClientTaskExecutorConfig,
     WorkflowExecutorConfig as ClientWorkflowExecutorConfig,
 };
 
@@ -163,7 +164,8 @@ pub mod prelude {
     pub use crate::client::{LoggingHook, NoOpHook, WorkflowHook};
     pub use crate::common::version::SemanticVersion;
     pub use crate::config::{
-        FlovynClientConfig, TaskExecutorConfig as ClientTaskExecutorConfig,
+        AgentExecutorConfig as ClientAgentExecutorConfig, FlovynClientConfig,
+        TaskExecutorConfig as ClientTaskExecutorConfig,
         WorkflowExecutorConfig as ClientWorkflowExecutorConfig,
     };
     pub use crate::error::{DeterminismViolationError, FlovynError, Result};

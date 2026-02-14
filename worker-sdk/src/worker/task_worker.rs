@@ -11,7 +11,7 @@ use crate::worker::lifecycle::{HookChain, ReconnectionStrategy, StopReason, Work
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, watch, Notify};
+use tokio::sync::{mpsc, watch, Notify, Semaphore};
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -29,6 +29,8 @@ pub struct TaskWorkerConfig {
     pub poll_timeout: Duration,
     /// Interval to wait before polling again when no task is available
     pub no_work_backoff: Duration,
+    /// Maximum concurrent task executions
+    pub max_concurrent: usize,
     /// Worker labels for task routing
     pub worker_labels: std::collections::HashMap<String, String>,
     /// Heartbeat interval
@@ -62,6 +64,7 @@ impl Default for TaskWorkerConfig {
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
             no_work_backoff: Duration::from_millis(100),
+            max_concurrent: 10,
             worker_labels: std::collections::HashMap::new(),
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
@@ -84,6 +87,7 @@ impl std::fmt::Debug for TaskWorkerConfig {
             .field("org_id", &self.org_id)
             .field("queue", &self.queue)
             .field("poll_timeout", &self.poll_timeout)
+            .field("max_concurrent", &self.max_concurrent)
             .field("worker_labels", &self.worker_labels)
             .field("heartbeat_interval", &self.heartbeat_interval)
             .field("worker_name", &self.worker_name)
@@ -102,10 +106,10 @@ impl std::fmt::Debug for TaskWorkerConfig {
 pub struct TaskExecutorWorker {
     config: TaskWorkerConfig,
     registry: Arc<TaskRegistry>,
-    executor: TaskExecutor,
-    client: TaskExecutionClient,
+    executor: Arc<TaskExecutor>,
     channel: Channel,
     running: Arc<AtomicBool>,
+    semaphore: Arc<Semaphore>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Server-assigned worker ID from registration
     server_worker_id: Option<Uuid>,
@@ -115,8 +119,6 @@ pub struct TaskExecutorWorker {
     external_shutdown_rx: Option<watch::Receiver<bool>>,
     /// Span collector for telemetry
     span_collector: SpanCollector,
-    /// WorkflowDispatch client for reporting spans
-    workflow_dispatch: WorkflowDispatch,
     /// Shared internal state for lifecycle tracking
     internals: Arc<WorkerInternals>,
 }
@@ -125,10 +127,9 @@ impl TaskExecutorWorker {
     /// Create a new task worker with the given configuration
     pub fn new(config: TaskWorkerConfig, registry: Arc<TaskRegistry>, channel: Channel) -> Self {
         let executor_config = TaskExecutorConfig::default();
-        let executor = TaskExecutor::new(registry.clone(), executor_config);
-        let client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
+        let executor = Arc::new(TaskExecutor::new(registry.clone(), executor_config));
         let span_collector = SpanCollector::new(config.enable_telemetry);
-        let workflow_dispatch = WorkflowDispatch::new(channel.clone(), &config.worker_token);
+        let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
 
         // Create worker internals with lifecycle hooks from config
         let internals = Arc::new(WorkerInternals::new(
@@ -141,15 +142,14 @@ impl TaskExecutorWorker {
             config,
             registry,
             executor,
-            client,
             channel,
             running: Arc::new(AtomicBool::new(false)),
+            semaphore,
             shutdown_tx: None,
             server_worker_id: None,
             ready_notify: Arc::new(Notify::new()),
             external_shutdown_rx: None,
             span_collector,
-            workflow_dispatch,
             internals,
         }
     }
@@ -282,12 +282,21 @@ impl TaskExecutorWorker {
         // Emit Ready event
         self.internals.record_ready(self.server_worker_id).await;
 
+        // Clone components needed for the polling loop
+        let running = self.running.clone();
+        let semaphore = self.semaphore.clone();
+        let executor = self.executor.clone();
+        let registry = self.registry.clone();
+        let config = self.config.clone();
+        let channel = self.channel.clone();
+        let span_collector = self.span_collector.clone();
+
         // Polling loop with reconnection and pause support
         let mut reconnect_attempt: u32 = 0;
         let reconnection_strategy = self.config.reconnection_strategy.clone();
         let mut pause_rx = self.internals.pause_receiver();
 
-        while self.running.load(Ordering::SeqCst) {
+        while running.load(Ordering::SeqCst) {
             // Check if paused - if so, wait for resume
             if *pause_rx.borrow() {
                 debug!("Task worker is paused, waiting for resume signal");
@@ -332,7 +341,16 @@ impl TaskExecutorWorker {
                     // Pause state changed - loop back to check
                     continue;
                 }
-                result = self.poll_and_execute() => {
+                result = Self::poll_and_execute(
+                    semaphore.clone(),
+                    executor.clone(),
+                    registry.clone(),
+                    &config,
+                    channel.clone(),
+                    running.clone(),
+                    span_collector.clone(),
+                    self.internals.clone(),
+                ) => {
                     if let Err(e) = result {
                         // Check if it's a connection error
                         let err_str = e.to_string();
@@ -385,7 +403,7 @@ impl TaskExecutorWorker {
             }
         }
 
-        self.running.store(false, Ordering::SeqCst);
+        running.store(false, Ordering::SeqCst);
 
         // Emit Stopped event
         self.internals.record_stopped(StopReason::Graceful).await;
@@ -406,129 +424,162 @@ impl TaskExecutorWorker {
     }
 
     /// Poll for a task and execute it
-    async fn poll_and_execute(&mut self) -> Result<()> {
+    #[allow(clippy::too_many_arguments)]
+    async fn poll_and_execute(
+        semaphore: Arc<Semaphore>,
+        executor: Arc<TaskExecutor>,
+        _registry: Arc<TaskRegistry>,
+        config: &TaskWorkerConfig,
+        channel: Channel,
+        running: Arc<AtomicBool>,
+        span_collector: SpanCollector,
+        internals: Arc<WorkerInternals>,
+    ) -> Result<()> {
+        // Acquire semaphore permit
+        let permit = semaphore
+            .acquire_owned()
+            .await
+            .map_err(|e| FlovynError::Other(format!("Failed to acquire semaphore: {}", e)))?;
+
+        // Create client for polling
+        let mut client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
+
         // Poll for task
-        let task_info = self
-            .client
+        let task_info = client
             .poll_task(
-                &self.config.worker_id,
-                &self.config.org_id.to_string(),
-                &self.config.queue,
-                self.config.poll_timeout,
+                &config.worker_id,
+                &config.org_id.to_string(),
+                &config.queue,
+                config.poll_timeout,
             )
             .await?;
 
-        let task_info = match task_info {
-            Some(info) => info,
-            None => {
-                // No task available - wait before next poll to avoid tight loop
-                tokio::time::sleep(self.config.no_work_backoff).await;
-                return Ok(());
+        match task_info {
+            Some(info) => {
+                let task_execution_id = info.id;
+                let task_type = info.task_type.clone();
+                let workflow_id = info.workflow_execution_id;
+
+                // Record work received
+                internals
+                    .record_work_received(crate::worker::lifecycle::WorkType::Task, task_execution_id)
+                    .await;
+
+                debug!(
+                    task_execution_id = %task_execution_id,
+                    task_type = %task_type,
+                    attempt = info.execution_count,
+                    "Executing task"
+                );
+
+                // Clone what we need for spawned task
+                let config = config.clone();
+                let internals = internals.clone();
+
+                // Spawn execution in background
+                tokio::spawn(async move {
+                    let _permit = permit; // Keep permit alive during execution
+                    let _running = running; // Keep reference
+
+                    let start_time = std::time::Instant::now();
+
+                    // Create task.execute span for telemetry
+                    let span = if span_collector.is_enabled() {
+                        let wf_id = workflow_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "standalone".to_string());
+                        Some(
+                            task_execute_span(&wf_id, &task_execution_id.to_string(), &task_type)
+                                .with_attribute("attempt", &info.execution_count.to_string()),
+                        )
+                    } else {
+                        None
+                    };
+
+                    // Create callbacks for progress/log reporting via gRPC
+                    let callbacks = Self::create_task_callbacks_static(
+                        channel.clone(),
+                        &config.worker_token,
+                        task_execution_id,
+                    );
+
+                    // Execute the task using TaskExecutor with callbacks
+                    let result = executor
+                        .execute_with_callbacks(
+                            task_execution_id,
+                            &task_type,
+                            info.input,
+                            info.execution_count,
+                            callbacks,
+                        )
+                        .await;
+
+                    // Finish and record the span
+                    if let Some(span) = span {
+                        let finished_span = match &result {
+                            TaskExecutionResult::Completed { .. } => span.finish(),
+                            TaskExecutionResult::Failed { error_message, .. } => {
+                                span.finish_with_error("TaskFailed", error_message)
+                            }
+                            TaskExecutionResult::Cancelled => {
+                                span.finish_with_error("TaskCancelled", "Task was cancelled")
+                            }
+                            TaskExecutionResult::TimedOut => {
+                                span.finish_with_error("TaskTimeout", "Task execution timed out")
+                            }
+                        };
+                        span_collector.record(finished_span);
+
+                        // Flush spans to server
+                        let mut workflow_dispatch = WorkflowDispatch::new(channel.clone(), &config.worker_token);
+                        span_collector.flush(&mut workflow_dispatch).await;
+                    }
+
+                    // Record work completed/failed
+                    let duration = start_time.elapsed();
+                    let is_success = matches!(result, TaskExecutionResult::Completed { .. });
+
+                    // Report result to server
+                    let mut client = TaskExecutionClient::new(channel.clone(), &config.worker_token);
+                    if let Err(e) = Self::report_result_static(&mut client, task_execution_id, result).await {
+                        error!("Failed to report task result: {}", e);
+                    }
+
+                    // Record work completion metrics
+                    if is_success {
+                        internals
+                            .record_work_completed(
+                                crate::worker::lifecycle::WorkType::Task,
+                                task_execution_id,
+                                duration,
+                            )
+                            .await;
+                    } else {
+                        internals
+                            .record_work_failed(
+                                crate::worker::lifecycle::WorkType::Task,
+                                task_execution_id,
+                                "Task execution failed".to_string(),
+                                duration,
+                            )
+                            .await;
+                    }
+                });
+
+                Ok(())
             }
-        };
-
-        let task_execution_id = task_info.id;
-        let task_type = &task_info.task_type;
-        let workflow_id = task_info.workflow_execution_id;
-
-        // Record work received
-        self.internals
-            .record_work_received(crate::worker::lifecycle::WorkType::Task, task_execution_id)
-            .await;
-
-        let start_time = std::time::Instant::now();
-
-        debug!(
-            task_execution_id = %task_execution_id,
-            task_type = %task_type,
-            attempt = task_info.execution_count,
-            "Executing task"
-        );
-
-        // Create task.execute span for telemetry
-        let span = if self.span_collector.is_enabled() {
-            let wf_id = workflow_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "standalone".to_string());
-            Some(
-                task_execute_span(&wf_id, &task_execution_id.to_string(), task_type)
-                    .with_attribute("attempt", &task_info.execution_count.to_string()),
-            )
-        } else {
-            None
-        };
-
-        // Create callbacks for progress/log reporting via gRPC
-        let callbacks = self.create_task_callbacks(task_execution_id, workflow_id);
-
-        // Reset stream sequence for this task execution
-        self.client.reset_stream_sequence();
-
-        // Execute the task using TaskExecutor with callbacks
-        let result = self
-            .executor
-            .execute_with_callbacks(
-                task_execution_id,
-                task_type,
-                task_info.input,
-                task_info.execution_count,
-                callbacks,
-            )
-            .await;
-
-        // Finish and record the span
-        if let Some(span) = span {
-            let finished_span = match &result {
-                TaskExecutionResult::Completed { .. } => span.finish(),
-                TaskExecutionResult::Failed { error_message, .. } => {
-                    span.finish_with_error("TaskFailed", error_message)
-                }
-                TaskExecutionResult::Cancelled => {
-                    span.finish_with_error("TaskCancelled", "Task was cancelled")
-                }
-                TaskExecutionResult::TimedOut => {
-                    span.finish_with_error("TaskTimeout", "Task execution timed out")
-                }
-            };
-            self.span_collector.record(finished_span);
-
-            // Flush spans to server
-            self.span_collector.flush(&mut self.workflow_dispatch).await;
+            None => {
+                // No task available - release permit and wait before next poll
+                drop(permit);
+                tokio::time::sleep(config.no_work_backoff).await;
+                Ok(())
+            }
         }
-
-        // Record work completed/failed
-        let duration = start_time.elapsed();
-        let is_success = matches!(result, TaskExecutionResult::Completed { .. });
-
-        // Report result to server
-        self.report_result(task_execution_id, result).await?;
-
-        // Record work completion metrics
-        if is_success {
-            self.internals
-                .record_work_completed(
-                    crate::worker::lifecycle::WorkType::Task,
-                    task_execution_id,
-                    duration,
-                )
-                .await;
-        } else {
-            self.internals
-                .record_work_failed(
-                    crate::worker::lifecycle::WorkType::Task,
-                    task_execution_id,
-                    "Task execution failed".to_string(),
-                    duration,
-                )
-                .await;
-        }
-
-        Ok(())
     }
 
-    /// Report task execution result to the server
-    async fn report_result(
-        &mut self,
+    /// Report task execution result to the server (static version for spawned tasks)
+    async fn report_result_static(
+        client: &mut TaskExecutionClient,
         task_execution_id: Uuid,
         result: TaskExecutionResult,
     ) -> Result<()> {
@@ -538,7 +589,7 @@ impl TaskExecutorWorker {
                     task_execution_id = %task_execution_id,
                     "Task completed successfully"
                 );
-                self.client.complete_task(task_execution_id, output).await?;
+                client.complete_task(task_execution_id, output).await?;
             }
             TaskExecutionResult::Failed {
                 error_message,
@@ -552,7 +603,7 @@ impl TaskExecutorWorker {
                     is_retryable = is_retryable,
                     "Task failed"
                 );
-                self.client
+                client
                     .fail_task(task_execution_id, &error_message)
                     .await?;
             }
@@ -561,7 +612,7 @@ impl TaskExecutorWorker {
                     task_execution_id = %task_execution_id,
                     "Task was cancelled"
                 );
-                self.client
+                client
                     .fail_task(task_execution_id, "Task cancelled")
                     .await?;
             }
@@ -570,7 +621,7 @@ impl TaskExecutorWorker {
                     task_execution_id = %task_execution_id,
                     "Task timed out"
                 );
-                self.client
+                client
                     .fail_task(task_execution_id, "Task execution timed out")
                     .await?;
             }
@@ -588,17 +639,16 @@ impl TaskExecutorWorker {
     ///
     /// Uses a single background task with a channel to batch and forward events,
     /// rather than spawning a task per callback call.
-    fn create_task_callbacks(
-        &self,
+    fn create_task_callbacks_static(
+        channel: Channel,
+        worker_token: &str,
         task_execution_id: Uuid,
-        _workflow_execution_id: Option<Uuid>,
     ) -> TaskExecutorCallbacks {
         // Create a channel for sending events to a single background forwarder task
         let (tx, mut rx) = mpsc::channel::<TaskEvent>(100);
 
-        // Clone channel and token for the forwarder task
-        let channel = self.channel.clone();
-        let worker_token = self.config.worker_token.clone();
+        // Clone token for the forwarder task
+        let worker_token = worker_token.to_string();
 
         // Spawn a single background task to forward events to the server
         tokio::spawn(async move {
@@ -677,8 +727,8 @@ impl TaskExecutorWorker {
         TaskExecutorCallbacks {
             on_progress: Some(on_progress),
             on_log: Some(on_log),
-            on_heartbeat: None, // Heartbeats are handled by the separate heartbeat loop
-            on_stream: None,    // Stream events can be added if needed
+            on_heartbeat: None,
+            on_stream: None,
         }
     }
 }
@@ -724,6 +774,7 @@ mod tests {
             queue: "gpu-tasks".to_string(),
             poll_timeout: Duration::from_secs(30),
             no_work_backoff: Duration::from_millis(100),
+            max_concurrent: 20,
             worker_labels: labels,
             heartbeat_interval: Duration::from_secs(15),
             worker_name: Some("GPU Task Worker".to_string()),
@@ -739,6 +790,7 @@ mod tests {
 
         assert_eq!(config.worker_id, "task-worker-1");
         assert_eq!(config.queue, "gpu-tasks");
+        assert_eq!(config.max_concurrent, 20);
         assert_eq!(config.worker_labels.get("gpu"), Some(&"true".to_string()));
         assert_eq!(config.worker_name, Some("GPU Task Worker".to_string()));
         assert_eq!(config.worker_version, "2.0.0");

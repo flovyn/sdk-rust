@@ -168,6 +168,71 @@ impl TaskExecutorConfig {
     }
 }
 
+/// Configuration for agent execution
+#[derive(Debug, Clone)]
+pub struct AgentExecutorConfig {
+    /// Maximum number of agents executing concurrently
+    pub max_concurrent: usize,
+    /// Interval between heartbeats
+    pub heartbeat_interval: Duration,
+    /// Timeout for polling agents from server
+    pub poll_timeout: Duration,
+}
+
+impl Default for AgentExecutorConfig {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl AgentExecutorConfig {
+    /// Default configuration suitable for most use cases
+    /// Lower concurrency than tasks since agents often involve LLM calls
+    pub const DEFAULT: Self = Self {
+        max_concurrent: 5,
+        heartbeat_interval: Duration::from_secs(30),
+        poll_timeout: Duration::from_secs(60),
+    };
+
+    /// High-throughput configuration for heavy agent workloads
+    pub const HIGH_THROUGHPUT: Self = Self {
+        max_concurrent: 20,
+        heartbeat_interval: Duration::from_secs(15),
+        poll_timeout: Duration::from_secs(30),
+    };
+
+    /// Low-resource configuration for constrained environments
+    pub const LOW_RESOURCE: Self = Self {
+        max_concurrent: 2,
+        heartbeat_interval: Duration::from_secs(45),
+        poll_timeout: Duration::from_secs(60),
+    };
+
+    /// Create a new configuration with validation
+    pub fn new(
+        max_concurrent: usize,
+        heartbeat_interval: Duration,
+        poll_timeout: Duration,
+    ) -> Result<Self, ConfigError> {
+        if max_concurrent == 0 {
+            return Err(ConfigError::InvalidValue(
+                "max_concurrent must be positive".to_string(),
+            ));
+        }
+        if poll_timeout.is_zero() {
+            return Err(ConfigError::InvalidValue(
+                "poll_timeout must be positive".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            max_concurrent,
+            heartbeat_interval,
+            poll_timeout,
+        })
+    }
+}
+
 /// Complete configuration for FlovynClient
 #[derive(Debug, Clone)]
 pub struct FlovynClientConfig {
@@ -175,6 +240,8 @@ pub struct FlovynClientConfig {
     pub workflow_config: WorkflowExecutorConfig,
     /// Configuration for task execution
     pub task_config: TaskExecutorConfig,
+    /// Configuration for agent execution
+    pub agent_config: AgentExecutorConfig,
     /// Labels for worker identification and task routing
     pub worker_labels: std::collections::HashMap<String, String>,
 }
@@ -184,6 +251,7 @@ impl Default for FlovynClientConfig {
         Self {
             workflow_config: WorkflowExecutorConfig::DEFAULT,
             task_config: TaskExecutorConfig::DEFAULT,
+            agent_config: AgentExecutorConfig::DEFAULT,
             worker_labels: std::collections::HashMap::new(),
         }
     }
@@ -195,6 +263,7 @@ impl FlovynClientConfig {
         Self {
             workflow_config: WorkflowExecutorConfig::HIGH_THROUGHPUT,
             task_config: TaskExecutorConfig::HIGH_THROUGHPUT,
+            agent_config: AgentExecutorConfig::HIGH_THROUGHPUT,
             worker_labels: std::collections::HashMap::new(),
         }
     }
@@ -204,6 +273,7 @@ impl FlovynClientConfig {
         Self {
             workflow_config: WorkflowExecutorConfig::LOW_RESOURCE,
             task_config: TaskExecutorConfig::LOW_RESOURCE,
+            agent_config: AgentExecutorConfig::LOW_RESOURCE,
             worker_labels: std::collections::HashMap::new(),
         }
     }
@@ -212,11 +282,13 @@ impl FlovynClientConfig {
     pub fn new(
         workflow_config: WorkflowExecutorConfig,
         task_config: TaskExecutorConfig,
+        agent_config: AgentExecutorConfig,
         worker_labels: std::collections::HashMap<String, String>,
     ) -> Self {
         Self {
             workflow_config,
             task_config,
+            agent_config,
             worker_labels,
         }
     }
@@ -230,6 +302,12 @@ impl FlovynClientConfig {
     /// Set task configuration
     pub fn with_task_config(mut self, config: TaskExecutorConfig) -> Self {
         self.task_config = config;
+        self
+    }
+
+    /// Set agent configuration
+    pub fn with_agent_config(mut self, config: AgentExecutorConfig) -> Self {
+        self.agent_config = config;
         self
     }
 

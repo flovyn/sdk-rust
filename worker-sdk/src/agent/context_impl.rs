@@ -201,6 +201,17 @@ impl AgentContextImpl {
         use sha2::{Digest, Sha256};
 
         let canonical = canonical_json_string(input);
+
+        // Log first 500 chars of canonical JSON for debugging
+        let preview: String = canonical.chars().take(500).collect();
+        tracing::debug!(
+            agent_execution_id = %self.agent_execution_id,
+            kind = kind,
+            canonical_preview = %preview,
+            canonical_len = canonical.len(),
+            "generate_task_idempotency_key: input"
+        );
+
         let mut hasher = Sha256::new();
         hasher.update(self.agent_execution_id.as_bytes());
         hasher.update(b":");
@@ -209,7 +220,16 @@ impl AgentContextImpl {
         hasher.update(canonical.as_bytes());
         // Use first 16 bytes (128 bits) - sufficient for uniqueness
         let hash = hasher.finalize();
-        format!("task:{}", hex::encode(&hash[..16]))
+        let key = format!("task:{}", hex::encode(&hash[..16]));
+
+        tracing::info!(
+            agent_execution_id = %self.agent_execution_id,
+            kind = kind,
+            idempotency_key = %key,
+            "generate_task_idempotency_key: result"
+        );
+
+        key
     }
 
     /// Generate task ID from idempotency key (deterministic).
@@ -242,7 +262,20 @@ impl AgentContextImpl {
             std::mem::take(&mut *pending)
         };
 
+        let cmd_count = commands.len();
+        let has_checkpoint = checkpoint.is_some();
+        let checkpoint_leaf = checkpoint.as_ref().and_then(|c| c.leaf_entry_id);
+
+        tracing::debug!(
+            agent_execution_id = %self.agent_execution_id,
+            command_count = cmd_count,
+            has_checkpoint = has_checkpoint,
+            checkpoint_leaf_entry_id = ?checkpoint_leaf,
+            "commit_pending_batch called"
+        );
+
         if commands.is_empty() && checkpoint.is_none() {
+            tracing::debug!("commit_pending_batch: nothing to commit, returning early");
             return Ok(());
         }
 
@@ -273,6 +306,12 @@ impl AgentContextImpl {
     async fn execute_batch_legacy(&self, batch: &CommandBatch) -> Result<()> {
         let mut client = self.client.lock().await;
 
+        tracing::debug!(
+            agent_execution_id = %self.agent_execution_id,
+            command_count = batch.commands.len(),
+            "execute_batch_legacy: processing commands"
+        );
+
         // Execute each command individually
         for command in &batch.commands {
             match command {
@@ -282,6 +321,13 @@ impl AgentContextImpl {
                     role,
                     content,
                 } => {
+                    tracing::info!(
+                        agent_execution_id = %self.agent_execution_id,
+                        entry_id = %entry_id,
+                        parent_id = ?parent_id,
+                        role = %role,
+                        "execute_batch_legacy: appending entry"
+                    );
                     // Pass entry_id as idempotency_key - server uses it as the entry ID
                     // (see DomainAgentEntry::new_with_idempotency which parses UUID from key)
                     client
@@ -296,6 +342,11 @@ impl AgentContextImpl {
                             Some(&entry_id.to_string()), // idempotency_key = entry_id
                         )
                         .await?;
+                    tracing::info!(
+                        agent_execution_id = %self.agent_execution_id,
+                        entry_id = %entry_id,
+                        "execute_batch_legacy: entry appended successfully"
+                    );
                 }
                 AgentCommand::ScheduleTask {
                     task_id: _,
@@ -584,6 +635,13 @@ impl AgentContext for AgentContextImpl {
     async fn checkpoint(&self, state: &Value) -> Result<()> {
         let leaf_entry_id = *self.leaf_entry_id.read();
 
+        tracing::info!(
+            agent_execution_id = %self.agent_execution_id,
+            leaf_entry_id = ?leaf_entry_id,
+            state_is_null = state.is_null(),
+            "checkpoint() called with explicit state"
+        );
+
         // Commit pending commands with checkpoint data
         let checkpoint_data = CheckpointData {
             state: state.clone(),
@@ -598,6 +656,12 @@ impl AgentContext for AgentContextImpl {
         let new_sequence = self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         self.checkpoint_sequence
             .store(new_sequence, Ordering::SeqCst);
+
+        tracing::info!(
+            agent_execution_id = %self.agent_execution_id,
+            new_sequence = new_sequence,
+            "checkpoint() completed"
+        );
 
         Ok(())
     }
@@ -660,10 +724,16 @@ impl AgentContext for AgentContextImpl {
             return Ok(vec![]);
         }
 
+        let task_ids: Vec<Uuid> = futures.iter().map(|f| f.task_id).collect();
+        tracing::info!(
+            agent_execution_id = %self.agent_execution_id,
+            task_count = futures.len(),
+            task_ids = ?task_ids,
+            "join_all: starting"
+        );
+
         // Commit pending batch first (submits all scheduled tasks to server)
         self.commit_pending_batch(None).await?;
-
-        let task_ids: Vec<Uuid> = futures.iter().map(|f| f.task_id).collect();
 
         // Batch fetch all task statuses
         let statuses = self.get_task_results_batch(&task_ids).await?;
@@ -672,6 +742,12 @@ impl AgentContext for AgentContextImpl {
         let mut all_complete = true;
 
         for (i, (future, status)) in futures.iter().zip(statuses.iter()).enumerate() {
+            tracing::debug!(
+                agent_execution_id = %self.agent_execution_id,
+                task_id = %future.task_id,
+                task_status = %status.status,
+                "join_all: task status"
+            );
             match status.status.as_str() {
                 "COMPLETED" => {
                     results[i] = Some(status.output.clone().unwrap_or(Value::Null));
@@ -700,8 +776,17 @@ impl AgentContext for AgentContextImpl {
         }
 
         if all_complete {
+            tracing::info!(
+                agent_execution_id = %self.agent_execution_id,
+                "join_all: all tasks complete, returning results"
+            );
             return Ok(results.into_iter().map(|r| r.unwrap()).collect());
         }
+
+        tracing::info!(
+            agent_execution_id = %self.agent_execution_id,
+            "join_all: not all tasks complete, suspending"
+        );
 
         // Not all done - suspend and wait for all tasks
         self.suspend_for_tasks(&task_ids, flovyn_worker_core::client::WaitMode::All)

@@ -10,7 +10,7 @@ use flovyn_worker_core::client::AgentDispatch;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, watch, Notify};
+use tokio::sync::{mpsc, watch, Notify, Semaphore};
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -28,6 +28,8 @@ pub struct AgentWorkerConfig {
     pub poll_timeout: Duration,
     /// Interval to wait before polling again when no agent is available
     pub no_work_backoff: Duration,
+    /// Maximum concurrent agent executions
+    pub max_concurrent: usize,
     /// Heartbeat interval
     pub heartbeat_interval: Duration,
     /// Human-readable worker name for registration
@@ -57,6 +59,7 @@ impl Default for AgentWorkerConfig {
             queue: "default".to_string(),
             poll_timeout: Duration::from_secs(60),
             no_work_backoff: Duration::from_millis(100),
+            max_concurrent: 5,
             heartbeat_interval: Duration::from_secs(30),
             worker_name: None,
             worker_version: "1.0.0".to_string(),
@@ -77,6 +80,7 @@ impl std::fmt::Debug for AgentWorkerConfig {
             .field("org_id", &self.org_id)
             .field("queue", &self.queue)
             .field("poll_timeout", &self.poll_timeout)
+            .field("max_concurrent", &self.max_concurrent)
             .field("heartbeat_interval", &self.heartbeat_interval)
             .field("worker_name", &self.worker_name)
             .field("worker_version", &self.worker_version)
@@ -93,9 +97,9 @@ impl std::fmt::Debug for AgentWorkerConfig {
 pub struct AgentExecutorWorker {
     config: AgentWorkerConfig,
     registry: Arc<AgentRegistry>,
-    client: AgentDispatch,
     channel: Channel,
     running: Arc<AtomicBool>,
+    semaphore: Arc<Semaphore>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Server-assigned worker ID from registration
     server_worker_id: Option<Uuid>,
@@ -110,7 +114,7 @@ pub struct AgentExecutorWorker {
 impl AgentExecutorWorker {
     /// Create a new agent worker with the given configuration
     pub fn new(config: AgentWorkerConfig, registry: Arc<AgentRegistry>, channel: Channel) -> Self {
-        let client = AgentDispatch::new(channel.clone(), &config.worker_token);
+        let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
 
         // Create worker internals with lifecycle hooks from config
         let internals = Arc::new(WorkerInternals::new(
@@ -122,9 +126,9 @@ impl AgentExecutorWorker {
         Self {
             config,
             registry,
-            client,
             channel,
             running: Arc::new(AtomicBool::new(false)),
+            semaphore,
             shutdown_tx: None,
             server_worker_id: None,
             ready_notify: Arc::new(Notify::new()),
@@ -202,12 +206,19 @@ impl AgentExecutorWorker {
         // Emit Ready event
         self.internals.record_ready(self.server_worker_id).await;
 
+        // Clone components needed for the polling loop
+        let running = self.running.clone();
+        let semaphore = self.semaphore.clone();
+        let registry = self.registry.clone();
+        let config = self.config.clone();
+        let channel = self.channel.clone();
+
         // Polling loop with reconnection and pause support
         let mut reconnect_attempt: u32 = 0;
         let reconnection_strategy = self.config.reconnection_strategy.clone();
         let mut pause_rx = self.internals.pause_receiver();
 
-        while self.running.load(Ordering::SeqCst) {
+        while running.load(Ordering::SeqCst) {
             // Check if paused - if so, wait for resume
             if *pause_rx.borrow() {
                 debug!("Agent worker is paused, waiting for resume signal");
@@ -252,7 +263,14 @@ impl AgentExecutorWorker {
                     // Pause state changed - loop back to check
                     continue;
                 }
-                result = self.poll_and_execute() => {
+                result = Self::poll_and_execute(
+                    semaphore.clone(),
+                    registry.clone(),
+                    &config,
+                    channel.clone(),
+                    running.clone(),
+                    self.internals.clone(),
+                ) => {
                     if let Err(e) = result {
                         // Check if it's a connection error
                         let err_str = e.to_string();
@@ -305,7 +323,7 @@ impl AgentExecutorWorker {
             }
         }
 
-        self.running.store(false, Ordering::SeqCst);
+        running.store(false, Ordering::SeqCst);
 
         // Emit Stopped event
         self.internals.record_stopped(StopReason::Graceful).await;
@@ -325,192 +343,224 @@ impl AgentExecutorWorker {
         }
     }
 
-    /// Poll for an agent and execute it
-    async fn poll_and_execute(&mut self) -> Result<()> {
+    /// Poll for an agent and execute it (static version for concurrent execution)
+    #[allow(clippy::too_many_arguments)]
+    async fn poll_and_execute(
+        semaphore: Arc<Semaphore>,
+        registry: Arc<AgentRegistry>,
+        config: &AgentWorkerConfig,
+        channel: Channel,
+        _running: Arc<AtomicBool>,
+        internals: Arc<WorkerInternals>,
+    ) -> Result<()> {
+        // Acquire semaphore permit
+        let permit = semaphore
+            .acquire_owned()
+            .await
+            .map_err(|e| FlovynError::Other(format!("Failed to acquire semaphore: {}", e)))?;
+
         // Get registered agent capabilities
-        let agent_capabilities = self.registry.get_registered_kinds();
+        let agent_capabilities = registry.get_registered_kinds();
 
         // Use server_worker_id (UUID) for polling, not the client-side worker_id
-        let worker_id = self
+        let worker_id = config
             .server_worker_id
             .map(|id| id.to_string())
-            .unwrap_or_else(|| self.config.worker_id.clone());
+            .unwrap_or_else(|| config.worker_id.clone());
+
+        // Create client for polling
+        let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
 
         // Poll for agent
-        let agent_info = self
-            .client
+        let agent_info = client
             .poll_agent(
                 &worker_id,
-                &self.config.org_id.to_string(),
-                &self.config.queue,
-                self.config.poll_timeout,
+                &config.org_id.to_string(),
+                &config.queue,
+                config.poll_timeout,
                 agent_capabilities,
             )
             .await
             .map_err(|e| FlovynError::Other(format!("gRPC error: {}", e)))?;
 
-        let agent_info = match agent_info {
-            Some(info) => info,
-            None => {
-                // No agent available - wait before next poll to avoid tight loop
-                tokio::time::sleep(self.config.no_work_backoff).await;
-                return Ok(());
-            }
-        };
+        match agent_info {
+            Some(info) => {
+                let agent_execution_id = info.id;
+                let agent_kind = info.kind.clone();
 
-        let agent_execution_id = agent_info.id;
-        let agent_kind = &agent_info.kind;
+                // Record work received
+                internals
+                    .record_work_received(WorkType::Agent, agent_execution_id)
+                    .await;
 
-        // Record work received
-        self.internals
-            .record_work_received(WorkType::Agent, agent_execution_id)
-            .await;
-
-        let start_time = std::time::Instant::now();
-
-        debug!(
-            agent_execution_id = %agent_execution_id,
-            agent_kind = %agent_kind,
-            "Executing agent"
-        );
-
-        // Look up agent in registry
-        let agent = match self.registry.get(agent_kind) {
-            Some(a) => a,
-            None => {
-                error!(
-                    agent_kind = %agent_kind,
-                    "Agent kind not registered"
-                );
-                // Fail the agent since we can't execute it
-                self.client
-                    .fail_agent(
-                        agent_execution_id,
-                        &format!("Agent kind '{}' not registered on this worker", agent_kind),
-                        None,
-                        Some("AGENT_NOT_FOUND"),
-                    )
-                    .await
-                    .map_err(|e| FlovynError::Other(format!("gRPC error: {}", e)))?;
-                return Ok(());
-            }
-        };
-
-        // Clone input before moving it to context
-        let agent_input = agent_info.input.clone();
-
-        // Create context from loaded data
-        let ctx = match self
-            .create_agent_context(
-                agent_execution_id,
-                agent_info.org_id,
-                agent_info.input,
-                agent_info.current_checkpoint_seq,
-            )
-            .await
-        {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                error!(
-                    agent_execution_id = %agent_execution_id,
-                    error = %e,
-                    "Failed to create agent context"
-                );
-                self.client
-                    .fail_agent(
-                        agent_execution_id,
-                        &format!("Failed to create agent context: {}", e),
-                        None,
-                        Some("CONTEXT_CREATION_FAILED"),
-                    )
-                    .await
-                    .map_err(|e| FlovynError::Other(format!("gRPC error: {}", e)))?;
-                return Ok(());
-            }
-        };
-
-        // Execute the agent
-        let ctx_arc: Arc<dyn crate::agent::context::AgentContext + Send + Sync> = Arc::new(ctx);
-        let result = agent.execute(ctx_arc.clone(), agent_input).await;
-
-        // Record work completion metrics
-        let duration = start_time.elapsed();
-
-        // Report result to server
-        match result {
-            Ok(output) => {
                 debug!(
                     agent_execution_id = %agent_execution_id,
-                    "Agent completed successfully"
+                    agent_kind = %agent_kind,
+                    "Executing agent"
                 );
-                // Flush any pending entries before completing.
-                // This ensures entries created after the last checkpoint are persisted.
-                if let Err(e) = ctx_arc.flush_pending().await {
-                    warn!(
-                        agent_execution_id = %agent_execution_id,
-                        error = %e,
-                        "Failed to flush pending entries before completion"
-                    );
-                }
-                self.client
-                    .complete_agent(agent_execution_id, &output)
+
+                // Clone what we need for spawned task
+                let config = config.clone();
+                let internals = internals.clone();
+
+                // Spawn execution in background
+                tokio::spawn(async move {
+                    let _permit = permit; // Keep permit alive during execution
+
+                    let start_time = std::time::Instant::now();
+
+                    // Look up agent in registry
+                    let agent = match registry.get(&agent_kind) {
+                        Some(a) => a,
+                        None => {
+                            error!(
+                                agent_kind = %agent_kind,
+                                "Agent kind not registered"
+                            );
+                            // Fail the agent since we can't execute it
+                            let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
+                            if let Err(e) = client
+                                .fail_agent(
+                                    agent_execution_id,
+                                    &format!("Agent kind '{}' not registered on this worker", agent_kind),
+                                    None,
+                                    Some("AGENT_NOT_FOUND"),
+                                )
+                                .await
+                            {
+                                error!("Failed to report agent failure: {}", e);
+                            }
+                            return;
+                        }
+                    };
+
+                    // Clone input before moving it to context
+                    let agent_input = info.input.clone();
+
+                    // Create context from loaded data
+                    let ctx = match Self::create_agent_context_static(
+                        channel.clone(),
+                        &config.worker_token,
+                        agent_execution_id,
+                        info.org_id,
+                        info.input,
+                        info.current_checkpoint_seq,
+                    )
                     .await
-                    .map_err(|e| FlovynError::Other(format!("gRPC error: {}", e)))?;
+                    {
+                        Ok(ctx) => ctx,
+                        Err(e) => {
+                            error!(
+                                agent_execution_id = %agent_execution_id,
+                                error = %e,
+                                "Failed to create agent context"
+                            );
+                            let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
+                            if let Err(e) = client
+                                .fail_agent(
+                                    agent_execution_id,
+                                    &format!("Failed to create agent context: {}", e),
+                                    None,
+                                    Some("CONTEXT_CREATION_FAILED"),
+                                )
+                                .await
+                            {
+                                error!("Failed to report agent failure: {}", e);
+                            }
+                            return;
+                        }
+                    };
 
-                self.internals
-                    .record_work_completed(WorkType::Agent, agent_execution_id, duration)
-                    .await;
+                    // Execute the agent
+                    let ctx_arc: Arc<dyn crate::agent::context::AgentContext + Send + Sync> = Arc::new(ctx);
+                    let result = agent.execute(ctx_arc.clone(), agent_input).await;
+
+                    // Record work completion metrics
+                    let duration = start_time.elapsed();
+
+                    // Report result to server
+                    let mut client = AgentDispatch::new(channel.clone(), &config.worker_token);
+                    match result {
+                        Ok(output) => {
+                            debug!(
+                                agent_execution_id = %agent_execution_id,
+                                "Agent completed successfully"
+                            );
+                            // Flush any pending entries before completing.
+                            if let Err(e) = ctx_arc.flush_pending().await {
+                                warn!(
+                                    agent_execution_id = %agent_execution_id,
+                                    error = %e,
+                                    "Failed to flush pending entries before completion"
+                                );
+                            }
+                            if let Err(e) = client.complete_agent(agent_execution_id, &output).await {
+                                error!("Failed to report agent completion: {}", e);
+                            }
+
+                            internals
+                                .record_work_completed(WorkType::Agent, agent_execution_id, duration)
+                                .await;
+                        }
+                        Err(e) => {
+                            // Check if it's a suspension
+                            if matches!(e, FlovynError::AgentSuspended(_)) {
+                                debug!(
+                                    agent_execution_id = %agent_execution_id,
+                                    reason = %e,
+                                    "Agent suspended"
+                                );
+                                internals
+                                    .record_work_completed(WorkType::Agent, agent_execution_id, duration)
+                                    .await;
+                            } else {
+                                debug!(
+                                    agent_execution_id = %agent_execution_id,
+                                    error = %e,
+                                    "Agent failed"
+                                );
+                                if let Err(err) = client
+                                    .fail_agent(agent_execution_id, &e.to_string(), None, None)
+                                    .await
+                                {
+                                    error!("Failed to report agent failure: {}", err);
+                                }
+
+                                internals
+                                    .record_work_failed(
+                                        WorkType::Agent,
+                                        agent_execution_id,
+                                        e.to_string(),
+                                        duration,
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
+                });
+
+                Ok(())
             }
-            Err(e) => {
-                // Check if it's a suspension (waiting for signal or task completion)
-                // Use proper error type matching instead of string matching
-                if matches!(e, FlovynError::AgentSuspended(_)) {
-                    debug!(
-                        agent_execution_id = %agent_execution_id,
-                        reason = %e,
-                        "Agent suspended"
-                    );
-                    // Agent is already suspended via the context's wait_for_signal method
-                    // or schedule_raw/join_all/select_ok. No need to report as failure.
-                    self.internals
-                        .record_work_completed(WorkType::Agent, agent_execution_id, duration)
-                        .await;
-                } else {
-                    debug!(
-                        agent_execution_id = %agent_execution_id,
-                        error = %e,
-                        "Agent failed"
-                    );
-                    self.client
-                        .fail_agent(agent_execution_id, &e.to_string(), None, None)
-                        .await
-                        .map_err(|e| FlovynError::Other(format!("gRPC error: {}", e)))?;
-
-                    self.internals
-                        .record_work_failed(
-                            WorkType::Agent,
-                            agent_execution_id,
-                            e.to_string(),
-                            duration,
-                        )
-                        .await;
-                }
+            None => {
+                // No agent available - release permit and wait before next poll
+                drop(permit);
+                tokio::time::sleep(config.no_work_backoff).await;
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
-    /// Create an AgentContextImpl from loaded agent data
-    async fn create_agent_context(
-        &mut self,
+    /// Create an AgentContextImpl from loaded agent data (static version for spawned tasks)
+    async fn create_agent_context_static(
+        channel: Channel,
+        worker_token: &str,
         agent_execution_id: Uuid,
         org_id: Uuid,
         input: serde_json::Value,
         current_checkpoint_seq: i32,
     ) -> Result<AgentContextImpl> {
-        // Create a fresh client for the context (it will use its own connection)
-        let ctx_client = AgentDispatch::new(self.channel.clone(), &self.config.worker_token);
+        // Create a fresh client for the context
+        let ctx_client = AgentDispatch::new(channel, worker_token);
 
         // Create context using the async constructor which loads entries and checkpoint
         AgentContextImpl::new(
@@ -553,6 +603,7 @@ mod tests {
             queue: "agents".to_string(),
             poll_timeout: Duration::from_secs(30),
             no_work_backoff: Duration::from_millis(100),
+            max_concurrent: 10,
             heartbeat_interval: Duration::from_secs(15),
             worker_name: Some("Agent Worker".to_string()),
             worker_version: "2.0.0".to_string(),
@@ -566,6 +617,7 @@ mod tests {
 
         assert_eq!(config.worker_id, "agent-worker-1");
         assert_eq!(config.queue, "agents");
+        assert_eq!(config.max_concurrent, 10);
         assert_eq!(config.worker_name, Some("Agent Worker".to_string()));
         assert_eq!(config.worker_version, "2.0.0");
         assert!(!config.enable_auto_registration);
