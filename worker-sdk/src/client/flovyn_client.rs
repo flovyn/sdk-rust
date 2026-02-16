@@ -988,7 +988,6 @@ impl FlovynClient {
 
         // Collect all agent metadata
         let agents = self.agent_registry.get_all_metadata();
-        let agent_kinds: Vec<String> = agents.iter().map(|m| m.kind.clone()).collect();
 
         info!(
             worker_name = %worker_name,
@@ -998,13 +997,20 @@ impl FlovynClient {
             "Registering worker with unified capabilities"
         );
 
-        // Log agent capabilities (registration with server is done via polling for now)
-        if !agent_kinds.is_empty() {
-            debug!(
-                agent_kinds = ?agent_kinds,
-                "Agent capabilities will be announced via polling"
-            );
-        }
+        // Convert agent metadata to proto capabilities
+        let agent_capabilities: Vec<flovyn_v1::AgentCapability> = agents
+            .into_iter()
+            .map(|m| flovyn_v1::AgentCapability {
+                kind: m.kind,
+                name: m.name,
+                description: m.description.unwrap_or_default(),
+                input_schema: m
+                    .input_schema
+                    .and_then(|s| serde_json::to_vec(&s).ok())
+                    .unwrap_or_default(),
+                metadata: Vec::new(),
+            })
+            .collect();
 
         let mut lifecycle_client =
             WorkerLifecycleClient::new(self.channel.clone(), &self.worker_token);
@@ -1018,6 +1024,7 @@ impl FlovynClient {
                 self.team_id,
                 workflows.into_iter().map(Into::into).collect(),
                 tasks.into_iter().map(Into::into).collect(),
+                agent_capabilities.clone(),
             )
             .await?;
 

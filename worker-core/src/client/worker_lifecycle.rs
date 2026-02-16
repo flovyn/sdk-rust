@@ -6,7 +6,7 @@
 use crate::client::auth::AuthInterceptor;
 use crate::error::CoreResult;
 use crate::generated::flovyn_v1::{
-    self, TaskCapability, WorkerHeartbeatRequest, WorkerRegistrationRequest,
+    self, AgentCapability, TaskCapability, WorkerHeartbeatRequest, WorkerRegistrationRequest,
     WorkerRegistrationResponse, WorkflowCapability,
 };
 use crate::task::TaskMetadata;
@@ -83,7 +83,7 @@ impl WorkerLifecycleClient {
         }
     }
 
-    /// Register worker with workflows and tasks
+    /// Register worker with workflows, tasks, and agents
     ///
     /// # Arguments
     /// * `worker_name` - Human-readable name for the worker
@@ -93,6 +93,7 @@ impl WorkerLifecycleClient {
     /// * `team_id` - Optional team ID (None = org-level)
     /// * `workflows` - List of workflow metadata to register
     /// * `tasks` - List of task metadata to register
+    /// * `agents` - List of agent capabilities to register
     #[allow(clippy::too_many_arguments)]
     pub async fn register_worker(
         &mut self,
@@ -103,6 +104,7 @@ impl WorkerLifecycleClient {
         team_id: Option<Uuid>,
         workflows: Vec<WorkflowMetadata>,
         tasks: Vec<TaskMetadata>,
+        agents: Vec<AgentCapability>,
     ) -> CoreResult<RegistrationResult> {
         let host_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
@@ -120,6 +122,7 @@ impl WorkerLifecycleClient {
             workflows: workflows.into_iter().map(workflow_to_proto).collect(),
             tasks: tasks.into_iter().map(task_to_proto).collect(),
             metadata: Vec::new(),
+            agents,
         };
 
         let response = self.stub.register_worker(request).await?.into_inner();

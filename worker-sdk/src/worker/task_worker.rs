@@ -6,6 +6,7 @@ use crate::task::executor::{
     TaskExecutionResult, TaskExecutor, TaskExecutorCallbacks, TaskExecutorConfig,
 };
 use crate::task::registry::TaskRegistry;
+use crate::task::streaming::StreamEvent;
 use crate::telemetry::{task_execute_span, SpanCollector};
 use crate::worker::lifecycle::{HookChain, ReconnectionStrategy, StopReason, WorkerInternals};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -499,11 +500,12 @@ impl TaskExecutorWorker {
                         None
                     };
 
-                    // Create callbacks for progress/log reporting via gRPC
+                    // Create callbacks for progress/log/stream reporting via gRPC
                     let callbacks = Self::create_task_callbacks_static(
                         channel.clone(),
                         &config.worker_token,
                         task_execution_id,
+                        workflow_id,
                     );
 
                     // Execute the task using TaskExecutor with callbacks
@@ -640,7 +642,7 @@ impl TaskExecutorWorker {
         &self.registry
     }
 
-    /// Create callbacks for reporting progress and logs to the server via gRPC.
+    /// Create callbacks for reporting progress, logs, and stream events to the server via gRPC.
     ///
     /// Uses a single background task with a channel to batch and forward events,
     /// rather than spawning a task per callback call.
@@ -648,6 +650,7 @@ impl TaskExecutorWorker {
         channel: Channel,
         worker_token: &str,
         task_execution_id: Uuid,
+        workflow_execution_id: Option<Uuid>,
     ) -> TaskExecutorCallbacks {
         // Create a channel for sending events to a single background forwarder task
         let (tx, mut rx) = mpsc::channel::<TaskEvent>(100);
@@ -693,6 +696,14 @@ impl TaskExecutorWorker {
                             debug!(error = %e, "Failed to send log message (non-critical)");
                         }
                     }
+                    TaskEvent::Stream { event } => {
+                        if let Err(e) = client
+                            .stream_task_data(task_execution_id, workflow_execution_id, &event)
+                            .await
+                        {
+                            debug!(error = %e, "Failed to stream task data (non-critical)");
+                        }
+                    }
                 }
             }
             debug!(task_id = %task_execution_id, "Progress forwarder task ended");
@@ -724,16 +735,22 @@ impl TaskExecutorWorker {
             });
 
         // Create log callback that sends to channel
-        let log_tx = tx;
+        let log_tx = tx.clone();
         let on_log: Box<dyn Fn(String, String) + Send + Sync> = Box::new(move |level, message| {
             let _ = log_tx.try_send(TaskEvent::Log { level, message });
+        });
+
+        // Create stream callback that sends to channel
+        let stream_tx = tx;
+        let on_stream: Box<dyn Fn(StreamEvent) + Send + Sync> = Box::new(move |event| {
+            let _ = stream_tx.try_send(TaskEvent::Stream { event });
         });
 
         TaskExecutorCallbacks {
             on_progress: Some(on_progress),
             on_log: Some(on_log),
             on_heartbeat: None,
-            on_stream: None,
+            on_stream: Some(on_stream),
         }
     }
 }
@@ -747,6 +764,9 @@ enum TaskEvent {
     Log {
         level: String,
         message: String,
+    },
+    Stream {
+        event: StreamEvent,
     },
 }
 

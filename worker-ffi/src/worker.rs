@@ -232,6 +232,7 @@ impl CoreWorker {
                     None, // No team_id
                     workflows,
                     tasks,
+                    Vec::new(),
                 )
                 .await
         })?;
