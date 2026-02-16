@@ -876,6 +876,8 @@ pub struct WorkerRegistrationRequest {
     /// Metadata
     #[prost(bytes = "vec", tag = "10")]
     pub metadata: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, repeated, tag = "11")]
+    pub agents: ::prost::alloc::vec::Vec<AgentCapability>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -932,6 +934,20 @@ pub struct TaskCapability {
     #[prost(bytes = "vec", tag = "9")]
     pub output_schema: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "10")]
+    pub metadata: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AgentCapability {
+    #[prost(string, tag = "1")]
+    pub kind: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub input_schema: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "5")]
     pub metadata: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]

@@ -214,6 +214,7 @@ impl NapiWorker {
                 None,
                 workflows,
                 tasks,
+                Vec::new(),
             )
             .await
             .map_err(from_core_error)?;
