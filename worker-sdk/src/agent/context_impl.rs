@@ -3,6 +3,10 @@
 //! This implementation communicates with the server via gRPC to persist entries,
 //! manage checkpoints, schedule tasks, and handle signals.
 
+use crate::agent::child::{
+    AgentMode, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, HandoffCompletion,
+    HandoffOptions, SpawnOptions,
+};
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
     TokenUsage,
@@ -18,6 +22,7 @@ use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry};
 use flovyn_worker_core::generated::flovyn_v1::AgentStreamEventType;
 use parking_lot::RwLock;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -99,6 +104,10 @@ pub struct AgentContextImpl {
     current_segment: AtomicU64,
     /// Current sequence within segment
     current_sequence: AtomicU64,
+    /// Parent execution ID (if this agent was spawned as a child)
+    parent_execution_id: Option<Uuid>,
+    /// Tracked child agent handles (child_id -> ChildHandle)
+    children: RwLock<HashMap<Uuid, ChildHandle>>,
 }
 
 impl AgentContextImpl {
@@ -190,6 +199,8 @@ impl AgentContextImpl {
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
             current_sequence: AtomicU64::new(0),
+            parent_execution_id: None,
+            children: RwLock::new(HashMap::new()),
         })
     }
 
@@ -267,7 +278,14 @@ impl AgentContextImpl {
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
             current_sequence: AtomicU64::new(0),
+            parent_execution_id: None,
+            children: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Set the parent execution ID (called by the agent worker when creating the context)
+    pub fn set_parent_execution_id(&mut self, parent_id: Option<Uuid>) {
+        self.parent_execution_id = parent_id;
     }
 
     /// Request cancellation
@@ -1082,6 +1100,291 @@ impl AgentContext for AgentContextImpl {
                 ))),
             }
         }
+    }
+
+    // =========================================================================
+    // Hierarchical Agent Operations
+    // =========================================================================
+
+    async fn spawn_agent(
+        &self,
+        mode: AgentMode,
+        input: Value,
+        options: SpawnOptions,
+    ) -> Result<ChildHandle> {
+        let (agent_kind, queue, mode_str): (String, Option<String>, &str) = match &mode {
+            AgentMode::Remote(kind) => (kind.clone(), None, "REMOTE"),
+            AgentMode::Local(kind) => (kind.clone(), None, "LOCAL"),
+            AgentMode::External(_) => {
+                return Err(FlovynError::NotSupported(
+                    "External agent spawning not yet implemented".into(),
+                ));
+            }
+        };
+
+        let input_bytes = serde_json::to_vec(&input)?;
+        let max_budget_tokens = options
+            .budget
+            .as_ref()
+            .and_then(|b| b.max_tokens.map(|t| t as i64));
+
+        let child_id = self
+            .client
+            .lock()
+            .await
+            .spawn_child_agent(
+                self.org_id,
+                self.agent_execution_id,
+                &agent_kind,
+                &input_bytes,
+                queue.as_deref(),
+                mode_str,
+                max_budget_tokens,
+            )
+            .await
+            .map_err(FlovynError::from)?;
+
+        let handle = ChildHandle {
+            child_id,
+            mode: mode.clone(),
+        };
+
+        // Track the child handle
+        self.children.write().insert(child_id, handle.clone());
+
+        Ok(handle)
+    }
+
+    async fn signal_child(
+        &self,
+        handle: &ChildHandle,
+        name: &str,
+        payload: Value,
+    ) -> Result<()> {
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        self.client
+            .lock()
+            .await
+            .send_child_signal(
+                self.org_id,
+                self.agent_execution_id,
+                handle.child_id,
+                name,
+                &payload_bytes,
+            )
+            .await
+            .map_err(FlovynError::from)?;
+        Ok(())
+    }
+
+    async fn signal_parent(&self, name: &str, payload: Value) -> Result<()> {
+        let parent_id = self.parent_execution_id.ok_or_else(|| {
+            FlovynError::InvalidArgument("This agent has no parent to signal".into())
+        })?;
+        let _ = parent_id; // Used for validation only; the server resolves parent from child_id
+
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        self.client
+            .lock()
+            .await
+            .send_parent_signal(
+                self.org_id,
+                self.agent_execution_id,
+                name,
+                &payload_bytes,
+            )
+            .await
+            .map_err(FlovynError::from)?;
+        Ok(())
+    }
+
+    async fn cancel_child(
+        &self,
+        handle: &ChildHandle,
+        _mode: CancellationMode,
+    ) -> Result<()> {
+        // Send a "cancel" signal to the child agent
+        let payload_bytes = serde_json::to_vec(&Value::Null)?;
+        self.client
+            .lock()
+            .await
+            .send_child_signal(
+                self.org_id,
+                self.agent_execution_id,
+                handle.child_id,
+                "cancel",
+                &payload_bytes,
+            )
+            .await
+            .map_err(FlovynError::from)?;
+        Ok(())
+    }
+
+    async fn poll_child_events(
+        &self,
+        handles: &[ChildHandle],
+    ) -> Result<Vec<ChildEventInfo>> {
+        let child_ids: Vec<Uuid> = handles.iter().map(|h| h.child_id).collect();
+        let results = self
+            .client
+            .lock()
+            .await
+            .poll_child_events(self.org_id, self.agent_execution_id, &child_ids)
+            .await
+            .map_err(FlovynError::from)?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| {
+                let event = match r.event_type.as_str() {
+                    "completed" => ChildEvent::Completed {
+                        child_id: r.child_execution_id,
+                        output: r.output.unwrap_or(Value::Null),
+                    },
+                    "failed" => ChildEvent::Failed {
+                        child_id: r.child_execution_id,
+                        error: r.error.unwrap_or_default(),
+                    },
+                    "signal" => ChildEvent::Signal {
+                        child_id: r.child_execution_id,
+                        signal_name: r.signal_name.unwrap_or_default(),
+                        payload: r.signal_payload.unwrap_or(Value::Null),
+                    },
+                    _ => ChildEvent::Failed {
+                        child_id: r.child_execution_id,
+                        error: format!("Unknown event type: {}", r.event_type),
+                    },
+                };
+                ChildEventInfo {
+                    child_id: r.child_execution_id,
+                    event,
+                }
+            })
+            .collect())
+    }
+
+    async fn join_children(
+        &self,
+        handles: &[ChildHandle],
+    ) -> Result<Vec<ChildEvent>> {
+        if handles.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // First poll to see if all children are already done
+        let events = self.poll_child_events(handles).await?;
+        if events.len() == handles.len() {
+            return Ok(events.into_iter().map(|e| e.event).collect());
+        }
+
+        // Not all done yet — checkpoint and suspend waiting for all children
+        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
+        let leaf_entry_id = *self.leaf_entry_id.read();
+        let checkpoint_data = CheckpointData {
+            state: current_state.clone(),
+            leaf_entry_id,
+            token_usage: None,
+        };
+        self.commit_pending_batch(Some(checkpoint_data)).await?;
+        *self.checkpoint_state.write() = Some(current_state);
+        self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst);
+
+        let child_ids: Vec<Uuid> = handles.iter().map(|h| h.child_id).collect();
+        self.client
+            .lock()
+            .await
+            .suspend_agent_for_all_children(
+                self.agent_execution_id,
+                &child_ids,
+                Some("Waiting for all children to complete"),
+            )
+            .await
+            .map_err(FlovynError::from)?;
+
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for all children to complete".to_string(),
+        ))
+    }
+
+    async fn select_child(
+        &self,
+        handles: &[ChildHandle],
+    ) -> Result<ChildEvent> {
+        if handles.is_empty() {
+            return Err(FlovynError::InvalidArgument(
+                "select_child requires at least one handle".into(),
+            ));
+        }
+
+        // First poll to see if any child has an event
+        let events = self.poll_child_events(handles).await?;
+        if let Some(first) = events.into_iter().next() {
+            return Ok(first.event);
+        }
+
+        // No events yet — checkpoint and suspend waiting for any child event
+        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
+        let leaf_entry_id = *self.leaf_entry_id.read();
+        let checkpoint_data = CheckpointData {
+            state: current_state.clone(),
+            leaf_entry_id,
+            token_usage: None,
+        };
+        self.commit_pending_batch(Some(checkpoint_data)).await?;
+        *self.checkpoint_state.write() = Some(current_state);
+        self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst);
+
+        let child_ids: Vec<Uuid> = handles.iter().map(|h| h.child_id).collect();
+        self.client
+            .lock()
+            .await
+            .suspend_agent_for_child_event(
+                self.agent_execution_id,
+                &child_ids,
+                Some("Waiting for any child event"),
+            )
+            .await
+            .map_err(FlovynError::from)?;
+
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for child event".to_string(),
+        ))
+    }
+
+    async fn get_child_handle(&self, child_id: Uuid) -> Result<ChildHandle> {
+        let children = self.children.read();
+        children.get(&child_id).cloned().ok_or_else(|| {
+            FlovynError::InvalidArgument(format!("No child handle found for {}", child_id))
+        })
+    }
+
+    async fn handoff_to_agent(
+        &self,
+        mode: AgentMode,
+        input: Value,
+        options: HandoffOptions,
+    ) -> Result<Value> {
+        let spawn_opts = options.spawn.unwrap_or_default();
+        let handle = self.spawn_agent(mode, input, spawn_opts).await?;
+
+        let completion = options.completion.unwrap_or_default();
+        match completion {
+            HandoffCompletion::WaitForChild => {
+                let events = self.join_children(&[handle]).await?;
+                match events.into_iter().next() {
+                    Some(ChildEvent::Completed { output, .. }) => Ok(output),
+                    Some(ChildEvent::Failed { error, .. }) => {
+                        Err(FlovynError::Other(format!("Handoff child failed: {}", error)))
+                    }
+                    _ => Err(FlovynError::Other("Unexpected child event".into())),
+                }
+            }
+            HandoffCompletion::Immediate => Ok(Value::Null),
+        }
+    }
+
+    fn parent_execution_id(&self) -> Option<Uuid> {
+        self.parent_execution_id
     }
 }
 

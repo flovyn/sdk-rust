@@ -524,7 +524,11 @@ impl AgentExecutorWorker {
                     )
                     .await
                     {
-                        Ok(ctx) => ctx,
+                        Ok(mut ctx) => {
+                            // Propagate parent_execution_id from PollAgent response
+                            ctx.set_parent_execution_id(info.parent_execution_id);
+                            ctx
+                        }
                         Err(e) => {
                             error!(
                                 agent_execution_id = %agent_execution_id,

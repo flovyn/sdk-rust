@@ -42,6 +42,25 @@ pub struct AgentExecutionInfo {
     pub agent_definition_id: Option<Uuid>,
     /// Metadata
     pub metadata: Option<Value>,
+    /// Parent execution ID (if this is a child agent)
+    pub parent_execution_id: Option<Uuid>,
+}
+
+/// Result of a child event poll
+#[derive(Debug, Clone)]
+pub struct ChildEventResult {
+    /// Child execution ID
+    pub child_execution_id: Uuid,
+    /// Event type: "completed", "failed", "signal"
+    pub event_type: String,
+    /// Output (if completed)
+    pub output: Option<Value>,
+    /// Error (if failed)
+    pub error: Option<String>,
+    /// Signal name (if signal event)
+    pub signal_name: Option<String>,
+    /// Signal payload (if signal event)
+    pub signal_payload: Option<Value>,
 }
 
 /// Agent conversation entry
@@ -368,6 +387,7 @@ impl AgentDispatch {
             } else {
                 serde_json::from_slice(&ae.metadata).ok()
             },
+            parent_execution_id: ae.parent_execution_id.and_then(|s| s.parse().ok()),
         }))
     }
 
@@ -882,6 +902,164 @@ impl AgentDispatch {
         let stream = tokio_stream::iter(vec![request]);
         let response = self.inner.stream_agent_data(stream).await?;
         Ok(response.into_inner().acknowledged)
+    }
+
+    // =========================================================================
+    // Hierarchical Agent Operations
+    // =========================================================================
+
+    /// Spawn a child agent execution
+    #[allow(clippy::too_many_arguments)]
+    pub async fn spawn_child_agent(
+        &mut self,
+        org_id: Uuid,
+        parent_execution_id: Uuid,
+        agent_kind: &str,
+        input: &[u8],
+        queue: Option<&str>,
+        mode: &str,
+        max_budget_tokens: Option<i64>,
+    ) -> CoreResult<Uuid> {
+        let request = flovyn_v1::SpawnChildAgentRequest {
+            org_id: org_id.to_string(),
+            parent_execution_id: parent_execution_id.to_string(),
+            agent_kind: agent_kind.to_string(),
+            input: input.to_vec(),
+            queue: queue.map(|q| q.to_string()),
+            mode: mode.to_string(),
+            system_prompt: None,
+            tools: vec![],
+            model: None,
+            max_budget_tokens,
+        };
+
+        let response = self.inner.spawn_child_agent(request).await?;
+        let resp = response.into_inner();
+        resp.child_execution_id
+            .parse()
+            .map_err(|_| CoreError::Other("Invalid child_execution_id in response".to_string()))
+    }
+
+    /// Send a signal from child to parent
+    pub async fn send_parent_signal(
+        &mut self,
+        org_id: Uuid,
+        child_execution_id: Uuid,
+        signal_name: &str,
+        payload: &[u8],
+    ) -> CoreResult<bool> {
+        let request = flovyn_v1::SendParentSignalRequest {
+            org_id: org_id.to_string(),
+            child_execution_id: child_execution_id.to_string(),
+            signal_name: signal_name.to_string(),
+            payload: payload.to_vec(),
+        };
+
+        let response = self.inner.send_parent_signal(request).await?;
+        Ok(response.into_inner().delivered)
+    }
+
+    /// Send a signal from parent to child
+    pub async fn send_child_signal(
+        &mut self,
+        org_id: Uuid,
+        parent_execution_id: Uuid,
+        child_execution_id: Uuid,
+        signal_name: &str,
+        payload: &[u8],
+    ) -> CoreResult<bool> {
+        let request = flovyn_v1::SendChildSignalRequest {
+            org_id: org_id.to_string(),
+            parent_execution_id: parent_execution_id.to_string(),
+            child_execution_id: child_execution_id.to_string(),
+            signal_name: signal_name.to_string(),
+            payload: payload.to_vec(),
+        };
+
+        let response = self.inner.send_child_signal(request).await?;
+        Ok(response.into_inner().delivered)
+    }
+
+    /// Poll for child events (completion, failure, signals)
+    pub async fn poll_child_events(
+        &mut self,
+        org_id: Uuid,
+        parent_execution_id: Uuid,
+        child_execution_ids: &[Uuid],
+    ) -> CoreResult<Vec<ChildEventResult>> {
+        let request = flovyn_v1::PollChildEventsRequest {
+            org_id: org_id.to_string(),
+            parent_execution_id: parent_execution_id.to_string(),
+            child_execution_ids: child_execution_ids.iter().map(|id| id.to_string()).collect(),
+        };
+
+        let response = self.inner.poll_child_events(request).await?;
+        let resp = response.into_inner();
+
+        Ok(resp
+            .events
+            .into_iter()
+            .map(|e| ChildEventResult {
+                child_execution_id: e.child_execution_id.parse().unwrap_or_default(),
+                event_type: e.event_type,
+                output: e.output.and_then(|b| serde_json::from_slice(&b).ok()),
+                error: e.error,
+                signal_name: e.signal_name,
+                signal_payload: e.signal_payload.and_then(|b| serde_json::from_slice(&b).ok()),
+            })
+            .collect())
+    }
+
+    /// Suspend agent waiting for child events (ANY mode)
+    pub async fn suspend_agent_for_child_event(
+        &mut self,
+        agent_execution_id: Uuid,
+        child_execution_ids: &[Uuid],
+        reason: Option<&str>,
+    ) -> CoreResult<()> {
+        use flovyn_v1::suspend_agent_request::WaitCondition;
+
+        let request = flovyn_v1::SuspendAgentRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+            wait_condition: Some(WaitCondition::WaitForChildEvent(
+                flovyn_v1::WaitForChildEvent {
+                    child_execution_ids: child_execution_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect(),
+                },
+            )),
+            reason: reason.map(|r| r.to_string()),
+        };
+
+        self.inner.suspend_agent(request).await?;
+        Ok(())
+    }
+
+    /// Suspend agent waiting for ALL children to complete
+    pub async fn suspend_agent_for_all_children(
+        &mut self,
+        agent_execution_id: Uuid,
+        child_execution_ids: &[Uuid],
+        reason: Option<&str>,
+    ) -> CoreResult<()> {
+        use flovyn_v1::suspend_agent_request::WaitCondition;
+
+        let request = flovyn_v1::SuspendAgentRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+            wait_condition: Some(WaitCondition::WaitForAllChildren(
+                flovyn_v1::WaitForAllChildren {
+                    child_execution_ids: child_execution_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect(),
+                },
+            )),
+            reason: reason.map(|r| r.to_string()),
+        };
+
+        self.inner.suspend_agent(request).await?;
+        Ok(())
     }
 }
 
