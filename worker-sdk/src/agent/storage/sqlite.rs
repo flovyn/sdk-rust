@@ -459,4 +459,182 @@ mod tests {
         let _storage1 = SqliteStorage::open(&db_path).await.unwrap();
         let _storage2 = SqliteStorage::open(&db_path).await.unwrap();
     }
+
+    #[tokio::test]
+    async fn test_sqlite_commit_batch_atomic() {
+        let storage = SqliteStorage::in_memory().await.unwrap();
+        let agent_id = Uuid::new_v4();
+        let entry_id = Uuid::new_v4();
+
+        let batch = CommandBatch {
+            segment: 1,
+            sequence: 1,
+            commands: vec![
+                AgentCommand::AppendEntry {
+                    entry_id,
+                    parent_id: None,
+                    role: "user".to_string(),
+                    content: json!({"text": "Hello"}),
+                },
+            ],
+            checkpoint: Some(CheckpointData {
+                state: json!({"turn": 1}),
+                leaf_entry_id: Some(entry_id),
+                token_usage: Some(TokenUsage {
+                    input_tokens: 100,
+                    output_tokens: 50,
+                }),
+            }),
+        };
+
+        storage.commit_batch(agent_id, batch).await.unwrap();
+
+        // Verify entry was persisted
+        let count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM entries")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap()
+            .get("cnt");
+        assert_eq!(count, 1);
+
+        // Verify checkpoint was persisted
+        let count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM checkpoints")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap()
+            .get("cnt");
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_load_segment() {
+        let storage = SqliteStorage::in_memory().await.unwrap();
+        let agent_id = Uuid::new_v4();
+        let entry_id = Uuid::new_v4();
+
+        // Commit a batch
+        let batch = CommandBatch {
+            segment: 1,
+            sequence: 1,
+            commands: vec![AgentCommand::AppendEntry {
+                entry_id,
+                parent_id: None,
+                role: "assistant".to_string(),
+                content: json!({"text": "response"}),
+            }],
+            checkpoint: Some(CheckpointData {
+                state: json!({"turn": 2, "model": "gpt-4"}),
+                leaf_entry_id: Some(entry_id),
+                token_usage: Some(TokenUsage {
+                    input_tokens: 200,
+                    output_tokens: 100,
+                }),
+            }),
+        };
+
+        storage.commit_batch(agent_id, batch).await.unwrap();
+
+        // Load segment and verify roundtrip
+        let segment = storage.load_segment(agent_id, 1).await.unwrap();
+        assert_eq!(segment.segment, 1);
+        let cp = segment.checkpoint.unwrap();
+        assert_eq!(cp.state, json!({"turn": 2, "model": "gpt-4"}));
+        assert_eq!(cp.leaf_entry_id, Some(entry_id));
+        let usage = cp.token_usage.unwrap();
+        assert_eq!(usage.input_tokens, 200);
+        assert_eq!(usage.output_tokens, 100);
+
+        // Verify latest segment
+        let latest = storage.get_latest_segment(agent_id).await.unwrap();
+        assert_eq!(latest, 1);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_task_results() {
+        let storage = SqliteStorage::in_memory().await.unwrap();
+        let agent_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        // Schedule a task via commit_batch
+        let batch = CommandBatch {
+            segment: 1,
+            sequence: 1,
+            commands: vec![AgentCommand::ScheduleTask {
+                task_id,
+                kind: "analyze".to_string(),
+                input: json!({"data": [1, 2, 3]}),
+                options: super::super::TaskOptions::default(),
+                idempotency_key: "test-key".to_string(),
+            }],
+            checkpoint: None,
+        };
+
+        storage.commit_batch(agent_id, batch).await.unwrap();
+
+        // Check task result - should be pending
+        let result = storage.get_task_result(agent_id, task_id).await.unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.status, TaskStatus::Pending);
+        assert!(result.output.is_none());
+
+        // Manually complete the task via SQL (simulating task executor)
+        sqlx::query(
+            "UPDATE tasks SET status = 'completed', output = ? WHERE task_id = ?"
+        )
+        .bind(serde_json::to_string(&json!({"result": 42})).unwrap())
+        .bind(task_id.to_string())
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+
+        // Now check result
+        let result = storage.get_task_result(agent_id, task_id).await.unwrap();
+        let result = result.unwrap();
+        assert_eq!(result.status, TaskStatus::Completed);
+        assert_eq!(result.output, Some(json!({"result": 42})));
+
+        // Test batch get
+        let results = storage.get_task_results(agent_id, &[task_id]).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_signals() {
+        let storage = SqliteStorage::in_memory().await.unwrap();
+        let agent_id = Uuid::new_v4();
+
+        // No signal initially
+        assert!(!storage.has_signal(agent_id, "user_input").await.unwrap());
+        assert!(storage.pop_signal(agent_id, "user_input").await.unwrap().is_none());
+
+        // Store a signal
+        storage
+            .store_signal(agent_id, "user_input", json!({"text": "hello"}))
+            .await
+            .unwrap();
+
+        // Should have signal now
+        assert!(storage.has_signal(agent_id, "user_input").await.unwrap());
+        // Different signal name should not have it
+        assert!(!storage.has_signal(agent_id, "other").await.unwrap());
+
+        // Store another signal with the same name
+        storage
+            .store_signal(agent_id, "user_input", json!({"text": "world"}))
+            .await
+            .unwrap();
+
+        // Pop signals in FIFO order
+        let val = storage.pop_signal(agent_id, "user_input").await.unwrap();
+        assert_eq!(val, Some(json!({"text": "hello"})));
+
+        let val = storage.pop_signal(agent_id, "user_input").await.unwrap();
+        assert_eq!(val, Some(json!({"text": "world"})));
+
+        // No more signals
+        assert!(!storage.has_signal(agent_id, "user_input").await.unwrap());
+        assert!(storage.pop_signal(agent_id, "user_input").await.unwrap().is_none());
+    }
 }
