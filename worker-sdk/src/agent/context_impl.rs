@@ -1369,9 +1369,19 @@ impl AgentContext for AgentContextImpl {
     }
 
     async fn get_child_handle(&self, child_id: Uuid) -> Result<ChildHandle> {
+        // First check local in-memory map (populated during this execution)
         let children = self.children.read();
-        children.get(&child_id).cloned().ok_or_else(|| {
-            FlovynError::InvalidArgument(format!("No child handle found for {}", child_id))
+        if let Some(handle) = children.get(&child_id).cloned() {
+            return Ok(handle);
+        }
+        drop(children);
+
+        // On resume, child handles from a previous execution are not in memory.
+        // Construct a handle with Remote mode as a sensible default — the child_id
+        // is the important part for join/signal/cancel operations.
+        Ok(ChildHandle {
+            child_id,
+            mode: AgentMode::Remote(String::new()),
         })
     }
 

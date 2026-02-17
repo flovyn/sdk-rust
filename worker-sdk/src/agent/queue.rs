@@ -40,24 +40,21 @@ impl QueueContext {
     ///
     /// Follows the resolution order:
     /// 1. Explicit queue (from SpawnOptions) → use directly
-    /// 2. Otherwise, fall back to the worker's own queue for local mode,
-    ///    or "default" for remote mode
+    /// 2. Otherwise, inherit the worker's own queue — children are routed to the
+    ///    same queue as the parent by default, regardless of mode. This ensures
+    ///    hierarchical agents stay on the same worker infrastructure.
     pub fn resolve_queue(
         &self,
         explicit_queue: Option<&str>,
-        mode: &str,
+        _mode: &str,
     ) -> String {
         // 1. Explicit queue takes priority
         if let Some(q) = explicit_queue {
             return q.to_string();
         }
 
-        // 2-5. Fall back based on mode
-        match mode {
-            "LOCAL" => self.worker_queue.clone(),
-            "REMOTE" => "default".to_string(),
-            _ => "default".to_string(),
-        }
+        // 2. Default: inherit worker's queue for all modes
+        self.worker_queue.clone()
     }
 }
 
@@ -147,10 +144,10 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_remote_mode_uses_default() {
+    fn test_resolve_remote_mode_inherits_worker_queue() {
         let ctx = QueueContext::from_worker_queue("user.alice.laptop".to_string());
         let result = ctx.resolve_queue(None, "REMOTE");
-        assert_eq!(result, "default");
+        assert_eq!(result, "user.alice.laptop");
     }
 
     #[test]
