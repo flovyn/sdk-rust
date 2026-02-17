@@ -27,8 +27,11 @@
 //! sender.send(("user_input".to_string(), json!({"text": "hello"}))).await?;
 //! ```
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::error::FlovynError;
@@ -104,17 +107,22 @@ impl SignalSource for RemoteSignalSource {
 /// Receives signals via a tokio mpsc channel. This enables in-process
 /// signal delivery for local agents without server involvement.
 ///
-/// The SignalSource trait implementation is deferred to Phase 4 (Local Agent Mode).
+/// Signals are buffered internally by name. When `wait_for_signal` is called,
+/// buffered signals matching the name are returned first, then the channel
+/// is polled for new signals.
 pub struct ChannelSignalSource {
-    // Allow dead_code until Phase 4 implements SignalSource for ChannelSignalSource
-    #[allow(dead_code)]
-    receiver: tokio::sync::mpsc::Receiver<(String, Value)>,
+    receiver: Mutex<tokio::sync::mpsc::Receiver<(String, Value)>>,
+    /// Buffered signals by name, for signals received but not yet consumed
+    buffer: Mutex<HashMap<String, Vec<Value>>>,
 }
 
 impl ChannelSignalSource {
     /// Create a new channel signal source from an existing receiver.
     pub fn new(receiver: tokio::sync::mpsc::Receiver<(String, Value)>) -> Self {
-        Self { receiver }
+        Self {
+            receiver: Mutex::new(receiver),
+            buffer: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Create a channel pair for signal delivery.
@@ -134,11 +142,72 @@ impl ChannelSignalSource {
     ///
     /// This is useful for testing or when direct access to the channel is needed.
     pub fn into_receiver(self) -> tokio::sync::mpsc::Receiver<(String, Value)> {
-        self.receiver
+        self.receiver.into_inner()
+    }
+
+    /// Drain any available signals from the channel into the buffer.
+    async fn drain_channel_to_buffer(&self) {
+        let mut rx = self.receiver.lock().await;
+        let mut buf = self.buffer.lock().await;
+        while let Ok((name, value)) = rx.try_recv() {
+            buf.entry(name).or_default().push(value);
+        }
     }
 }
 
-// Note: ChannelSignalSource SignalSource impl deferred to Phase 4 (Local Agent Mode)
+#[async_trait]
+impl SignalSource for ChannelSignalSource {
+    async fn wait_for_signal(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<Value> {
+        // First check the buffer for already-received signals
+        {
+            let mut buf = self.buffer.lock().await;
+            if let Some(values) = buf.get_mut(signal_name) {
+                if !values.is_empty() {
+                    return Ok(values.remove(0));
+                }
+            }
+        }
+
+        // No buffered signal - wait on the channel
+        let mut rx = self.receiver.lock().await;
+        loop {
+            match rx.recv().await {
+                Some((name, value)) => {
+                    if name == signal_name {
+                        return Ok(value);
+                    }
+                    // Buffer signals for other names
+                    let mut buf = self.buffer.lock().await;
+                    buf.entry(name).or_default().push(value);
+                }
+                None => {
+                    return Err(FlovynError::Other(
+                        "Signal channel closed".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    async fn has_signal(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<bool> {
+        // Drain any pending channel messages into the buffer
+        self.drain_channel_to_buffer().await;
+
+        let buf = self.buffer.lock().await;
+        Ok(buf
+            .get(signal_name)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false))
+    }
+
+    async fn drain_signals(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<Vec<Value>> {
+        // Drain any pending channel messages into the buffer
+        self.drain_channel_to_buffer().await;
+
+        let mut buf = self.buffer.lock().await;
+        Ok(buf.remove(signal_name).unwrap_or_default())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -192,11 +261,87 @@ mod tests {
             .await
             .unwrap();
 
-        // Convert to inner receiver to verify signal was sent
-        // (SignalSource impl is deferred to Phase 4)
-        let mut receiver = source.into_receiver();
-        let received = receiver.recv().await.unwrap();
-        assert_eq!(received.0, "test_signal");
-        assert_eq!(received.1, payload);
+        // Use SignalSource trait to receive the signal
+        let received = source
+            .wait_for_signal(Uuid::nil(), "test_signal")
+            .await
+            .unwrap();
+        assert_eq!(received, payload);
+    }
+
+    #[tokio::test]
+    async fn test_channel_signal_source_has_signal() {
+        let (sender, source) = ChannelSignalSource::channel(16);
+
+        // No signal yet
+        assert!(!source.has_signal(Uuid::nil(), "test").await.unwrap());
+
+        // Send a signal
+        sender
+            .send(("test".to_string(), serde_json::json!("value")))
+            .await
+            .unwrap();
+
+        // Now there should be a signal
+        assert!(source.has_signal(Uuid::nil(), "test").await.unwrap());
+        // Different name should not have a signal
+        assert!(!source.has_signal(Uuid::nil(), "other").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_channel_signal_source_drain_signals() {
+        let (sender, source) = ChannelSignalSource::channel(16);
+
+        // Send multiple signals with same name
+        sender
+            .send(("test".to_string(), serde_json::json!(1)))
+            .await
+            .unwrap();
+        sender
+            .send(("test".to_string(), serde_json::json!(2)))
+            .await
+            .unwrap();
+        sender
+            .send(("other".to_string(), serde_json::json!(3)))
+            .await
+            .unwrap();
+
+        // Drain should return both "test" signals
+        let values = source.drain_signals(Uuid::nil(), "test").await.unwrap();
+        assert_eq!(values, vec![serde_json::json!(1), serde_json::json!(2)]);
+
+        // "other" should still be available
+        let values = source.drain_signals(Uuid::nil(), "other").await.unwrap();
+        assert_eq!(values, vec![serde_json::json!(3)]);
+
+        // No more signals
+        let values = source.drain_signals(Uuid::nil(), "test").await.unwrap();
+        assert!(values.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_channel_signal_source_buffers_other_signals() {
+        let (sender, source) = ChannelSignalSource::channel(16);
+
+        // Send signals with different names
+        sender
+            .send(("other".to_string(), serde_json::json!("buffered")))
+            .await
+            .unwrap();
+        sender
+            .send(("target".to_string(), serde_json::json!("found")))
+            .await
+            .unwrap();
+
+        // wait_for_signal("target") should skip "other" and return "found"
+        let result = source
+            .wait_for_signal(Uuid::nil(), "target")
+            .await
+            .unwrap();
+        assert_eq!(result, serde_json::json!("found"));
+
+        // "other" should still be buffered
+        let values = source.drain_signals(Uuid::nil(), "other").await.unwrap();
+        assert_eq!(values, vec![serde_json::json!("buffered")]);
     }
 }

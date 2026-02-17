@@ -954,16 +954,14 @@ impl AgentContext for AgentContextImpl {
         // On resume, the agent replays from the beginning and will call this again.
         // If we suspend first, the agent gets stuck in WAITING because the signal
         // was already consumed during the previous execution.
-        let signals = {
-            let mut client = self.client.lock().await;
-            client
-                .consume_signals(self.agent_execution_id, Some(signal_name))
-                .await?
-        };
 
         // If signal was already received, return it immediately
-        if let Some(signal) = signals.into_iter().next() {
-            return Ok(signal.signal_value);
+        if let Some(value) = self
+            .storage
+            .pop_signal(self.agent_execution_id, signal_name)
+            .await?
+        {
+            return Ok(value);
         }
 
         // No signal yet - checkpoint and suspend
@@ -986,18 +984,23 @@ impl AgentContext for AgentContextImpl {
     }
 
     async fn has_signal(&self, signal_name: &str) -> Result<bool> {
-        let mut client = self.client.lock().await;
-        Ok(client
+        Ok(self
+            .storage
             .has_signal(self.agent_execution_id, signal_name)
             .await?)
     }
 
     async fn drain_signals_raw(&self, signal_name: &str) -> Result<Vec<Value>> {
-        let mut client = self.client.lock().await;
-        let signals = client
-            .consume_signals(self.agent_execution_id, Some(signal_name))
-            .await?;
-        Ok(signals.into_iter().map(|s| s.signal_value).collect())
+        // Pop signals one at a time until none remain
+        let mut values = Vec::new();
+        while let Some(value) = self
+            .storage
+            .pop_signal(self.agent_execution_id, signal_name)
+            .await?
+        {
+            values.push(value);
+        }
+        Ok(values)
     }
 
     async fn stream(&self, event: StreamEvent) -> Result<()> {
