@@ -50,6 +50,7 @@ parking_lot = "0.12"
 
 # System info
 hostname = "0.4"
+whoami = "1"
 
 # Hashing
 sha2 = "0.10"

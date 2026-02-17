@@ -7,6 +7,7 @@ use crate::agent::child::{
     AgentMode, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, HandoffCompletion,
     HandoffOptions, SpawnOptions,
 };
+use crate::agent::queue::QueueContext;
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
     TokenUsage,
@@ -108,6 +109,8 @@ pub struct AgentContextImpl {
     parent_execution_id: Option<Uuid>,
     /// Tracked child agent handles (child_id -> ChildHandle)
     children: RwLock<HashMap<Uuid, ChildHandle>>,
+    /// Queue context for resolving target queues when spawning children
+    queue_context: Option<QueueContext>,
 }
 
 impl AgentContextImpl {
@@ -201,6 +204,7 @@ impl AgentContextImpl {
             current_sequence: AtomicU64::new(0),
             parent_execution_id: None,
             children: RwLock::new(HashMap::new()),
+            queue_context: None,
         })
     }
 
@@ -280,12 +284,18 @@ impl AgentContextImpl {
             current_sequence: AtomicU64::new(0),
             parent_execution_id: None,
             children: RwLock::new(HashMap::new()),
+            queue_context: None,
         }
     }
 
     /// Set the parent execution ID (called by the agent worker when creating the context)
     pub fn set_parent_execution_id(&mut self, parent_id: Option<Uuid>) {
         self.parent_execution_id = parent_id;
+    }
+
+    /// Set the queue context for resolving target queues when spawning children
+    pub fn set_queue_context(&mut self, queue_context: QueueContext) {
+        self.queue_context = Some(queue_context);
     }
 
     /// Request cancellation
@@ -1112,14 +1122,21 @@ impl AgentContext for AgentContextImpl {
         input: Value,
         options: SpawnOptions,
     ) -> Result<ChildHandle> {
-        let (agent_kind, queue, mode_str): (String, Option<String>, &str) = match &mode {
-            AgentMode::Remote(kind) => (kind.clone(), None, "REMOTE"),
-            AgentMode::Local(kind) => (kind.clone(), None, "LOCAL"),
+        let (agent_kind, mode_str): (String, &str) = match &mode {
+            AgentMode::Remote(kind) => (kind.clone(), "REMOTE"),
+            AgentMode::Local(kind) => (kind.clone(), "LOCAL"),
             AgentMode::External(_) => {
                 return Err(FlovynError::NotSupported(
                     "External agent spawning not yet implemented".into(),
                 ));
             }
+        };
+
+        // Resolve the target queue using queue context
+        let resolved_queue = if let Some(ref qctx) = self.queue_context {
+            Some(qctx.resolve_queue(options.queue.as_deref(), mode_str))
+        } else {
+            options.queue.clone()
         };
 
         let input_bytes = serde_json::to_vec(&input)?;
@@ -1137,7 +1154,7 @@ impl AgentContext for AgentContextImpl {
                 self.agent_execution_id,
                 &agent_kind,
                 &input_bytes,
-                queue.as_deref(),
+                resolved_queue.as_deref(),
                 mode_str,
                 max_budget_tokens,
             )

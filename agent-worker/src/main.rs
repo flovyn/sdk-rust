@@ -22,6 +22,11 @@ enum Commands {
         /// Workspace directory the agent operates in
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
+
+        /// Queue name override. If not set, auto-generates from
+        /// user.{username}.{hostname}.{workspace_dir_name}
+        #[arg(long)]
+        queue: Option<String>,
     },
 
     /// Resume a suspended agent session
@@ -54,7 +59,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { kind, workspace } => cmd_run(&kind, &workspace).await?,
+        Commands::Run {
+            kind,
+            workspace,
+            queue,
+        } => cmd_run(&kind, &workspace, queue.as_deref()).await?,
         Commands::Resume {
             session_id,
             workspace,
@@ -65,14 +74,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn cmd_run(kind: &str, workspace: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_run(
+    kind: &str,
+    workspace: &std::path::Path,
+    queue_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use flovyn_worker_sdk::agent::queue::generate_queue_name;
+
     let workspace = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+
+    // Resolve queue name: explicit override or auto-generate
+    let queue = match queue_override {
+        Some(q) => q.to_string(),
+        None => generate_queue_name(&workspace),
+    };
 
     let (session, _storage) = Session::create(kind, &workspace).await?;
 
     println!("Created session: {}", session.session_id);
     println!("  Kind:      {}", session.agent_kind);
     println!("  Workspace: {}", session.workspace.display());
+    println!("  Queue:     {}", queue);
     println!("  Database:  {}", session.db_path.display());
     println!();
     println!("Session is ready. Agent execution requires an AgentDefinition to be registered.");

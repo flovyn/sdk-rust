@@ -77,6 +77,8 @@ pub struct ChildEventInfo {
 /// Options for spawning a child agent
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SpawnOptions {
+    /// Explicit target queue override. When set, bypasses automatic queue resolution.
+    pub queue: Option<String>,
     /// Persistence mode for the child agent
     pub persistence: Option<Persistence>,
     /// Budget limits for the child agent

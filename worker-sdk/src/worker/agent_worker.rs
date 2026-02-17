@@ -527,6 +527,12 @@ impl AgentExecutorWorker {
                         Ok(mut ctx) => {
                             // Propagate parent_execution_id from PollAgent response
                             ctx.set_parent_execution_id(info.parent_execution_id);
+                            // Set queue context for child agent queue resolution
+                            ctx.set_queue_context(
+                                crate::agent::queue::QueueContext::from_worker_queue(
+                                    config.queue.clone(),
+                                ),
+                            );
                             ctx
                         }
                         Err(e) => {

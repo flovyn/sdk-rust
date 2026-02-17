@@ -51,6 +51,7 @@ pub mod context_impl;
 pub mod definition;
 pub mod executor;
 pub mod future;
+pub mod queue;
 pub mod registry;
 #[cfg(feature = "local")]
 pub mod session;
@@ -64,6 +65,7 @@ pub use child::{
     HandoffCompletion, HandoffOptions, Persistence, SpawnOptions,
 };
 pub use combinators::TaskOutcome;
+pub use queue::QueueContext;
 pub use context::{
     AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType, ScheduleAgentTaskOptions,
 };
