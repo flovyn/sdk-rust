@@ -1,7 +1,10 @@
 //! FlovynClient builder for fluent configuration
 
 use crate::agent::definition::AgentDefinition;
+use crate::agent::executor::TaskExecutor;
 use crate::agent::registry::AgentRegistry;
+use crate::agent::signals::SignalSource;
+use crate::agent::storage::AgentStorage;
 use crate::client::hook::{CompositeWorkflowHook, WorkflowHook};
 use crate::config::FlovynClientConfig;
 use crate::error::{FlovynError, Result};
@@ -64,6 +67,12 @@ pub struct FlovynClientBuilder {
     /// OAuth2 credentials for client credentials flow
     #[cfg(feature = "oauth2")]
     oauth2_credentials: Option<OAuth2Credentials>,
+    /// Custom agent storage backend (defaults to RemoteStorage)
+    agent_storage: Option<Arc<dyn AgentStorage>>,
+    /// Custom task executor backend (defaults to RemoteTaskExecutor)
+    agent_task_executor: Option<Arc<dyn TaskExecutor>>,
+    /// Custom signal source backend (defaults to RemoteSignalSource)
+    agent_signal_source: Option<Arc<dyn SignalSource>>,
 }
 
 impl Default for FlovynClientBuilder {
@@ -98,6 +107,9 @@ impl FlovynClientBuilder {
             reconnection_strategy: ReconnectionStrategy::default(),
             #[cfg(feature = "oauth2")]
             oauth2_credentials: None,
+            agent_storage: None,
+            agent_task_executor: None,
+            agent_signal_source: None,
         }
     }
 
@@ -453,6 +465,33 @@ impl FlovynClientBuilder {
         self
     }
 
+    /// Set a custom agent storage backend.
+    ///
+    /// When set, agents will use this storage instead of the default `RemoteStorage`.
+    /// This enables local mode (SQLite), testing (in-memory), or hybrid configurations.
+    pub fn agent_storage(mut self, storage: impl AgentStorage + 'static) -> Self {
+        self.agent_storage = Some(Arc::new(storage));
+        self
+    }
+
+    /// Set a custom agent task executor.
+    ///
+    /// When set, agents will use this executor instead of the default `RemoteTaskExecutor`.
+    /// This enables local task execution without server involvement.
+    pub fn agent_task_executor(mut self, executor: impl TaskExecutor + 'static) -> Self {
+        self.agent_task_executor = Some(Arc::new(executor));
+        self
+    }
+
+    /// Set a custom agent signal source.
+    ///
+    /// When set, agents will use this signal source instead of the default `RemoteSignalSource`.
+    /// This enables channel-based or interactive signal delivery for local agents.
+    pub fn agent_signal_source(mut self, source: impl SignalSource + 'static) -> Self {
+        self.agent_signal_source = Some(Arc::new(source));
+        self
+    }
+
     /// Build the FlovynClient
     ///
     /// # Errors
@@ -534,6 +573,9 @@ impl FlovynClientBuilder {
             lifecycle_hooks,
             reconnection_strategy: self.reconnection_strategy,
             worker_internals: parking_lot::RwLock::new(None),
+            agent_storage: self.agent_storage,
+            agent_task_executor: self.agent_task_executor,
+            agent_signal_source: self.agent_signal_source,
         })
     }
 }

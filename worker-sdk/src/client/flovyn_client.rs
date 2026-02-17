@@ -3,7 +3,10 @@
 //! The FlovynClient provides a high-level API for interacting with the Flovyn server,
 //! including starting workflows, managing workers, and querying workflow state.
 
+use crate::agent::executor::TaskExecutor;
 use crate::agent::registry::AgentRegistry;
+use crate::agent::signals::SignalSource;
+use crate::agent::storage::AgentStorage;
 use crate::client::builder::FlovynClientBuilder;
 use crate::client::hook::WorkflowHook;
 use crate::client::{
@@ -274,6 +277,12 @@ pub struct FlovynClient {
     pub(crate) reconnection_strategy: ReconnectionStrategy,
     /// Stored worker internals from the last start() call
     pub(crate) worker_internals: parking_lot::RwLock<Option<Arc<WorkerInternals>>>,
+    /// Custom agent storage backend (None = use RemoteStorage)
+    pub(crate) agent_storage: Option<Arc<dyn AgentStorage>>,
+    /// Custom agent task executor (None = use RemoteTaskExecutor)
+    pub(crate) agent_task_executor: Option<Arc<dyn TaskExecutor>>,
+    /// Custom agent signal source (None = use RemoteSignalSource)
+    pub(crate) agent_signal_source: Option<Arc<dyn SignalSource>>,
 }
 
 impl FlovynClient {
@@ -515,6 +524,9 @@ impl FlovynClient {
                 lifecycle_hooks: self.lifecycle_hooks.clone(),
                 reconnection_strategy: self.reconnection_strategy.clone(),
                 server_worker_id,
+                agent_storage: self.agent_storage.clone(),
+                agent_task_executor: self.agent_task_executor.clone(),
+                agent_signal_source: self.agent_signal_source.clone(),
             };
 
             let worker =
