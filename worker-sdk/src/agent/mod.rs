@@ -43,13 +43,16 @@
 //! }
 //! ```
 
+pub mod budget;
 pub mod builder;
+pub mod catalog;
 pub mod child;
 pub mod combinators;
 pub mod context;
 pub mod context_impl;
 pub mod definition;
 pub mod executor;
+pub mod external;
 pub mod future;
 pub mod queue;
 pub mod registry;
@@ -64,7 +67,10 @@ pub use child::{
     AgentMode, Budget, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, ExternalAgent,
     HandoffCompletion, HandoffOptions, Persistence, SpawnOptions,
 };
+pub use budget::BudgetTracker;
+pub use catalog::{AgentCatalog, CatalogEntry};
 pub use combinators::TaskOutcome;
+pub use external::ExternalAgentProtocol;
 pub use queue::QueueContext;
 pub use context::{
     AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType, ScheduleAgentTaskOptions,
