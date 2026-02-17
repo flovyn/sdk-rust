@@ -50,6 +50,8 @@ pub mod definition;
 pub mod executor;
 pub mod future;
 pub mod registry;
+#[cfg(feature = "local")]
+pub mod session;
 pub mod signals;
 pub mod storage;
 pub mod tracer;
