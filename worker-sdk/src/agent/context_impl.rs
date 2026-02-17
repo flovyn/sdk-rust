@@ -14,7 +14,7 @@ use crate::agent::storage::{AgentCommand, AgentStorage, CheckpointData, CommandB
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
-use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry, AgentTokenUsage};
+use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry};
 use flovyn_worker_core::generated::flovyn_v1::AgentStreamEventType;
 use parking_lot::RwLock;
 use serde_json::Value;
@@ -108,7 +108,7 @@ impl AgentContextImpl {
     /// Uses `RemoteStorage`, `RemoteTaskExecutor`, and `RemoteSignalSource`
     /// as the default backends, preserving existing remote-mode behavior.
     pub async fn new(
-        mut client: AgentDispatch,
+        client: AgentDispatch,
         agent_execution_id: Uuid,
         org_id: Uuid,
         input: Value,
@@ -380,116 +380,10 @@ impl AgentContextImpl {
             checkpoint,
         };
 
-        self.execute_batch_legacy(&batch).await
-    }
-
-    /// Execute a batch of commands using individual gRPC calls.
-    ///
-    /// This is a backward-compatible implementation that executes commands
-    /// one at a time via the existing gRPC client. It will be replaced by
-    /// a batch RPC in a future release for better efficiency.
-    ///
-    /// # Arguments
-    ///
-    /// * `batch` - The command batch to execute
-    ///
-    /// # Note
-    ///
-    /// This method does not guarantee atomicity - if a command fails,
-    /// previous commands may have already been persisted.
-    async fn execute_batch_legacy(&self, batch: &CommandBatch) -> Result<()> {
-        let mut client = self.client.lock().await;
-
-        tracing::debug!(
-            agent_execution_id = %self.agent_execution_id,
-            command_count = batch.commands.len(),
-            "execute_batch_legacy: processing commands"
-        );
-
-        // Execute each command individually
-        for command in &batch.commands {
-            match command {
-                AgentCommand::AppendEntry {
-                    entry_id,
-                    parent_id,
-                    role,
-                    content,
-                } => {
-                    tracing::info!(
-                        agent_execution_id = %self.agent_execution_id,
-                        entry_id = %entry_id,
-                        parent_id = ?parent_id,
-                        role = %role,
-                        "execute_batch_legacy: appending entry"
-                    );
-                    // Pass entry_id as idempotency_key - server uses it as the entry ID
-                    // (see DomainAgentEntry::new_with_idempotency which parses UUID from key)
-                    client
-                        .append_entry(
-                            self.agent_execution_id,
-                            *parent_id,
-                            "MESSAGE", // entry_type
-                            Some(role.as_str()),
-                            content,
-                            None,                        // turn_id
-                            None,                        // token_usage
-                            Some(&entry_id.to_string()), // idempotency_key = entry_id
-                        )
-                        .await?;
-                    tracing::info!(
-                        agent_execution_id = %self.agent_execution_id,
-                        entry_id = %entry_id,
-                        "execute_batch_legacy: entry appended successfully"
-                    );
-                }
-                AgentCommand::ScheduleTask {
-                    task_id: _,
-                    kind,
-                    input,
-                    options,
-                    idempotency_key,
-                } => {
-                    // Use content-based idempotency_key for deduplication.
-                    // Server will use this to detect duplicate task submissions.
-                    client
-                        .schedule_task(
-                            self.agent_execution_id,
-                            kind,
-                            input,
-                            options.queue.as_deref(),
-                            options.max_retries,
-                            options.timeout_ms,
-                            Some(idempotency_key),
-                        )
-                        .await?;
-                }
-                AgentCommand::WaitForSignal { signal_name: _ } => {
-                    // Signal waiting is tracked locally, no gRPC call needed
-                    // The suspend call will be made separately
-                }
-            }
-        }
-
-        // Submit checkpoint if provided
-        if let Some(checkpoint) = &batch.checkpoint {
-            let token_usage = checkpoint.token_usage.as_ref().map(|tu| AgentTokenUsage {
-                input_tokens: tu.input_tokens,
-                output_tokens: tu.output_tokens,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-            });
-
-            client
-                .submit_checkpoint(
-                    self.agent_execution_id,
-                    checkpoint.leaf_entry_id,
-                    &checkpoint.state,
-                    token_usage,
-                )
-                .await?;
-        }
-
-        Ok(())
+        // Delegate to the pluggable storage backend
+        self.storage
+            .commit_batch(self.agent_execution_id, batch)
+            .await
     }
 
     /// Add a command to the pending batch.
@@ -512,18 +406,17 @@ impl AgentContextImpl {
         self.current_sequence.load(Ordering::SeqCst)
     }
 
-    /// Batch fetch results for multiple tasks.
+    /// Batch fetch results for multiple tasks via the storage backend.
     ///
     /// This is an internal helper used by `join_all` and `select_ok` to efficiently
     /// check the status of multiple tasks in a single call.
     async fn get_task_results_batch(
         &self,
         task_ids: &[Uuid],
-    ) -> Result<Vec<flovyn_worker_core::client::BatchTaskResult>> {
-        let mut client = self.client.lock().await;
-        Ok(client
-            .get_task_results_batch(self.agent_execution_id, task_ids)
-            .await?)
+    ) -> Result<Vec<crate::agent::storage::TaskResult>> {
+        self.storage
+            .get_task_results(self.agent_execution_id, task_ids)
+            .await
     }
 
     /// Suspend the agent waiting for multiple tasks.
@@ -814,6 +707,8 @@ impl AgentContext for AgentContextImpl {
     }
 
     async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {
+        use crate::agent::storage::TaskStatus;
+
         if futures.is_empty() {
             return Ok(vec![]);
         }
@@ -842,11 +737,11 @@ impl AgentContext for AgentContextImpl {
                 task_status = %status.status,
                 "join_all: task status"
             );
-            match status.status.as_str() {
-                "COMPLETED" => {
+            match status.status {
+                TaskStatus::Completed => {
                     results[i] = Some(status.output.clone().unwrap_or(Value::Null));
                 }
-                "FAILED" => {
+                TaskStatus::Failed => {
                     let error = status
                         .error
                         .clone()
@@ -856,14 +751,13 @@ impl AgentContext for AgentContextImpl {
                         future.kind, future.task_id, error
                     )));
                 }
-                "CANCELLED" => {
+                TaskStatus::Cancelled => {
                     return Err(FlovynError::TaskFailed(format!(
                         "Task '{}' (id={}) was cancelled",
                         future.kind, future.task_id
                     )));
                 }
-                _ => {
-                    // PENDING or RUNNING
+                TaskStatus::Pending | TaskStatus::Running => {
                     all_complete = false;
                 }
             }
@@ -897,6 +791,7 @@ impl AgentContext for AgentContextImpl {
         futures: Vec<AgentTaskFutureRaw>,
     ) -> Result<crate::agent::combinators::SettledResult> {
         use crate::agent::combinators::SettledResult;
+        use crate::agent::storage::TaskStatus;
 
         if futures.is_empty() {
             return Ok(SettledResult::new());
@@ -914,23 +809,22 @@ impl AgentContext for AgentContextImpl {
         let mut all_terminal = true;
 
         for (future, status) in futures.iter().zip(statuses.iter()) {
-            match status.status.as_str() {
-                "COMPLETED" => {
+            match status.status {
+                TaskStatus::Completed => {
                     let output = status.output.clone().unwrap_or(Value::Null);
                     result.completed.push((future.task_id.to_string(), output));
                 }
-                "FAILED" => {
+                TaskStatus::Failed => {
                     let error = status
                         .error
                         .clone()
                         .unwrap_or_else(|| "Task failed".to_string());
                     result.failed.push((future.task_id.to_string(), error));
                 }
-                "CANCELLED" => {
+                TaskStatus::Cancelled => {
                     result.cancelled.push(future.task_id.to_string());
                 }
-                _ => {
-                    // PENDING or RUNNING - not terminal yet
+                TaskStatus::Pending | TaskStatus::Running => {
                     all_terminal = false;
                 }
             }
@@ -954,6 +848,8 @@ impl AgentContext for AgentContextImpl {
         &self,
         futures: Vec<AgentTaskFutureRaw>,
     ) -> Result<(Value, Vec<AgentTaskFutureRaw>)> {
+        use crate::agent::storage::TaskStatus;
+
         if futures.is_empty() {
             return Err(FlovynError::InvalidArgument(
                 "select_ok requires at least one future".to_string(),
@@ -972,8 +868,8 @@ impl AgentContext for AgentContextImpl {
         let mut pending_count = 0;
 
         for (i, (future, status)) in futures.iter().zip(statuses.iter()).enumerate() {
-            match status.status.as_str() {
-                "COMPLETED" => {
+            match status.status {
+                TaskStatus::Completed => {
                     // Found a successful task - return it with remaining futures
                     let result = status.output.clone().unwrap_or(Value::Null);
                     let remaining: Vec<AgentTaskFutureRaw> = futures
@@ -984,7 +880,7 @@ impl AgentContext for AgentContextImpl {
                         .collect();
                     return Ok((result, remaining));
                 }
-                "FAILED" | "CANCELLED" => {
+                TaskStatus::Failed | TaskStatus::Cancelled => {
                     // Record first error for the AllTasksFailed message
                     if first_error.is_none() {
                         let error = status
@@ -997,8 +893,7 @@ impl AgentContext for AgentContextImpl {
                         ));
                     }
                 }
-                _ => {
-                    // PENDING or RUNNING - still have hope
+                TaskStatus::Pending | TaskStatus::Running => {
                     pending_count += 1;
                 }
             }

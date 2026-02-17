@@ -243,13 +243,21 @@ pub trait AgentStorage: Send + Sync {
     /// Get the result of a completed task.
     ///
     /// Returns `None` if the task is still pending or doesn't exist.
-    async fn get_task_result(&self, task_id: Uuid) -> StorageResult<Option<TaskResult>>;
+    async fn get_task_result(
+        &self,
+        agent_id: Uuid,
+        task_id: Uuid,
+    ) -> StorageResult<Option<TaskResult>>;
 
     /// Get results for multiple tasks in one call.
     ///
     /// More efficient than calling `get_task_result` multiple times.
-    /// Returns only tasks that have results (completed, failed, or cancelled).
-    async fn get_task_results(&self, task_ids: &[Uuid]) -> StorageResult<Vec<TaskResult>>;
+    /// Returns results for all requested tasks, including pending/running ones.
+    async fn get_task_results(
+        &self,
+        agent_id: Uuid,
+        task_ids: &[Uuid],
+    ) -> StorageResult<Vec<TaskResult>>;
 
     /// Store a signal for an agent.
     ///

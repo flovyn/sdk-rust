@@ -234,12 +234,20 @@ impl AgentStorage for InMemoryStorage {
         Ok(*latest.get(&agent_id).unwrap_or(&0))
     }
 
-    async fn get_task_result(&self, task_id: Uuid) -> StorageResult<Option<TaskResult>> {
+    async fn get_task_result(
+        &self,
+        _agent_id: Uuid,
+        task_id: Uuid,
+    ) -> StorageResult<Option<TaskResult>> {
         let results = self.task_results.read().unwrap();
         Ok(results.get(&task_id).cloned())
     }
 
-    async fn get_task_results(&self, task_ids: &[Uuid]) -> StorageResult<Vec<TaskResult>> {
+    async fn get_task_results(
+        &self,
+        _agent_id: Uuid,
+        task_ids: &[Uuid],
+    ) -> StorageResult<Vec<TaskResult>> {
         let results = self.task_results.read().unwrap();
         Ok(task_ids
             .iter()
@@ -390,20 +398,28 @@ mod tests {
             },
         );
 
+        let agent_id = Uuid::new_v4();
+
         // Get single task result
-        let result_1 = storage.get_task_result(task_id_1).await.unwrap();
+        let result_1 = storage
+            .get_task_result(agent_id, task_id_1)
+            .await
+            .unwrap();
         assert!(result_1.is_some());
         let r1 = result_1.unwrap();
         assert_eq!(r1.status, TaskStatus::Completed);
         assert_eq!(r1.output, Some(json!({"answer": 42})));
 
         // Get non-existent task result
-        let result_3 = storage.get_task_result(task_id_3).await.unwrap();
+        let result_3 = storage
+            .get_task_result(agent_id, task_id_3)
+            .await
+            .unwrap();
         assert!(result_3.is_none());
 
         // Get multiple task results
         let results = storage
-            .get_task_results(&[task_id_1, task_id_2, task_id_3])
+            .get_task_results(agent_id, &[task_id_1, task_id_2, task_id_3])
             .await
             .unwrap();
         assert_eq!(results.len(), 2); // Only 2 have results
@@ -559,7 +575,11 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             assert!(!storage.has_signal(agent_id, "test").await.unwrap());
-            assert!(storage.get_task_result(task_id).await.unwrap().is_none());
+            assert!(storage
+                .get_task_result(agent_id, task_id)
+                .await
+                .unwrap()
+                .is_none());
         });
     }
 
