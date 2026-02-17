@@ -2143,6 +2143,9 @@ pub struct AgentExecutionInfo {
     /// Arbitrary metadata (JSON)
     #[prost(bytes = "vec", tag = "11")]
     pub metadata: ::prost::alloc::vec::Vec<u8>,
+    /// Parent execution ID (if this is a child agent)
+    #[prost(string, optional, tag = "12")]
+    pub parent_execution_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2400,7 +2403,7 @@ pub struct SuspendAgentRequest {
     #[prost(string, optional, tag = "3")]
     pub reason: ::core::option::Option<::prost::alloc::string::String>,
     /// Wait condition - exactly one must be set
-    #[prost(oneof = "suspend_agent_request::WaitCondition", tags = "2, 4, 5")]
+    #[prost(oneof = "suspend_agent_request::WaitCondition", tags = "2, 4, 5, 6, 7")]
     pub wait_condition: ::core::option::Option<suspend_agent_request::WaitCondition>,
 }
 /// Nested message and enum types in `SuspendAgentRequest`.
@@ -2418,6 +2421,12 @@ pub mod suspend_agent_request {
         /// Wait for multiple tasks (parallel task support)
         #[prost(message, tag = "5")]
         WaitForTasks(super::WaitForTasks),
+        /// Wait for ANY child agent event (completion, failure, signal)
+        #[prost(message, tag = "6")]
+        WaitForChildEvent(super::WaitForChildEvent),
+        /// Wait for ALL children to complete
+        #[prost(message, tag = "7")]
+        WaitForAllChildren(super::WaitForAllChildren),
     }
 }
 /// Wait condition for multiple tasks (parallel execution)
@@ -2646,6 +2655,155 @@ pub struct StreamAgentDataResponse {
     /// Whether event was acknowledged
     #[prost(bool, tag = "1")]
     pub acknowledged: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WaitForChildEvent {
+    /// Child execution IDs to wait for (resume on ANY event)
+    #[prost(string, repeated, tag = "1")]
+    pub child_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WaitForAllChildren {
+    /// Child execution IDs to wait for (resume when ALL complete)
+    #[prost(string, repeated, tag = "1")]
+    pub child_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnChildAgentRequest {
+    /// Organization ID
+    #[prost(string, tag = "1")]
+    pub org_id: ::prost::alloc::string::String,
+    /// Parent agent execution ID
+    #[prost(string, tag = "2")]
+    pub parent_execution_id: ::prost::alloc::string::String,
+    /// Agent kind for the child
+    #[prost(string, tag = "3")]
+    pub agent_kind: ::prost::alloc::string::String,
+    /// Input data (JSON serialized)
+    #[prost(bytes = "vec", tag = "4")]
+    pub input: ::prost::alloc::vec::Vec<u8>,
+    /// Queue for child routing
+    #[prost(string, optional, tag = "5")]
+    pub queue: ::core::option::Option<::prost::alloc::string::String>,
+    /// Optional system prompt override
+    #[prost(string, optional, tag = "6")]
+    pub system_prompt: ::core::option::Option<::prost::alloc::string::String>,
+    /// Tools available to the child
+    #[prost(string, repeated, tag = "7")]
+    pub tools: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Model override
+    #[prost(string, optional, tag = "8")]
+    pub model: ::core::option::Option<::prost::alloc::string::String>,
+    /// Maximum budget in tokens
+    #[prost(int64, optional, tag = "9")]
+    pub max_budget_tokens: ::core::option::Option<i64>,
+    /// Execution mode: "REMOTE", "LOCAL", "EXTERNAL"
+    #[prost(string, tag = "10")]
+    pub mode: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnChildAgentResponse {
+    /// Created child execution ID
+    #[prost(string, tag = "1")]
+    pub child_execution_id: ::prost::alloc::string::String,
+    /// Child agent status
+    #[prost(string, tag = "2")]
+    pub status: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SendParentSignalRequest {
+    /// Organization ID
+    #[prost(string, tag = "1")]
+    pub org_id: ::prost::alloc::string::String,
+    /// Child execution ID (sender)
+    #[prost(string, tag = "2")]
+    pub child_execution_id: ::prost::alloc::string::String,
+    /// Signal name
+    #[prost(string, tag = "3")]
+    pub signal_name: ::prost::alloc::string::String,
+    /// Signal payload (JSON serialized)
+    #[prost(bytes = "vec", tag = "4")]
+    pub payload: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SendParentSignalResponse {
+    /// Whether signal was delivered to parent
+    #[prost(bool, tag = "1")]
+    pub delivered: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SendChildSignalRequest {
+    /// Organization ID
+    #[prost(string, tag = "1")]
+    pub org_id: ::prost::alloc::string::String,
+    /// Parent execution ID (sender)
+    #[prost(string, tag = "2")]
+    pub parent_execution_id: ::prost::alloc::string::String,
+    /// Child execution ID (receiver)
+    #[prost(string, tag = "3")]
+    pub child_execution_id: ::prost::alloc::string::String,
+    /// Signal name
+    #[prost(string, tag = "4")]
+    pub signal_name: ::prost::alloc::string::String,
+    /// Signal payload (JSON serialized)
+    #[prost(bytes = "vec", tag = "5")]
+    pub payload: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SendChildSignalResponse {
+    /// Whether signal was delivered to child
+    #[prost(bool, tag = "1")]
+    pub delivered: bool,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PollChildEventsRequest {
+    /// Organization ID
+    #[prost(string, tag = "1")]
+    pub org_id: ::prost::alloc::string::String,
+    /// Parent execution ID
+    #[prost(string, tag = "2")]
+    pub parent_execution_id: ::prost::alloc::string::String,
+    /// Child execution IDs to poll events for
+    #[prost(string, repeated, tag = "3")]
+    pub child_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PollChildEventsResponse {
+    /// Events from children
+    #[prost(message, repeated, tag = "1")]
+    pub events: ::prost::alloc::vec::Vec<ChildEventInfo>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ChildEventInfo {
+    /// Child execution ID that generated the event
+    #[prost(string, tag = "1")]
+    pub child_execution_id: ::prost::alloc::string::String,
+    /// Event type: "completed", "failed", "signal"
+    #[prost(string, tag = "2")]
+    pub event_type: ::prost::alloc::string::String,
+    /// Output (if completed)
+    #[prost(bytes = "vec", optional, tag = "3")]
+    pub output: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    /// Error message (if failed)
+    #[prost(string, optional, tag = "4")]
+    pub error: ::core::option::Option<::prost::alloc::string::String>,
+    /// Signal name (if signal event)
+    #[prost(string, optional, tag = "5")]
+    pub signal_name: ::core::option::Option<::prost::alloc::string::String>,
+    /// Signal payload (if signal event)
+    #[prost(bytes = "vec", optional, tag = "6")]
+    pub signal_payload: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 /// Mode for waiting on multiple tasks
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -3179,6 +3337,91 @@ pub mod agent_dispatch_client {
                 "StreamAgentData",
             ));
             self.inner.client_streaming(req, path, codec).await
+        }
+        /// Hierarchical agent RPCs
+        pub async fn spawn_child_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SpawnChildAgentRequest>,
+        ) -> std::result::Result<tonic::Response<super::SpawnChildAgentResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/SpawnChildAgent");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "SpawnChildAgent",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn send_parent_signal(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SendParentSignalRequest>,
+        ) -> std::result::Result<tonic::Response<super::SendParentSignalResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/SendParentSignal");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "SendParentSignal",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn send_child_signal(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SendChildSignalRequest>,
+        ) -> std::result::Result<tonic::Response<super::SendChildSignalResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/SendChildSignal");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "SendChildSignal",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn poll_child_events(
+            &mut self,
+            request: impl tonic::IntoRequest<super::PollChildEventsRequest>,
+        ) -> std::result::Result<tonic::Response<super::PollChildEventsResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/flovyn.v1.AgentDispatch/PollChildEvents");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "PollChildEvents",
+            ));
+            self.inner.unary(req, path, codec).await
         }
     }
 }

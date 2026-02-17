@@ -44,6 +44,7 @@
 //! ```
 
 pub mod builder;
+pub mod child;
 pub mod combinators;
 pub mod context;
 pub mod context_impl;
@@ -58,6 +59,10 @@ pub mod storage;
 pub mod tracer;
 
 // Re-export commonly used types
+pub use child::{
+    AgentMode, Budget, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, ExternalAgent,
+    HandoffCompletion, HandoffOptions, Persistence, SpawnOptions,
+};
 pub use combinators::TaskOutcome;
 pub use context::{
     AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType, ScheduleAgentTaskOptions,
