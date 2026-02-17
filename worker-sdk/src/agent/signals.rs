@@ -209,6 +209,179 @@ impl SignalSource for ChannelSignalSource {
     }
 }
 
+/// Signal delivery mode for interactive signal sources.
+#[cfg(feature = "local")]
+enum SignalMode {
+    /// Read signals from stdin as JSON lines.
+    ///
+    /// Each line is parsed as `{"signal_name": "...", "payload": ...}`.
+    Stdin,
+    /// Receive signals via a tokio mpsc channel.
+    Channel(Mutex<tokio::sync::mpsc::Receiver<(String, Value)>>),
+}
+
+/// Interactive signal source for local agents.
+///
+/// Supports two modes:
+/// - **Stdin**: Reads JSON lines from standard input. Enables interactive CLI agents.
+/// - **Channel**: Receives signals programmatically. Used for IDE integrations, tests,
+///   and parent agents sending signals to local children.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use flovyn_worker_sdk::agent::signals::InteractiveSignalSource;
+///
+/// // Stdin mode - agent blocks and reads from terminal
+/// let source = InteractiveSignalSource::stdin();
+///
+/// // Channel mode - signals sent programmatically
+/// let (tx, rx) = tokio::sync::mpsc::channel(16);
+/// let source = InteractiveSignalSource::channel(rx);
+/// tx.send(("user-input".to_string(), json!({"text": "hello"}))).await?;
+/// ```
+#[cfg(feature = "local")]
+pub struct InteractiveSignalSource {
+    mode: SignalMode,
+    /// Buffered signals by name
+    buffer: Mutex<HashMap<String, Vec<Value>>>,
+}
+
+#[cfg(feature = "local")]
+impl InteractiveSignalSource {
+    /// Create an interactive signal source that reads from stdin.
+    ///
+    /// Each line from stdin is parsed as JSON with the format:
+    /// `{"signal_name": "...", "payload": ...}`
+    pub fn stdin() -> Self {
+        Self {
+            mode: SignalMode::Stdin,
+            buffer: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Create an interactive signal source from a channel receiver.
+    pub fn channel(rx: tokio::sync::mpsc::Receiver<(String, Value)>) -> Self {
+        Self {
+            mode: SignalMode::Channel(Mutex::new(rx)),
+            buffer: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Read a signal from stdin by reading a JSON line.
+    async fn read_stdin_signal() -> SignalResult<(String, Value)> {
+        let line = tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin()
+                .read_line(&mut line)
+                .map_err(|e| FlovynError::Other(format!("Failed to read stdin: {e}")))?;
+            Ok::<String, FlovynError>(line)
+        })
+        .await
+        .map_err(|e| FlovynError::Other(format!("Stdin task failed: {e}")))??;
+
+        let line = line.trim();
+        if line.is_empty() {
+            return Err(FlovynError::Other("Empty stdin input".to_string()));
+        }
+
+        // Parse as JSON object with signal_name and payload
+        let parsed: serde_json::Value = serde_json::from_str(line)
+            .map_err(|e| FlovynError::Other(format!("Invalid JSON from stdin: {e}")))?;
+
+        let signal_name = parsed
+            .get("signal_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| FlovynError::Other("Missing 'signal_name' in stdin input".to_string()))?
+            .to_string();
+
+        let payload = parsed
+            .get("payload")
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        Ok((signal_name, payload))
+    }
+
+    /// Drain available channel messages into the buffer.
+    async fn drain_channel_to_buffer(&self) {
+        if let SignalMode::Channel(ref rx) = self.mode {
+            let mut rx = rx.lock().await;
+            let mut buf = self.buffer.lock().await;
+            while let Ok((name, value)) = rx.try_recv() {
+                buf.entry(name).or_default().push(value);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "local")]
+#[async_trait]
+impl SignalSource for InteractiveSignalSource {
+    async fn wait_for_signal(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<Value> {
+        // Check buffer first
+        {
+            let mut buf = self.buffer.lock().await;
+            if let Some(values) = buf.get_mut(signal_name) {
+                if !values.is_empty() {
+                    return Ok(values.remove(0));
+                }
+            }
+        }
+
+        match &self.mode {
+            SignalMode::Stdin => {
+                // Read from stdin until we get the right signal
+                loop {
+                    let (name, payload) = Self::read_stdin_signal().await?;
+                    if name == signal_name {
+                        return Ok(payload);
+                    }
+                    // Buffer signals for other names
+                    let mut buf = self.buffer.lock().await;
+                    buf.entry(name).or_default().push(payload);
+                }
+            }
+            SignalMode::Channel(rx) => {
+                let mut rx = rx.lock().await;
+                loop {
+                    match rx.recv().await {
+                        Some((name, value)) => {
+                            if name == signal_name {
+                                return Ok(value);
+                            }
+                            let mut buf = self.buffer.lock().await;
+                            buf.entry(name).or_default().push(value);
+                        }
+                        None => {
+                            return Err(FlovynError::Other(
+                                "Signal channel closed".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn has_signal(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<bool> {
+        self.drain_channel_to_buffer().await;
+
+        let buf = self.buffer.lock().await;
+        Ok(buf
+            .get(signal_name)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false))
+    }
+
+    async fn drain_signals(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<Vec<Value>> {
+        self.drain_channel_to_buffer().await;
+
+        let mut buf = self.buffer.lock().await;
+        Ok(buf.remove(signal_name).unwrap_or_default())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,5 +516,73 @@ mod tests {
         // "other" should still be buffered
         let values = source.drain_signals(Uuid::nil(), "other").await.unwrap();
         assert_eq!(values, vec![serde_json::json!("buffered")]);
+    }
+
+    #[cfg(feature = "local")]
+    #[tokio::test]
+    async fn test_interactive_signal_channel_delivery() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let source = InteractiveSignalSource::channel(rx);
+
+        // Send a signal
+        tx.send(("user-input".to_string(), serde_json::json!({"text": "hello"})))
+            .await
+            .unwrap();
+
+        // Should receive it
+        let result = source
+            .wait_for_signal(Uuid::nil(), "user-input")
+            .await
+            .unwrap();
+        assert_eq!(result, serde_json::json!({"text": "hello"}));
+    }
+
+    #[cfg(feature = "local")]
+    #[tokio::test]
+    async fn test_interactive_signal_has_signal() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let source = InteractiveSignalSource::channel(rx);
+
+        // No signal initially
+        assert!(!source.has_signal(Uuid::nil(), "test").await.unwrap());
+
+        // Send a signal
+        tx.send(("test".to_string(), serde_json::json!("value")))
+            .await
+            .unwrap();
+
+        // Should have the signal
+        assert!(source.has_signal(Uuid::nil(), "test").await.unwrap());
+        assert!(!source.has_signal(Uuid::nil(), "other").await.unwrap());
+    }
+
+    #[cfg(feature = "local")]
+    #[tokio::test]
+    async fn test_interactive_signal_drain() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let source = InteractiveSignalSource::channel(rx);
+
+        // Send multiple signals
+        tx.send(("test".to_string(), serde_json::json!(1)))
+            .await
+            .unwrap();
+        tx.send(("test".to_string(), serde_json::json!(2)))
+            .await
+            .unwrap();
+        tx.send(("other".to_string(), serde_json::json!(3)))
+            .await
+            .unwrap();
+
+        // Drain "test" signals
+        let values = source.drain_signals(Uuid::nil(), "test").await.unwrap();
+        assert_eq!(values, vec![serde_json::json!(1), serde_json::json!(2)]);
+
+        // "other" still available
+        let values = source.drain_signals(Uuid::nil(), "other").await.unwrap();
+        assert_eq!(values, vec![serde_json::json!(3)]);
+
+        // No more
+        let values = source.drain_signals(Uuid::nil(), "test").await.unwrap();
+        assert!(values.is_empty());
     }
 }
