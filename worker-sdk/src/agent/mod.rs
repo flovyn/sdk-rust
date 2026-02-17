@@ -43,6 +43,7 @@
 //! }
 //! ```
 
+pub mod builder;
 pub mod combinators;
 pub mod context;
 pub mod context_impl;
