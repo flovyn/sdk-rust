@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use flovyn_worker_sdk::agent::session::{Session, SessionStatus};
 
+#[allow(dead_code)] // Tools infrastructure for future ReactAgent integration
+mod tools;
+
 /// CLI for running and managing local Flovyn agents.
 #[derive(Parser)]
 #[command(name = "flovyn-agent", about = "Local Flovyn agent runner")]
