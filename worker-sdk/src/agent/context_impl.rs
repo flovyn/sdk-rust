@@ -7,8 +7,10 @@ use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
     TokenUsage,
 };
+use crate::agent::executor::TaskExecutor;
 use crate::agent::future::AgentTaskFutureRaw;
-use crate::agent::storage::{AgentCommand, CheckpointData, CommandBatch};
+use crate::agent::signals::SignalSource;
+use crate::agent::storage::{AgentCommand, AgentStorage, CheckpointData, CommandBatch};
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
@@ -17,6 +19,7 @@ use flovyn_worker_core::generated::flovyn_v1::AgentStreamEventType;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
@@ -79,7 +82,15 @@ pub struct AgentContextImpl {
     /// Stream sequence counter
     stream_sequence: AtomicI32,
     /// gRPC client (tokio mutex for async-safe access)
+    /// Still needed for RPCs not yet abstracted (PollAgent, CompleteAgent,
+    /// FailAgent, SuspendAgent, StreamAgentData, etc.)
     client: TokioMutex<AgentDispatch>,
+    /// Pluggable storage backend (remote gRPC, SQLite, in-memory)
+    storage: Arc<dyn AgentStorage>,
+    /// Pluggable task executor (remote or local in-process)
+    task_executor: Arc<dyn TaskExecutor>,
+    /// Pluggable signal source (remote, channel, stdin)
+    signal_source: Arc<dyn SignalSource>,
     /// Cancellation flag
     cancellation_requested: AtomicBool,
     /// Pending commands to be committed at next suspension point
@@ -91,15 +102,54 @@ pub struct AgentContextImpl {
 }
 
 impl AgentContextImpl {
-    /// Create a new AgentContextImpl.
+    /// Create a new AgentContextImpl with default remote backends.
     ///
     /// This loads the initial state from the server (entries and checkpoint).
+    /// Uses `RemoteStorage`, `RemoteTaskExecutor`, and `RemoteSignalSource`
+    /// as the default backends, preserving existing remote-mode behavior.
     pub async fn new(
         mut client: AgentDispatch,
         agent_execution_id: Uuid,
         org_id: Uuid,
         input: Value,
         current_checkpoint_seq: i32,
+    ) -> Result<Self> {
+        use crate::agent::executor::RemoteTaskExecutor;
+        use crate::agent::signals::RemoteSignalSource;
+        use crate::agent::storage::RemoteStorage;
+
+        // Create default remote backends from the client
+        let storage = Arc::new(RemoteStorage::new(client.clone(), org_id)) as Arc<dyn AgentStorage>;
+        let task_executor = Arc::new(RemoteTaskExecutor::new()) as Arc<dyn TaskExecutor>;
+        let signal_source = Arc::new(RemoteSignalSource::new()) as Arc<dyn SignalSource>;
+
+        Self::with_backends(
+            client,
+            agent_execution_id,
+            org_id,
+            input,
+            current_checkpoint_seq,
+            storage,
+            task_executor,
+            signal_source,
+        )
+        .await
+    }
+
+    /// Create a new AgentContextImpl with custom backends.
+    ///
+    /// This allows plugging in different storage, executor, and signal
+    /// implementations for local mode, testing, or hybrid configurations.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_backends(
+        mut client: AgentDispatch,
+        agent_execution_id: Uuid,
+        org_id: Uuid,
+        input: Value,
+        current_checkpoint_seq: i32,
+        storage: Arc<dyn AgentStorage>,
+        task_executor: Arc<dyn TaskExecutor>,
+        signal_source: Arc<dyn SignalSource>,
     ) -> Result<Self> {
         // Load checkpoint if resuming
         let (checkpoint_state, checkpoint_seq, leaf_entry_id) = if current_checkpoint_seq >= 0 {
@@ -133,6 +183,9 @@ impl AgentContextImpl {
             leaf_entry_id: RwLock::new(leaf_entry_id),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
+            storage,
+            task_executor,
+            signal_source,
             cancellation_requested: AtomicBool::new(false),
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
@@ -152,6 +205,44 @@ impl AgentContextImpl {
         checkpoint_sequence: i32,
         leaf_entry_id: Option<Uuid>,
     ) -> Self {
+        use crate::agent::executor::RemoteTaskExecutor;
+        use crate::agent::signals::RemoteSignalSource;
+        use crate::agent::storage::RemoteStorage;
+
+        let storage = Arc::new(RemoteStorage::new(client.clone(), org_id)) as Arc<dyn AgentStorage>;
+        let task_executor = Arc::new(RemoteTaskExecutor::new()) as Arc<dyn TaskExecutor>;
+        let signal_source = Arc::new(RemoteSignalSource::new()) as Arc<dyn SignalSource>;
+
+        Self::from_loaded_with_backends(
+            client,
+            agent_execution_id,
+            org_id,
+            input,
+            messages,
+            checkpoint_state,
+            checkpoint_sequence,
+            leaf_entry_id,
+            storage,
+            task_executor,
+            signal_source,
+        )
+    }
+
+    /// Create from pre-loaded data with custom backends.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_loaded_with_backends(
+        client: AgentDispatch,
+        agent_execution_id: Uuid,
+        org_id: Uuid,
+        input: Value,
+        messages: Vec<LoadedMessage>,
+        checkpoint_state: Option<Value>,
+        checkpoint_sequence: i32,
+        leaf_entry_id: Option<Uuid>,
+        storage: Arc<dyn AgentStorage>,
+        task_executor: Arc<dyn TaskExecutor>,
+        signal_source: Arc<dyn SignalSource>,
+    ) -> Self {
         // Compute segment number from checkpoint sequence
         let segment = if checkpoint_sequence >= 0 {
             (checkpoint_sequence + 1) as u64
@@ -169,6 +260,9 @@ impl AgentContextImpl {
             leaf_entry_id: RwLock::new(leaf_entry_id),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
+            storage,
+            task_executor,
+            signal_source,
             cancellation_requested: AtomicBool::new(false),
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
