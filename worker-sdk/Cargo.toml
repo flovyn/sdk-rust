@@ -109,3 +109,8 @@ path = "tests/e2e/mod.rs"
 [[test]]
 name = "model"
 path = "tests/model/mod.rs"
+
+[[test]]
+name = "local_agent"
+path = "tests/local_agent_test.rs"
+required-features = ["local"]
