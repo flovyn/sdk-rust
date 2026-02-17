@@ -307,7 +307,6 @@ impl AgentStorage for RemoteStorage {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

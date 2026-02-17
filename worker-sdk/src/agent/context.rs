@@ -573,11 +573,7 @@ pub trait AgentContext: Send + Sync {
     }
 
     /// Cancel a child agent.
-    async fn cancel_child(
-        &self,
-        _handle: &ChildHandle,
-        _mode: CancellationMode,
-    ) -> Result<()> {
+    async fn cancel_child(&self, _handle: &ChildHandle, _mode: CancellationMode) -> Result<()> {
         Err(FlovynError::NotSupported(
             "cancel_child not supported by this context".into(),
         ))
@@ -587,10 +583,7 @@ pub trait AgentContext: Send + Sync {
     ///
     /// Returns any completed/failed events for the given children
     /// without suspending the agent.
-    async fn poll_child_events(
-        &self,
-        _handles: &[ChildHandle],
-    ) -> Result<Vec<ChildEventInfo>> {
+    async fn poll_child_events(&self, _handles: &[ChildHandle]) -> Result<Vec<ChildEventInfo>> {
         Err(FlovynError::NotSupported(
             "poll_child_events not supported by this context".into(),
         ))
@@ -600,10 +593,7 @@ pub trait AgentContext: Send + Sync {
     ///
     /// Suspends the agent until all children have reached a terminal state.
     /// Returns events for each child in the order they completed.
-    async fn join_children(
-        &self,
-        _handles: &[ChildHandle],
-    ) -> Result<Vec<ChildEvent>> {
+    async fn join_children(&self, _handles: &[ChildHandle]) -> Result<Vec<ChildEvent>> {
         Err(FlovynError::NotSupported(
             "join_children not supported by this context".into(),
         ))
@@ -613,10 +603,7 @@ pub trait AgentContext: Send + Sync {
     ///
     /// Suspends the agent until at least one child has reached a terminal state.
     /// Returns the first child event.
-    async fn select_child(
-        &self,
-        _handles: &[ChildHandle],
-    ) -> Result<ChildEvent> {
+    async fn select_child(&self, _handles: &[ChildHandle]) -> Result<ChildEvent> {
         Err(FlovynError::NotSupported(
             "select_child not supported by this context".into(),
         ))

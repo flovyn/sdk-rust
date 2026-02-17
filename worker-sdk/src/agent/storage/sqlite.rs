@@ -92,6 +92,7 @@ impl SqliteStorage {
     }
 
     /// Convert a TaskStatus to its database string representation.
+    #[allow(dead_code)]
     fn status_str(status: TaskStatus) -> &'static str {
         match status {
             TaskStatus::Pending => "pending",
@@ -210,7 +211,7 @@ impl AgentStorage for SqliteStorage {
         // Load checkpoint for this segment
         let checkpoint = sqlx::query(
             "SELECT state, leaf_entry_id, token_usage FROM checkpoints
-             WHERE agent_id = ? AND segment = ?"
+             WHERE agent_id = ? AND segment = ?",
         )
         .bind(&agent_id_str)
         .bind(segment as i64)
@@ -218,24 +219,23 @@ impl AgentStorage for SqliteStorage {
         .await
         .map_err(|e| FlovynError::Other(format!("SQLite query failed: {e}")))?;
 
-        let checkpoint_data = checkpoint
-            .map(|row| {
-                let state_str: String = row.get("state");
-                let leaf_entry_str: Option<String> = row.get("leaf_entry_id");
-                let token_usage_str: Option<String> = row.get("token_usage");
+        let checkpoint_data = checkpoint.map(|row| {
+            let state_str: String = row.get("state");
+            let leaf_entry_str: Option<String> = row.get("leaf_entry_id");
+            let token_usage_str: Option<String> = row.get("token_usage");
 
-                CheckpointData {
-                    state: serde_json::from_str(&state_str).unwrap_or(Value::Null),
-                    leaf_entry_id: leaf_entry_str.and_then(|s| Uuid::parse_str(&s).ok()),
-                    token_usage: token_usage_str
-                        .and_then(|s| serde_json::from_str::<TokenUsage>(&s).ok()),
-                }
-            });
+            CheckpointData {
+                state: serde_json::from_str(&state_str).unwrap_or(Value::Null),
+                leaf_entry_id: leaf_entry_str.and_then(|s| Uuid::parse_str(&s).ok()),
+                token_usage: token_usage_str
+                    .and_then(|s| serde_json::from_str::<TokenUsage>(&s).ok()),
+            }
+        });
 
         // Load pending tasks
         let pending_tasks = sqlx::query(
             "SELECT task_id, kind, status, output, error FROM tasks
-             WHERE agent_id = ? AND status IN ('pending', 'running')"
+             WHERE agent_id = ? AND status IN ('pending', 'running')",
         )
         .bind(&agent_id_str)
         .fetch_all(&self.pool)
@@ -268,13 +268,12 @@ impl AgentStorage for SqliteStorage {
     async fn get_latest_segment(&self, agent_id: Uuid) -> StorageResult<u64> {
         let agent_id_str = agent_id.to_string();
 
-        let result = sqlx::query(
-            "SELECT MAX(segment) as max_seg FROM checkpoints WHERE agent_id = ?"
-        )
-        .bind(&agent_id_str)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| FlovynError::Other(format!("SQLite query failed: {e}")))?;
+        let result =
+            sqlx::query("SELECT MAX(segment) as max_seg FROM checkpoints WHERE agent_id = ?")
+                .bind(&agent_id_str)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| FlovynError::Other(format!("SQLite query failed: {e}")))?;
 
         let max_seg: Option<i64> = result.get("max_seg");
         Ok(max_seg.unwrap_or(0) as u64)
@@ -287,13 +286,11 @@ impl AgentStorage for SqliteStorage {
     ) -> StorageResult<Option<TaskResult>> {
         let task_id_str = task_id.to_string();
 
-        let row = sqlx::query(
-            "SELECT task_id, status, output, error FROM tasks WHERE task_id = ?"
-        )
-        .bind(&task_id_str)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| FlovynError::Other(format!("SQLite query failed: {e}")))?;
+        let row = sqlx::query("SELECT task_id, status, output, error FROM tasks WHERE task_id = ?")
+            .bind(&task_id_str)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| FlovynError::Other(format!("SQLite query failed: {e}")))?;
 
         Ok(row.map(|r| {
             let status_str: String = r.get("status");
@@ -340,7 +337,7 @@ impl AgentStorage for SqliteStorage {
 
         sqlx::query(
             "INSERT INTO signals (agent_id, signal_name, payload, created_at)
-             VALUES (?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?)",
         )
         .bind(&agent_id_str)
         .bind(signal_name)
@@ -353,11 +350,7 @@ impl AgentStorage for SqliteStorage {
         Ok(())
     }
 
-    async fn pop_signal(
-        &self,
-        agent_id: Uuid,
-        signal_name: &str,
-    ) -> StorageResult<Option<Value>> {
+    async fn pop_signal(&self, agent_id: Uuid, signal_name: &str) -> StorageResult<Option<Value>> {
         let agent_id_str = agent_id.to_string();
 
         // Get the oldest signal with this name
@@ -365,7 +358,7 @@ impl AgentStorage for SqliteStorage {
             "SELECT id, payload FROM signals
              WHERE agent_id = ? AND signal_name = ?
              ORDER BY id ASC
-             LIMIT 1"
+             LIMIT 1",
         )
         .bind(&agent_id_str)
         .bind(signal_name)
@@ -397,7 +390,7 @@ impl AgentStorage for SqliteStorage {
 
         let row = sqlx::query(
             "SELECT COUNT(*) as cnt FROM signals
-             WHERE agent_id = ? AND signal_name = ?"
+             WHERE agent_id = ? AND signal_name = ?",
         )
         .bind(&agent_id_str)
         .bind(signal_name)
@@ -469,14 +462,12 @@ mod tests {
         let batch = CommandBatch {
             segment: 1,
             sequence: 1,
-            commands: vec![
-                AgentCommand::AppendEntry {
-                    entry_id,
-                    parent_id: None,
-                    role: "user".to_string(),
-                    content: json!({"text": "Hello"}),
-                },
-            ],
+            commands: vec![AgentCommand::AppendEntry {
+                entry_id,
+                parent_id: None,
+                role: "user".to_string(),
+                content: json!({"text": "Hello"}),
+            }],
             checkpoint: Some(CheckpointData {
                 state: json!({"turn": 1}),
                 leaf_entry_id: Some(entry_id),
@@ -579,14 +570,12 @@ mod tests {
         assert!(result.output.is_none());
 
         // Manually complete the task via SQL (simulating task executor)
-        sqlx::query(
-            "UPDATE tasks SET status = 'completed', output = ? WHERE task_id = ?"
-        )
-        .bind(serde_json::to_string(&json!({"result": 42})).unwrap())
-        .bind(task_id.to_string())
-        .execute(&storage.pool)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE tasks SET status = 'completed', output = ? WHERE task_id = ?")
+            .bind(serde_json::to_string(&json!({"result": 42})).unwrap())
+            .bind(task_id.to_string())
+            .execute(&storage.pool)
+            .await
+            .unwrap();
 
         // Now check result
         let result = storage.get_task_result(agent_id, task_id).await.unwrap();
@@ -595,7 +584,10 @@ mod tests {
         assert_eq!(result.output, Some(json!({"result": 42})));
 
         // Test batch get
-        let results = storage.get_task_results(agent_id, &[task_id]).await.unwrap();
+        let results = storage
+            .get_task_results(agent_id, &[task_id])
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].status, TaskStatus::Completed);
     }
@@ -607,7 +599,11 @@ mod tests {
 
         // No signal initially
         assert!(!storage.has_signal(agent_id, "user_input").await.unwrap());
-        assert!(storage.pop_signal(agent_id, "user_input").await.unwrap().is_none());
+        assert!(storage
+            .pop_signal(agent_id, "user_input")
+            .await
+            .unwrap()
+            .is_none());
 
         // Store a signal
         storage
@@ -635,6 +631,10 @@ mod tests {
 
         // No more signals
         assert!(!storage.has_signal(agent_id, "user_input").await.unwrap());
-        assert!(storage.pop_signal(agent_id, "user_input").await.unwrap().is_none());
+        assert!(storage
+            .pop_signal(agent_id, "user_input")
+            .await
+            .unwrap()
+            .is_none());
     }
 }

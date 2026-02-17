@@ -54,10 +54,7 @@ impl AgentTool for SignalChildTool {
             .as_str()
             .ok_or_else(|| FlovynError::Other("signal_name is required".into()))?;
 
-        let payload = args
-            .get("payload")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let payload = args.get("payload").cloned().unwrap_or(Value::Null);
 
         let handle = ctx.get_child_handle(child_id).await?;
 

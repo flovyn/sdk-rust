@@ -990,7 +990,10 @@ impl AgentDispatch {
         let request = flovyn_v1::PollChildEventsRequest {
             org_id: org_id.to_string(),
             parent_execution_id: parent_execution_id.to_string(),
-            child_execution_ids: child_execution_ids.iter().map(|id| id.to_string()).collect(),
+            child_execution_ids: child_execution_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
         };
 
         let response = self.inner.poll_child_events(request).await?;
@@ -1005,7 +1008,9 @@ impl AgentDispatch {
                 output: e.output.and_then(|b| serde_json::from_slice(&b).ok()),
                 error: e.error,
                 signal_name: e.signal_name,
-                signal_payload: e.signal_payload.and_then(|b| serde_json::from_slice(&b).ok()),
+                signal_payload: e
+                    .signal_payload
+                    .and_then(|b| serde_json::from_slice(&b).ok()),
             })
             .collect())
     }

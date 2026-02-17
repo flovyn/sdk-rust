@@ -68,7 +68,10 @@ impl AgentTool for SpawnAgentTool {
 
     async fn execute(&self, ctx: &dyn AgentContext, args: Value) -> Result<Value> {
         let task = args["task"].as_str().unwrap_or("").to_string();
-        let context = args.get("context").and_then(|v| v.as_str()).map(String::from);
+        let context = args
+            .get("context")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         // Build agent kind and mode
         let (agent_kind, mode) = if let Some(kind) = args.get("agent_kind").and_then(|v| v.as_str())
@@ -84,10 +87,7 @@ impl AgentTool for SpawnAgentTool {
             (kind.to_string(), mode)
         } else {
             // Ad-hoc agent
-            let mode_str = args
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .unwrap_or("local");
+            let mode_str = args.get("mode").and_then(|v| v.as_str()).unwrap_or("local");
             let mode = match mode_str {
                 "remote" => AgentMode::Remote("custom".to_string()),
                 _ => AgentMode::Local("custom".to_string()),

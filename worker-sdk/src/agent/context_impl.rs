@@ -7,13 +7,13 @@ use crate::agent::child::{
     AgentMode, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, HandoffCompletion,
     HandoffOptions, SpawnOptions,
 };
-use crate::agent::queue::QueueContext;
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
     TokenUsage,
 };
 use crate::agent::executor::TaskExecutor;
 use crate::agent::future::AgentTaskFutureRaw;
+use crate::agent::queue::QueueContext;
 use crate::agent::signals::SignalSource;
 use crate::agent::storage::{AgentCommand, AgentStorage, CheckpointData, CommandBatch};
 use crate::error::{FlovynError, Result};
@@ -94,9 +94,9 @@ pub struct AgentContextImpl {
     /// Pluggable storage backend (remote gRPC, SQLite, in-memory)
     storage: Arc<dyn AgentStorage>,
     /// Pluggable task executor (remote or local in-process)
-    task_executor: Arc<dyn TaskExecutor>,
+    _task_executor: Arc<dyn TaskExecutor>,
     /// Pluggable signal source (remote, channel, stdin)
-    signal_source: Arc<dyn SignalSource>,
+    _signal_source: Arc<dyn SignalSource>,
     /// Cancellation flag
     cancellation_requested: AtomicBool,
     /// Pending commands to be committed at next suspension point
@@ -196,8 +196,8 @@ impl AgentContextImpl {
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             storage,
-            task_executor,
-            signal_source,
+            _task_executor: task_executor,
+            _signal_source: signal_source,
             cancellation_requested: AtomicBool::new(false),
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
@@ -276,8 +276,8 @@ impl AgentContextImpl {
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
             storage,
-            task_executor,
-            signal_source,
+            _task_executor: task_executor,
+            _signal_source: signal_source,
             cancellation_requested: AtomicBool::new(false),
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
@@ -1172,12 +1172,7 @@ impl AgentContext for AgentContextImpl {
         Ok(handle)
     }
 
-    async fn signal_child(
-        &self,
-        handle: &ChildHandle,
-        name: &str,
-        payload: Value,
-    ) -> Result<()> {
+    async fn signal_child(&self, handle: &ChildHandle, name: &str, payload: Value) -> Result<()> {
         let payload_bytes = serde_json::to_vec(&payload)?;
         self.client
             .lock()
@@ -1204,22 +1199,13 @@ impl AgentContext for AgentContextImpl {
         self.client
             .lock()
             .await
-            .send_parent_signal(
-                self.org_id,
-                self.agent_execution_id,
-                name,
-                &payload_bytes,
-            )
+            .send_parent_signal(self.org_id, self.agent_execution_id, name, &payload_bytes)
             .await
             .map_err(FlovynError::from)?;
         Ok(())
     }
 
-    async fn cancel_child(
-        &self,
-        handle: &ChildHandle,
-        _mode: CancellationMode,
-    ) -> Result<()> {
+    async fn cancel_child(&self, handle: &ChildHandle, _mode: CancellationMode) -> Result<()> {
         // Send a "cancel" signal to the child agent
         let payload_bytes = serde_json::to_vec(&Value::Null)?;
         self.client
@@ -1237,10 +1223,7 @@ impl AgentContext for AgentContextImpl {
         Ok(())
     }
 
-    async fn poll_child_events(
-        &self,
-        handles: &[ChildHandle],
-    ) -> Result<Vec<ChildEventInfo>> {
+    async fn poll_child_events(&self, handles: &[ChildHandle]) -> Result<Vec<ChildEventInfo>> {
         let child_ids: Vec<Uuid> = handles.iter().map(|h| h.child_id).collect();
         let results = self
             .client
@@ -1280,10 +1263,7 @@ impl AgentContext for AgentContextImpl {
             .collect())
     }
 
-    async fn join_children(
-        &self,
-        handles: &[ChildHandle],
-    ) -> Result<Vec<ChildEvent>> {
+    async fn join_children(&self, handles: &[ChildHandle]) -> Result<Vec<ChildEvent>> {
         if handles.is_empty() {
             return Ok(vec![]);
         }
@@ -1323,10 +1303,7 @@ impl AgentContext for AgentContextImpl {
         ))
     }
 
-    async fn select_child(
-        &self,
-        handles: &[ChildHandle],
-    ) -> Result<ChildEvent> {
+    async fn select_child(&self, handles: &[ChildHandle]) -> Result<ChildEvent> {
         if handles.is_empty() {
             return Err(FlovynError::InvalidArgument(
                 "select_child requires at least one handle".into(),
@@ -1400,9 +1377,10 @@ impl AgentContext for AgentContextImpl {
                 let events = self.join_children(&[handle]).await?;
                 match events.into_iter().next() {
                     Some(ChildEvent::Completed { output, .. }) => Ok(output),
-                    Some(ChildEvent::Failed { error, .. }) => {
-                        Err(FlovynError::Other(format!("Handoff child failed: {}", error)))
-                    }
+                    Some(ChildEvent::Failed { error, .. }) => Err(FlovynError::Other(format!(
+                        "Handoff child failed: {}",
+                        error
+                    ))),
                     _ => Err(FlovynError::Other("Unexpected child event".into())),
                 }
             }

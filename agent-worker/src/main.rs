@@ -84,7 +84,9 @@ async fn cmd_run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use flovyn_worker_sdk::agent::queue::generate_queue_name;
 
-    let workspace = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
 
     // Resolve queue name: explicit override or auto-generate
     let queue = match queue_override {
@@ -101,7 +103,10 @@ async fn cmd_run(
     println!("  Database:  {}", session.db_path.display());
     println!();
     println!("Session is ready. Agent execution requires an AgentDefinition to be registered.");
-    println!("Use `flovyn-agent resume {}` to resume later.", session.session_id);
+    println!(
+        "Use `flovyn-agent resume {}` to resume later.",
+        session.session_id
+    );
 
     Ok(())
 }
@@ -164,8 +169,8 @@ async fn cmd_sessions(status_filter: Option<&str>) -> Result<(), Box<dyn std::er
 
     // Print table header
     println!(
-        "{:<38} {:<12} {:<30} {:<12} {}",
-        "ID", "Kind", "Workspace", "Status", "Last Active"
+        "{:<38} {:<12} {:<30} {:<12} Last Active",
+        "ID", "Kind", "Workspace", "Status"
     );
     println!("{}", "-".repeat(110));
 
@@ -182,11 +187,7 @@ async fn cmd_sessions(status_filter: Option<&str>) -> Result<(), Box<dyn std::er
 
         println!(
             "{:<38} {:<12} {:<30} {:<12} {}",
-            session.session_id,
-            session.agent_kind,
-            workspace_display,
-            session.status,
-            ago,
+            session.session_id, session.agent_kind, workspace_display, session.status, ago,
         );
     }
 

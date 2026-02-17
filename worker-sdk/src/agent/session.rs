@@ -252,7 +252,9 @@ impl Session {
 
         session.status = SessionStatus::Running;
         session.last_activity = Utc::now();
-        session.save_to(&session_dir.as_ref().join("session.json")).await?;
+        session
+            .save_to(&session_dir.as_ref().join("session.json"))
+            .await?;
 
         Ok((session, storage))
     }

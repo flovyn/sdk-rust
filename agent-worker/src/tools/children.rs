@@ -42,10 +42,7 @@ impl AgentTool for ChildrenTool {
 
     async fn execute(&self, ctx: &dyn AgentContext, args: Value) -> Result<Value> {
         let child_ids = parse_child_ids(&args)?;
-        let wait = args
-            .get("wait")
-            .and_then(|w| w.as_str())
-            .unwrap_or("none");
+        let wait = args.get("wait").and_then(|w| w.as_str()).unwrap_or("none");
 
         // Resolve handles
         let mut handles = Vec::with_capacity(child_ids.len());
@@ -120,6 +117,7 @@ impl AgentTool for ChildrenTool {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_child_ids(args: &Value) -> Result<Vec<Uuid>> {
     let ids = args["child_ids"]
         .as_array()

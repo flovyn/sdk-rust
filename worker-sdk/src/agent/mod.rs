@@ -63,22 +63,22 @@ pub mod storage;
 pub mod tracer;
 
 // Re-export commonly used types
+pub use budget::BudgetTracker;
+pub use catalog::{AgentCatalog, CatalogEntry};
 pub use child::{
     AgentMode, Budget, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, ExternalAgent,
     HandoffCompletion, HandoffOptions, Persistence, SpawnOptions,
 };
-pub use budget::BudgetTracker;
-pub use catalog::{AgentCatalog, CatalogEntry};
 pub use combinators::TaskOutcome;
-pub use external::ExternalAgentProtocol;
-pub use queue::QueueContext;
 pub use context::{
     AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType, ScheduleAgentTaskOptions,
 };
 pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};
 pub use executor::{ExecutorResult, RemoteTaskExecutor, TaskExecutor};
+pub use external::ExternalAgentProtocol;
 pub use future::AgentTaskFutureRaw;
+pub use queue::QueueContext;
 pub use registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
 pub use signals::{ChannelSignalSource, RemoteSignalSource, SignalResult, SignalSource};
 pub use storage::{

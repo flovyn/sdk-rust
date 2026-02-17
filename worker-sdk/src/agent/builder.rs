@@ -146,8 +146,7 @@ impl AgentBuilder {
         // For local agents, all operations go through the trait objects,
         // so the client is never used in normal operation.
         // We connect to a known-invalid endpoint that will fail on any call.
-        let dummy_channel = tonic::transport::Channel::from_static("http://[::1]:1")
-            .connect_lazy();
+        let dummy_channel = tonic::transport::Channel::from_static("http://[::1]:1").connect_lazy();
         let dummy_client =
             flovyn_worker_core::client::AgentDispatch::new(dummy_channel, "local-mode");
 

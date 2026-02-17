@@ -30,10 +30,7 @@ impl QueueContext {
     /// Extracts the user from the queue name if it follows the `user.{name}...` pattern.
     pub fn from_worker_queue(worker_queue: String) -> Self {
         let user = extract_user_from_queue(&worker_queue);
-        Self {
-            worker_queue,
-            user,
-        }
+        Self { worker_queue, user }
     }
 
     /// Resolve the target queue for a child agent.
@@ -43,11 +40,7 @@ impl QueueContext {
     /// 2. Otherwise, inherit the worker's own queue — children are routed to the
     ///    same queue as the parent by default, regardless of mode. This ensures
     ///    hierarchical agents stay on the same worker infrastructure.
-    pub fn resolve_queue(
-        &self,
-        explicit_queue: Option<&str>,
-        _mode: &str,
-    ) -> String {
+    pub fn resolve_queue(&self, explicit_queue: Option<&str>, _mode: &str) -> String {
         // 1. Explicit queue takes priority
         if let Some(q) = explicit_queue {
             return q.to_string();
@@ -65,7 +58,8 @@ impl QueueContext {
 /// Segments are sanitized to contain only lowercase alphanumeric characters and hyphens.
 pub fn generate_queue_name(workspace: &Path) -> String {
     let username = whoami::username().to_lowercase();
-    let hostname = sanitize_segment(&whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string()));
+    let hostname =
+        sanitize_segment(&whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string()));
     let workspace_name = workspace
         .file_name()
         .and_then(|n| n.to_str())
@@ -95,8 +89,7 @@ fn sanitize_segment(s: &str) -> String {
 
 /// Extract username from a queue name following the `user.{name}...` pattern.
 fn extract_user_from_queue(queue: &str) -> Option<String> {
-    if queue.starts_with("user.") {
-        let rest = &queue[5..]; // after "user."
+    if let Some(rest) = queue.strip_prefix("user.") {
         // Take everything up to the next dot (or end of string)
         let user = rest.split('.').next()?;
         if !user.is_empty() {
@@ -162,7 +155,11 @@ mod tests {
     fn test_generate_queue_name_format() {
         let queue = generate_queue_name(Path::new("/home/alice/projects/my-app"));
         // Should follow user.{username}.{hostname}.{workspace} format
-        assert!(queue.starts_with("user."), "Queue should start with 'user.': {}", queue);
+        assert!(
+            queue.starts_with("user."),
+            "Queue should start with 'user.': {}",
+            queue
+        );
         let parts: Vec<&str> = queue.split('.').collect();
         assert_eq!(parts.len(), 4, "Queue should have 4 segments: {}", queue);
         assert_eq!(parts[0], "user");

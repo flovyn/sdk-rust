@@ -23,9 +23,7 @@ impl BudgetTracker {
     pub fn new(budget: &Budget) -> Self {
         Self {
             max_tokens: budget.max_tokens,
-            max_cost_microdollars: budget
-                .max_cost_usd
-                .map(|usd| (usd * 1_000_000.0) as u64),
+            max_cost_microdollars: budget.max_cost_usd.map(|usd| (usd * 1_000_000.0) as u64),
             input_tokens: AtomicU64::new(0),
             output_tokens: AtomicU64::new(0),
         }

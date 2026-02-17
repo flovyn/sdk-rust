@@ -401,20 +401,14 @@ mod tests {
         let agent_id = Uuid::new_v4();
 
         // Get single task result
-        let result_1 = storage
-            .get_task_result(agent_id, task_id_1)
-            .await
-            .unwrap();
+        let result_1 = storage.get_task_result(agent_id, task_id_1).await.unwrap();
         assert!(result_1.is_some());
         let r1 = result_1.unwrap();
         assert_eq!(r1.status, TaskStatus::Completed);
         assert_eq!(r1.output, Some(json!({"answer": 42})));
 
         // Get non-existent task result
-        let result_3 = storage
-            .get_task_result(agent_id, task_id_3)
-            .await
-            .unwrap();
+        let result_3 = storage.get_task_result(agent_id, task_id_3).await.unwrap();
         assert!(result_3.is_none());
 
         // Get multiple task results

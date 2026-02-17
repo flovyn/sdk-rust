@@ -76,10 +76,7 @@ async fn test_local_agent_task_execution() {
 
     // Set up local executor with an echo task
     let mut executor = LocalTaskExecutor::new();
-    executor.register(
-        "echo",
-        FnTask(|input| async move { Ok(input) }),
-    );
+    executor.register("echo", FnTask(|input| async move { Ok(input) }));
     executor.register(
         "double",
         FnTask(|input: serde_json::Value| async move {
@@ -105,7 +102,11 @@ async fn test_local_agent_task_execution() {
     storage.commit_batch(agent_id, batch).await.unwrap();
 
     // Verify task is pending in storage
-    let result = storage.get_task_result(agent_id, task_id).await.unwrap().unwrap();
+    let result = storage
+        .get_task_result(agent_id, task_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(result.status, TaskStatus::Pending);
 
     // Execute the task locally
@@ -118,7 +119,10 @@ async fn test_local_agent_task_execution() {
 
     // Execute the double task
     let task_id2 = Uuid::new_v4();
-    let output = executor.execute(task_id2, "double", json!(21)).await.unwrap();
+    let output = executor
+        .execute(task_id2, "double", json!(21))
+        .await
+        .unwrap();
     assert_eq!(output, json!(42));
 
     // Verify unknown task fails
@@ -248,7 +252,11 @@ async fn test_local_agent_full_lifecycle() {
     assert_eq!(cp.leaf_entry_id, Some(entry2));
 
     // Verify task is tracked
-    let result = storage.get_task_result(agent_id, task_id).await.unwrap().unwrap();
+    let result = storage
+        .get_task_result(agent_id, task_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(result.status, TaskStatus::Pending);
 
     // Verify pending tasks in segment
@@ -328,7 +336,10 @@ async fn test_session_resume_preserves_state() {
     assert_eq!(cp.token_usage.unwrap().input_tokens, 50);
 
     // Verify signal was preserved
-    assert!(storage.has_signal(agent_id, "pending-action").await.unwrap());
+    assert!(storage
+        .has_signal(agent_id, "pending-action")
+        .await
+        .unwrap());
     let signal = storage
         .pop_signal(agent_id, "pending-action")
         .await

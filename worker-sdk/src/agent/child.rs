@@ -53,18 +53,11 @@ pub enum ChildEvent {
         output: serde_json::Value,
     },
     /// Child failed with an error
-    Failed {
-        child_id: Uuid,
-        error: String,
-    },
+    Failed { child_id: Uuid, error: String },
     /// Child exceeded its budget
-    BudgetExceeded {
-        child_id: Uuid,
-    },
+    BudgetExceeded { child_id: Uuid },
     /// Child timed out
-    TimedOut {
-        child_id: Uuid,
-    },
+    TimedOut { child_id: Uuid },
 }
 
 /// Info about a child event returned from polling
@@ -131,16 +124,11 @@ pub struct HandoffOptions {
 }
 
 /// How a handoff completes relative to the parent
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum HandoffCompletion {
     /// Parent waits for child to complete and returns child's output
+    #[default]
     WaitForChild,
     /// Parent completes immediately after spawning child
     Immediate,
-}
-
-impl Default for HandoffCompletion {
-    fn default() -> Self {
-        Self::WaitForChild
-    }
 }

@@ -181,9 +181,7 @@ impl SignalSource for ChannelSignalSource {
                     buf.entry(name).or_default().push(value);
                 }
                 None => {
-                    return Err(FlovynError::Other(
-                        "Signal channel closed".to_string(),
-                    ));
+                    return Err(FlovynError::Other("Signal channel closed".to_string()));
                 }
             }
         }
@@ -194,10 +192,7 @@ impl SignalSource for ChannelSignalSource {
         self.drain_channel_to_buffer().await;
 
         let buf = self.buffer.lock().await;
-        Ok(buf
-            .get(signal_name)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false))
+        Ok(buf.get(signal_name).map(|v| !v.is_empty()).unwrap_or(false))
     }
 
     async fn drain_signals(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<Vec<Value>> {
@@ -295,10 +290,7 @@ impl InteractiveSignalSource {
             .ok_or_else(|| FlovynError::Other("Missing 'signal_name' in stdin input".to_string()))?
             .to_string();
 
-        let payload = parsed
-            .get("payload")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let payload = parsed.get("payload").cloned().unwrap_or(Value::Null);
 
         Ok((signal_name, payload))
     }
@@ -354,9 +346,7 @@ impl SignalSource for InteractiveSignalSource {
                             buf.entry(name).or_default().push(value);
                         }
                         None => {
-                            return Err(FlovynError::Other(
-                                "Signal channel closed".to_string(),
-                            ));
+                            return Err(FlovynError::Other("Signal channel closed".to_string()));
                         }
                     }
                 }
@@ -368,10 +358,7 @@ impl SignalSource for InteractiveSignalSource {
         self.drain_channel_to_buffer().await;
 
         let buf = self.buffer.lock().await;
-        Ok(buf
-            .get(signal_name)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false))
+        Ok(buf.get(signal_name).map(|v| !v.is_empty()).unwrap_or(false))
     }
 
     async fn drain_signals(&self, _agent_id: Uuid, signal_name: &str) -> SignalResult<Vec<Value>> {
@@ -507,10 +494,7 @@ mod tests {
             .unwrap();
 
         // wait_for_signal("target") should skip "other" and return "found"
-        let result = source
-            .wait_for_signal(Uuid::nil(), "target")
-            .await
-            .unwrap();
+        let result = source.wait_for_signal(Uuid::nil(), "target").await.unwrap();
         assert_eq!(result, serde_json::json!("found"));
 
         // "other" should still be buffered
@@ -525,9 +509,12 @@ mod tests {
         let source = InteractiveSignalSource::channel(rx);
 
         // Send a signal
-        tx.send(("user-input".to_string(), serde_json::json!({"text": "hello"})))
-            .await
-            .unwrap();
+        tx.send((
+            "user-input".to_string(),
+            serde_json::json!({"text": "hello"}),
+        ))
+        .await
+        .unwrap();
 
         // Should receive it
         let result = source

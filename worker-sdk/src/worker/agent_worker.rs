@@ -669,15 +669,12 @@ impl AgentExecutorWorker {
             use crate::agent::signals::RemoteSignalSource;
             use crate::agent::storage::RemoteStorage;
 
-            let storage = storage.unwrap_or_else(|| {
-                Arc::new(RemoteStorage::new(ctx_client.clone(), org_id))
-            });
-            let task_executor = task_executor.unwrap_or_else(|| {
-                Arc::new(RemoteTaskExecutor::new())
-            });
-            let signal_source = signal_source.unwrap_or_else(|| {
-                Arc::new(RemoteSignalSource::new())
-            });
+            let storage =
+                storage.unwrap_or_else(|| Arc::new(RemoteStorage::new(ctx_client.clone(), org_id)));
+            let task_executor =
+                task_executor.unwrap_or_else(|| Arc::new(RemoteTaskExecutor::new()));
+            let signal_source =
+                signal_source.unwrap_or_else(|| Arc::new(RemoteSignalSource::new()));
 
             AgentContextImpl::with_backends(
                 ctx_client,

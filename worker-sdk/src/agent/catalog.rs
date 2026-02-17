@@ -137,10 +137,7 @@ mod tests {
         catalog.add_local_agents(&metadata);
 
         // Server also has "coder" — should be skipped
-        catalog.add_server_agents(&[(
-            "coder".to_string(),
-            Some("Remote coder".to_string()),
-        )]);
+        catalog.add_server_agents(&[("coder".to_string(), Some("Remote coder".to_string()))]);
 
         assert_eq!(catalog.entries().len(), 1);
         assert_eq!(catalog.entries()[0].mode, "local");
