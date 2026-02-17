@@ -97,14 +97,10 @@ impl AgentStorage for RemoteStorage {
                     role,
                     content,
                 } => {
-                    // Map role to entry_type for the gRPC call
-                    let entry_type = match role.as_str() {
-                        "tool_result" => "TOOL_RESULT",
-                        "assistant" => "MESSAGE",
-                        "user" => "MESSAGE",
-                        "system" => "MESSAGE",
-                        _ => "MESSAGE",
-                    };
+                    // Map role to entry_type for the gRPC call.
+                    // All conversation entries (user, assistant, system, tool_result) are
+                    // entry_type "MESSAGE". The role field distinguishes between them.
+                    let entry_type = "MESSAGE";
 
                     client
                         .append_entry(
