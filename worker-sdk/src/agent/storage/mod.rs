@@ -378,6 +378,10 @@ mod tests {
 
 mod memory;
 mod remote;
+#[cfg(feature = "local")]
+mod sqlite;
 
 pub use memory::InMemoryStorage;
 pub use remote::RemoteStorage;
+#[cfg(feature = "local")]
+pub use sqlite::SqliteStorage;
