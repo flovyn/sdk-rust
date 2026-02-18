@@ -184,6 +184,10 @@ pub enum FlovynError {
     #[error("Authentication error: {0}")]
     AuthenticationError(String),
 
+    /// Operation not supported by this context implementation
+    #[error("Not supported: {0}")]
+    NotSupported(String),
+
     /// Generic error
     #[error("{0}")]
     Other(String),

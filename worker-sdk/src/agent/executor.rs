@@ -24,6 +24,9 @@
 //! }
 //! ```
 
+#[cfg(feature = "local")]
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
@@ -97,6 +100,98 @@ impl TaskExecutor for RemoteTaskExecutor {
     }
 }
 
+/// Trait for task functions that can be executed locally.
+///
+/// Implementations provide the actual task logic. Register implementations
+/// with a [`LocalTaskExecutor`] to enable in-process task execution.
+#[cfg(feature = "local")]
+#[async_trait]
+pub trait TaskFn: Send + Sync {
+    /// Execute the task with the given input.
+    async fn execute(&self, input: Value) -> ExecutorResult<Value>;
+}
+
+/// Executor that runs tasks in-process using a registry of task functions.
+///
+/// For local agent mode, tasks are executed directly without remote scheduling.
+/// Register task functions by kind, then the agent's `join_all` / `select_ok`
+/// calls will execute matching tasks locally.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use flovyn_worker_sdk::agent::executor::LocalTaskExecutor;
+///
+/// let mut executor = LocalTaskExecutor::new();
+/// executor.register("echo", |input| async move { Ok(input) });
+/// ```
+#[cfg(feature = "local")]
+pub struct LocalTaskExecutor {
+    registry: HashMap<String, Box<dyn TaskFn>>,
+}
+
+#[cfg(feature = "local")]
+impl LocalTaskExecutor {
+    /// Create a new empty local task executor.
+    pub fn new() -> Self {
+        Self {
+            registry: HashMap::new(),
+        }
+    }
+
+    /// Register a task function for a given kind.
+    ///
+    /// If a task with the same kind is already registered, it will be replaced.
+    pub fn register(&mut self, kind: &str, task: impl TaskFn + 'static) -> &mut Self {
+        self.registry.insert(kind.to_string(), Box::new(task));
+        self
+    }
+}
+
+#[cfg(feature = "local")]
+impl Default for LocalTaskExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "local")]
+#[async_trait]
+impl TaskExecutor for LocalTaskExecutor {
+    async fn execute(&self, _task_id: Uuid, kind: &str, input: Value) -> ExecutorResult<Value> {
+        let task_fn = self.registry.get(kind).ok_or_else(|| {
+            FlovynError::Other(format!("No local task registered for kind: {kind}"))
+        })?;
+
+        task_fn.execute(input).await
+    }
+
+    fn supports_local(&self, kind: &str) -> bool {
+        self.registry.contains_key(kind)
+    }
+}
+
+/// Implement `TaskFn` for async closures via boxed futures.
+///
+/// This allows registering closures as task functions:
+/// ```rust,ignore
+/// executor.register("echo", FnTask(|input| async move { Ok(input) }));
+/// ```
+#[cfg(feature = "local")]
+pub struct FnTask<F>(pub F);
+
+#[cfg(feature = "local")]
+#[async_trait]
+impl<F, Fut> TaskFn for FnTask<F>
+where
+    F: Fn(Value) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = ExecutorResult<Value>> + Send,
+{
+    async fn execute(&self, input: Value) -> ExecutorResult<Value> {
+        (self.0)(input).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +221,45 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("storage scheduling"));
+    }
+
+    #[cfg(feature = "local")]
+    #[tokio::test]
+    async fn test_local_executor_register_and_execute() {
+        let mut executor = LocalTaskExecutor::new();
+        executor.register("echo", FnTask(|input| async move { Ok(input) }));
+
+        let task_id = Uuid::new_v4();
+        let input = serde_json::json!({"message": "hello"});
+        let result = executor
+            .execute(task_id, "echo", input.clone())
+            .await
+            .unwrap();
+        assert_eq!(result, input);
+    }
+
+    #[cfg(feature = "local")]
+    #[tokio::test]
+    async fn test_local_executor_unknown_task() {
+        let executor = LocalTaskExecutor::new();
+        let task_id = Uuid::new_v4();
+        let result = executor
+            .execute(task_id, "nonexistent", serde_json::json!({}))
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("nonexistent"));
+    }
+
+    #[cfg(feature = "local")]
+    #[test]
+    fn test_local_executor_supports_local() {
+        let mut executor = LocalTaskExecutor::new();
+        assert!(!executor.supports_local("echo"));
+
+        executor.register("echo", FnTask(|input| async move { Ok(input) }));
+        assert!(executor.supports_local("echo"));
+        assert!(!executor.supports_local("other"));
     }
 }

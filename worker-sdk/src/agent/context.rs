@@ -7,8 +7,12 @@
 //! - Signal handling
 //! - Real-time streaming
 
+use crate::agent::child::{
+    AgentMode, Budget, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, HandoffOptions,
+    SpawnOptions,
+};
 use crate::agent::future::AgentTaskFutureRaw;
-use crate::error::Result;
+use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -520,6 +524,122 @@ pub trait AgentContext: Send + Sync {
     /// Stream an error notification (convenience method).
     async fn stream_error(&self, message: &str, code: Option<&str>) -> Result<()> {
         self.stream(StreamEvent::error(message, code)).await
+    }
+
+    // =========================================================================
+    // Hierarchical Agent Operations
+    // =========================================================================
+
+    /// Spawn a child agent.
+    ///
+    /// Creates a new agent execution as a child of this agent. The child
+    /// runs independently and can be monitored via the returned handle.
+    ///
+    /// # Arguments
+    /// * `mode` - How the child should be executed (Remote, Local, External)
+    /// * `input` - Input data for the child agent
+    /// * `options` - Spawn options (persistence, budget, timeout)
+    ///
+    /// # Returns
+    /// A `ChildHandle` that can be used to interact with the child.
+    async fn spawn_agent(
+        &self,
+        _mode: AgentMode,
+        _input: Value,
+        _options: SpawnOptions,
+    ) -> Result<ChildHandle> {
+        Err(FlovynError::NotSupported(
+            "spawn_agent not supported by this context".into(),
+        ))
+    }
+
+    /// Send a signal from parent to child agent.
+    async fn signal_child(
+        &self,
+        _handle: &ChildHandle,
+        _name: &str,
+        _payload: Value,
+    ) -> Result<()> {
+        Err(FlovynError::NotSupported(
+            "signal_child not supported by this context".into(),
+        ))
+    }
+
+    /// Send a signal from child to parent agent.
+    async fn signal_parent(&self, _name: &str, _payload: Value) -> Result<()> {
+        Err(FlovynError::NotSupported(
+            "signal_parent not supported by this context".into(),
+        ))
+    }
+
+    /// Cancel a child agent.
+    async fn cancel_child(&self, _handle: &ChildHandle, _mode: CancellationMode) -> Result<()> {
+        Err(FlovynError::NotSupported(
+            "cancel_child not supported by this context".into(),
+        ))
+    }
+
+    /// Poll for events from child agents.
+    ///
+    /// Returns any completed/failed events for the given children
+    /// without suspending the agent.
+    async fn poll_child_events(&self, _handles: &[ChildHandle]) -> Result<Vec<ChildEventInfo>> {
+        Err(FlovynError::NotSupported(
+            "poll_child_events not supported by this context".into(),
+        ))
+    }
+
+    /// Wait for ALL child agents to complete.
+    ///
+    /// Suspends the agent until all children have reached a terminal state.
+    /// Returns events for each child in the order they completed.
+    async fn join_children(&self, _handles: &[ChildHandle]) -> Result<Vec<ChildEvent>> {
+        Err(FlovynError::NotSupported(
+            "join_children not supported by this context".into(),
+        ))
+    }
+
+    /// Wait for ANY child agent to complete.
+    ///
+    /// Suspends the agent until at least one child has reached a terminal state.
+    /// Returns the first child event.
+    async fn select_child(&self, _handles: &[ChildHandle]) -> Result<ChildEvent> {
+        Err(FlovynError::NotSupported(
+            "select_child not supported by this context".into(),
+        ))
+    }
+
+    /// Get the handle for a child agent by ID.
+    async fn get_child_handle(&self, _child_id: Uuid) -> Result<ChildHandle> {
+        Err(FlovynError::NotSupported(
+            "get_child_handle not supported by this context".into(),
+        ))
+    }
+
+    /// Hand off execution to another agent.
+    ///
+    /// Spawns a child agent and optionally waits for it to complete.
+    /// With `HandoffCompletion::WaitForChild`, the parent waits and returns
+    /// the child's output. With `Immediate`, the parent completes immediately.
+    async fn handoff_to_agent(
+        &self,
+        _mode: AgentMode,
+        _input: Value,
+        _options: HandoffOptions,
+    ) -> Result<Value> {
+        Err(FlovynError::NotSupported(
+            "handoff_to_agent not supported by this context".into(),
+        ))
+    }
+
+    /// Get this agent's parent execution ID, if it was spawned as a child.
+    fn parent_execution_id(&self) -> Option<Uuid> {
+        None
+    }
+
+    /// Get the remaining budget for this agent execution.
+    fn remaining_budget(&self) -> Option<Budget> {
+        None
     }
 
     // =========================================================================

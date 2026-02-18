@@ -1,7 +1,10 @@
 //! AgentExecutorWorker - Polling service for agent execution
 
 use crate::agent::context_impl::AgentContextImpl;
+use crate::agent::executor::TaskExecutor;
 use crate::agent::registry::AgentRegistry;
+use crate::agent::signals::SignalSource;
+use crate::agent::storage::AgentStorage;
 use crate::error::{FlovynError, Result};
 use crate::worker::lifecycle::{
     HookChain, ReconnectionStrategy, StopReason, WorkType, WorkerInternals,
@@ -49,6 +52,12 @@ pub struct AgentWorkerConfig {
     /// Pre-registered server worker ID (from unified registration)
     /// If set, skip auto-registration and use this ID
     pub server_worker_id: Option<Uuid>,
+    /// Custom agent storage backend (None = use RemoteStorage)
+    pub agent_storage: Option<Arc<dyn AgentStorage>>,
+    /// Custom agent task executor (None = use RemoteTaskExecutor)
+    pub agent_task_executor: Option<Arc<dyn TaskExecutor>>,
+    /// Custom agent signal source (None = use RemoteSignalSource)
+    pub agent_signal_source: Option<Arc<dyn SignalSource>>,
 }
 
 impl Default for AgentWorkerConfig {
@@ -69,6 +78,9 @@ impl Default for AgentWorkerConfig {
             lifecycle_hooks: HookChain::new(),
             reconnection_strategy: ReconnectionStrategy::default(),
             server_worker_id: None,
+            agent_storage: None,
+            agent_task_executor: None,
+            agent_signal_source: None,
         }
     }
 }
@@ -506,10 +518,33 @@ impl AgentExecutorWorker {
                         info.org_id,
                         info.input,
                         info.current_checkpoint_seq,
+                        config.agent_storage.clone(),
+                        config.agent_task_executor.clone(),
+                        config.agent_signal_source.clone(),
                     )
                     .await
                     {
-                        Ok(ctx) => ctx,
+                        Ok(mut ctx) => {
+                            // Propagate parent_execution_id from PollAgent response
+                            ctx.set_parent_execution_id(info.parent_execution_id);
+                            // Set queue context for child agent queue resolution.
+                            // Extract session_default_queue from metadata so remote
+                            // workers can route LOCAL children to the user's queue.
+                            let mut queue_ctx =
+                                crate::agent::queue::QueueContext::from_worker_queue(
+                                    config.queue.clone(),
+                                );
+                            if let Some(session_queue) = info
+                                .metadata
+                                .as_ref()
+                                .and_then(|m| m.get("session_default_queue"))
+                                .and_then(|v| v.as_str())
+                            {
+                                queue_ctx = queue_ctx.with_session_queue(session_queue.to_string());
+                            }
+                            ctx.set_queue_context(queue_ctx);
+                            ctx
+                        }
                         Err(e) => {
                             error!(
                                 agent_execution_id = %agent_execution_id,
@@ -623,6 +658,7 @@ impl AgentExecutorWorker {
     }
 
     /// Create an AgentContextImpl from loaded agent data (static version for spawned tasks)
+    #[allow(clippy::too_many_arguments)]
     async fn create_agent_context_static(
         channel: Channel,
         worker_token: &str,
@@ -630,19 +666,48 @@ impl AgentExecutorWorker {
         org_id: Uuid,
         input: serde_json::Value,
         current_checkpoint_seq: i32,
+        storage: Option<Arc<dyn AgentStorage>>,
+        task_executor: Option<Arc<dyn TaskExecutor>>,
+        signal_source: Option<Arc<dyn SignalSource>>,
     ) -> Result<AgentContextImpl> {
         // Create a fresh client for the context
         let ctx_client = AgentDispatch::new(channel, worker_token);
 
-        // Create context using the async constructor which loads entries and checkpoint
-        AgentContextImpl::new(
-            ctx_client,
-            agent_execution_id,
-            org_id,
-            input,
-            current_checkpoint_seq,
-        )
-        .await
+        if storage.is_some() || task_executor.is_some() || signal_source.is_some() {
+            // Use custom backends, falling back to defaults for any not specified
+            use crate::agent::executor::RemoteTaskExecutor;
+            use crate::agent::signals::RemoteSignalSource;
+            use crate::agent::storage::RemoteStorage;
+
+            let storage =
+                storage.unwrap_or_else(|| Arc::new(RemoteStorage::new(ctx_client.clone(), org_id)));
+            let task_executor =
+                task_executor.unwrap_or_else(|| Arc::new(RemoteTaskExecutor::new()));
+            let signal_source =
+                signal_source.unwrap_or_else(|| Arc::new(RemoteSignalSource::new()));
+
+            AgentContextImpl::with_backends(
+                ctx_client,
+                agent_execution_id,
+                org_id,
+                input,
+                current_checkpoint_seq,
+                storage,
+                task_executor,
+                signal_source,
+            )
+            .await
+        } else {
+            // Use defaults (existing behavior)
+            AgentContextImpl::new(
+                ctx_client,
+                agent_execution_id,
+                org_id,
+                input,
+                current_checkpoint_seq,
+            )
+            .await
+        }
     }
 
     /// Get the agent registry
@@ -685,6 +750,9 @@ mod tests {
             lifecycle_hooks: HookChain::new(),
             reconnection_strategy: ReconnectionStrategy::fixed(Duration::from_secs(5)),
             server_worker_id: None,
+            agent_storage: None,
+            agent_task_executor: None,
+            agent_signal_source: None,
         };
 
         assert_eq!(config.worker_id, "agent-worker-1");

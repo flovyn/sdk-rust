@@ -67,6 +67,12 @@ service AgentDispatch {
   // Real-time data streaming (CLIENT-SIDE STREAMING)
   // Used for streaming tokens, tool outputs, events to SSE subscribers
   rpc StreamAgentData(stream StreamAgentDataRequest) returns (StreamAgentDataResponse);
+
+  // Hierarchical agent RPCs
+  rpc SpawnChildAgent(SpawnChildAgentRequest) returns (SpawnChildAgentResponse);
+  rpc SendParentSignal(SendParentSignalRequest) returns (SendParentSignalResponse);
+  rpc SendChildSignal(SendChildSignalRequest) returns (SendChildSignalResponse);
+  rpc PollChildEvents(PollChildEventsRequest) returns (PollChildEventsResponse);
 }
 
 // ============================================================================
@@ -134,6 +140,9 @@ message AgentExecutionInfo {
 
   // Arbitrary metadata (JSON)
   bytes metadata = 11;
+
+  // Parent execution ID (if this is a child agent)
+  optional string parent_execution_id = 12;
 }
 
 // ============================================================================
@@ -369,6 +378,12 @@ message SuspendAgentRequest {
 
     // Wait for multiple tasks (parallel task support)
     WaitForTasks wait_for_tasks = 5;
+
+    // Wait for ANY child agent event (completion, failure, signal)
+    WaitForChildEvent wait_for_child_event = 6;
+
+    // Wait for ALL children to complete
+    WaitForAllChildren wait_for_all_children = 7;
   }
 
   // Optional reason for suspension
@@ -613,4 +628,138 @@ message StreamAgentDataRequest {
 message StreamAgentDataResponse {
   // Whether event was acknowledged
   bool acknowledged = 1;
+}
+
+// ============================================================================
+// Hierarchical Agent Messages
+// ============================================================================
+
+message WaitForChildEvent {
+  // Child execution IDs to wait for (resume on ANY event)
+  repeated string child_execution_ids = 1;
+}
+
+message WaitForAllChildren {
+  // Child execution IDs to wait for (resume when ALL complete)
+  repeated string child_execution_ids = 1;
+}
+
+message SpawnChildAgentRequest {
+  // Organization ID
+  string org_id = 1;
+
+  // Parent agent execution ID
+  string parent_execution_id = 2;
+
+  // Agent kind for the child
+  string agent_kind = 3;
+
+  // Input data (JSON serialized)
+  bytes input = 4;
+
+  // Queue for child routing
+  optional string queue = 5;
+
+  // Optional system prompt override
+  optional string system_prompt = 6;
+
+  // Tools available to the child
+  repeated string tools = 7;
+
+  // Model override
+  optional string model = 8;
+
+  // Maximum budget in tokens
+  optional int64 max_budget_tokens = 9;
+
+  // Execution mode: "REMOTE", "LOCAL", "EXTERNAL"
+  string mode = 10;
+
+  // Template slug for server-side resolution (e.g. "coder", "researcher")
+  optional string template_slug = 11;
+}
+
+message SpawnChildAgentResponse {
+  // Created child execution ID
+  string child_execution_id = 1;
+
+  // Child agent status
+  string status = 2;
+}
+
+message SendParentSignalRequest {
+  // Organization ID
+  string org_id = 1;
+
+  // Child execution ID (sender)
+  string child_execution_id = 2;
+
+  // Signal name
+  string signal_name = 3;
+
+  // Signal payload (JSON serialized)
+  bytes payload = 4;
+}
+
+message SendParentSignalResponse {
+  // Whether signal was delivered to parent
+  bool delivered = 1;
+}
+
+message SendChildSignalRequest {
+  // Organization ID
+  string org_id = 1;
+
+  // Parent execution ID (sender)
+  string parent_execution_id = 2;
+
+  // Child execution ID (receiver)
+  string child_execution_id = 3;
+
+  // Signal name
+  string signal_name = 4;
+
+  // Signal payload (JSON serialized)
+  bytes payload = 5;
+}
+
+message SendChildSignalResponse {
+  // Whether signal was delivered to child
+  bool delivered = 1;
+}
+
+message PollChildEventsRequest {
+  // Organization ID
+  string org_id = 1;
+
+  // Parent execution ID
+  string parent_execution_id = 2;
+
+  // Child execution IDs to poll events for
+  repeated string child_execution_ids = 3;
+}
+
+message PollChildEventsResponse {
+  // Events from children
+  repeated ChildEventInfo events = 1;
+}
+
+message ChildEventInfo {
+  // Child execution ID that generated the event
+  string child_execution_id = 1;
+
+  // Event type: "completed", "failed", "signal"
+  string event_type = 2;
+
+  // Output (if completed)
+  optional bytes output = 3;
+
+  // Error message (if failed)
+  optional string error = 4;
+
+  // Signal name (if signal event)
+  optional string signal_name = 5;
+
+  // Signal payload (if signal event)
+  optional bytes signal_payload = 6;
 }

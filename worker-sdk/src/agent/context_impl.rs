@@ -3,20 +3,29 @@
 //! This implementation communicates with the server via gRPC to persist entries,
 //! manage checkpoints, schedule tasks, and handle signals.
 
+use crate::agent::child::{
+    AgentMode, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, HandoffCompletion,
+    HandoffOptions, SpawnOptions,
+};
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
     TokenUsage,
 };
+use crate::agent::executor::TaskExecutor;
 use crate::agent::future::AgentTaskFutureRaw;
-use crate::agent::storage::{AgentCommand, CheckpointData, CommandBatch};
+use crate::agent::queue::QueueContext;
+use crate::agent::signals::SignalSource;
+use crate::agent::storage::{AgentCommand, AgentStorage, CheckpointData, CommandBatch};
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
-use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry, AgentTokenUsage};
+use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry};
 use flovyn_worker_core::generated::flovyn_v1::AgentStreamEventType;
 use parking_lot::RwLock;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
@@ -79,7 +88,15 @@ pub struct AgentContextImpl {
     /// Stream sequence counter
     stream_sequence: AtomicI32,
     /// gRPC client (tokio mutex for async-safe access)
+    /// Still needed for RPCs not yet abstracted (PollAgent, CompleteAgent,
+    /// FailAgent, SuspendAgent, StreamAgentData, etc.)
     client: TokioMutex<AgentDispatch>,
+    /// Pluggable storage backend (remote gRPC, SQLite, in-memory)
+    storage: Arc<dyn AgentStorage>,
+    /// Pluggable task executor (remote or local in-process)
+    _task_executor: Arc<dyn TaskExecutor>,
+    /// Pluggable signal source (remote, channel, stdin)
+    _signal_source: Arc<dyn SignalSource>,
     /// Cancellation flag
     cancellation_requested: AtomicBool,
     /// Pending commands to be committed at next suspension point
@@ -88,18 +105,63 @@ pub struct AgentContextImpl {
     current_segment: AtomicU64,
     /// Current sequence within segment
     current_sequence: AtomicU64,
+    /// Parent execution ID (if this agent was spawned as a child)
+    parent_execution_id: Option<Uuid>,
+    /// Tracked child agent handles (child_id -> ChildHandle)
+    children: RwLock<HashMap<Uuid, ChildHandle>>,
+    /// Queue context for resolving target queues when spawning children
+    queue_context: Option<QueueContext>,
 }
 
 impl AgentContextImpl {
-    /// Create a new AgentContextImpl.
+    /// Create a new AgentContextImpl with default remote backends.
     ///
     /// This loads the initial state from the server (entries and checkpoint).
+    /// Uses `RemoteStorage`, `RemoteTaskExecutor`, and `RemoteSignalSource`
+    /// as the default backends, preserving existing remote-mode behavior.
     pub async fn new(
+        client: AgentDispatch,
+        agent_execution_id: Uuid,
+        org_id: Uuid,
+        input: Value,
+        current_checkpoint_seq: i32,
+    ) -> Result<Self> {
+        use crate::agent::executor::RemoteTaskExecutor;
+        use crate::agent::signals::RemoteSignalSource;
+        use crate::agent::storage::RemoteStorage;
+
+        // Create default remote backends from the client
+        let storage = Arc::new(RemoteStorage::new(client.clone(), org_id)) as Arc<dyn AgentStorage>;
+        let task_executor = Arc::new(RemoteTaskExecutor::new()) as Arc<dyn TaskExecutor>;
+        let signal_source = Arc::new(RemoteSignalSource::new()) as Arc<dyn SignalSource>;
+
+        Self::with_backends(
+            client,
+            agent_execution_id,
+            org_id,
+            input,
+            current_checkpoint_seq,
+            storage,
+            task_executor,
+            signal_source,
+        )
+        .await
+    }
+
+    /// Create a new AgentContextImpl with custom backends.
+    ///
+    /// This allows plugging in different storage, executor, and signal
+    /// implementations for local mode, testing, or hybrid configurations.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_backends(
         mut client: AgentDispatch,
         agent_execution_id: Uuid,
         org_id: Uuid,
         input: Value,
         current_checkpoint_seq: i32,
+        storage: Arc<dyn AgentStorage>,
+        task_executor: Arc<dyn TaskExecutor>,
+        signal_source: Arc<dyn SignalSource>,
     ) -> Result<Self> {
         // Load checkpoint if resuming
         let (checkpoint_state, checkpoint_seq, leaf_entry_id) = if current_checkpoint_seq >= 0 {
@@ -133,10 +195,16 @@ impl AgentContextImpl {
             leaf_entry_id: RwLock::new(leaf_entry_id),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
+            storage,
+            _task_executor: task_executor,
+            _signal_source: signal_source,
             cancellation_requested: AtomicBool::new(false),
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
             current_sequence: AtomicU64::new(0),
+            parent_execution_id: None,
+            children: RwLock::new(HashMap::new()),
+            queue_context: None,
         })
     }
 
@@ -151,6 +219,44 @@ impl AgentContextImpl {
         checkpoint_state: Option<Value>,
         checkpoint_sequence: i32,
         leaf_entry_id: Option<Uuid>,
+    ) -> Self {
+        use crate::agent::executor::RemoteTaskExecutor;
+        use crate::agent::signals::RemoteSignalSource;
+        use crate::agent::storage::RemoteStorage;
+
+        let storage = Arc::new(RemoteStorage::new(client.clone(), org_id)) as Arc<dyn AgentStorage>;
+        let task_executor = Arc::new(RemoteTaskExecutor::new()) as Arc<dyn TaskExecutor>;
+        let signal_source = Arc::new(RemoteSignalSource::new()) as Arc<dyn SignalSource>;
+
+        Self::from_loaded_with_backends(
+            client,
+            agent_execution_id,
+            org_id,
+            input,
+            messages,
+            checkpoint_state,
+            checkpoint_sequence,
+            leaf_entry_id,
+            storage,
+            task_executor,
+            signal_source,
+        )
+    }
+
+    /// Create from pre-loaded data with custom backends.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_loaded_with_backends(
+        client: AgentDispatch,
+        agent_execution_id: Uuid,
+        org_id: Uuid,
+        input: Value,
+        messages: Vec<LoadedMessage>,
+        checkpoint_state: Option<Value>,
+        checkpoint_sequence: i32,
+        leaf_entry_id: Option<Uuid>,
+        storage: Arc<dyn AgentStorage>,
+        task_executor: Arc<dyn TaskExecutor>,
+        signal_source: Arc<dyn SignalSource>,
     ) -> Self {
         // Compute segment number from checkpoint sequence
         let segment = if checkpoint_sequence >= 0 {
@@ -169,11 +275,27 @@ impl AgentContextImpl {
             leaf_entry_id: RwLock::new(leaf_entry_id),
             stream_sequence: AtomicI32::new(0),
             client: TokioMutex::new(client),
+            storage,
+            _task_executor: task_executor,
+            _signal_source: signal_source,
             cancellation_requested: AtomicBool::new(false),
             pending_commands: RwLock::new(Vec::new()),
             current_segment: AtomicU64::new(segment),
             current_sequence: AtomicU64::new(0),
+            parent_execution_id: None,
+            children: RwLock::new(HashMap::new()),
+            queue_context: None,
         }
+    }
+
+    /// Set the parent execution ID (called by the agent worker when creating the context)
+    pub fn set_parent_execution_id(&mut self, parent_id: Option<Uuid>) {
+        self.parent_execution_id = parent_id;
+    }
+
+    /// Set the queue context for resolving target queues when spawning children
+    pub fn set_queue_context(&mut self, queue_context: QueueContext) {
+        self.queue_context = Some(queue_context);
     }
 
     /// Request cancellation
@@ -286,116 +408,10 @@ impl AgentContextImpl {
             checkpoint,
         };
 
-        self.execute_batch_legacy(&batch).await
-    }
-
-    /// Execute a batch of commands using individual gRPC calls.
-    ///
-    /// This is a backward-compatible implementation that executes commands
-    /// one at a time via the existing gRPC client. It will be replaced by
-    /// a batch RPC in a future release for better efficiency.
-    ///
-    /// # Arguments
-    ///
-    /// * `batch` - The command batch to execute
-    ///
-    /// # Note
-    ///
-    /// This method does not guarantee atomicity - if a command fails,
-    /// previous commands may have already been persisted.
-    async fn execute_batch_legacy(&self, batch: &CommandBatch) -> Result<()> {
-        let mut client = self.client.lock().await;
-
-        tracing::debug!(
-            agent_execution_id = %self.agent_execution_id,
-            command_count = batch.commands.len(),
-            "execute_batch_legacy: processing commands"
-        );
-
-        // Execute each command individually
-        for command in &batch.commands {
-            match command {
-                AgentCommand::AppendEntry {
-                    entry_id,
-                    parent_id,
-                    role,
-                    content,
-                } => {
-                    tracing::info!(
-                        agent_execution_id = %self.agent_execution_id,
-                        entry_id = %entry_id,
-                        parent_id = ?parent_id,
-                        role = %role,
-                        "execute_batch_legacy: appending entry"
-                    );
-                    // Pass entry_id as idempotency_key - server uses it as the entry ID
-                    // (see DomainAgentEntry::new_with_idempotency which parses UUID from key)
-                    client
-                        .append_entry(
-                            self.agent_execution_id,
-                            *parent_id,
-                            "MESSAGE", // entry_type
-                            Some(role.as_str()),
-                            content,
-                            None,                        // turn_id
-                            None,                        // token_usage
-                            Some(&entry_id.to_string()), // idempotency_key = entry_id
-                        )
-                        .await?;
-                    tracing::info!(
-                        agent_execution_id = %self.agent_execution_id,
-                        entry_id = %entry_id,
-                        "execute_batch_legacy: entry appended successfully"
-                    );
-                }
-                AgentCommand::ScheduleTask {
-                    task_id: _,
-                    kind,
-                    input,
-                    options,
-                    idempotency_key,
-                } => {
-                    // Use content-based idempotency_key for deduplication.
-                    // Server will use this to detect duplicate task submissions.
-                    client
-                        .schedule_task(
-                            self.agent_execution_id,
-                            kind,
-                            input,
-                            options.queue.as_deref(),
-                            options.max_retries,
-                            options.timeout_ms,
-                            Some(idempotency_key),
-                        )
-                        .await?;
-                }
-                AgentCommand::WaitForSignal { signal_name: _ } => {
-                    // Signal waiting is tracked locally, no gRPC call needed
-                    // The suspend call will be made separately
-                }
-            }
-        }
-
-        // Submit checkpoint if provided
-        if let Some(checkpoint) = &batch.checkpoint {
-            let token_usage = checkpoint.token_usage.as_ref().map(|tu| AgentTokenUsage {
-                input_tokens: tu.input_tokens,
-                output_tokens: tu.output_tokens,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-            });
-
-            client
-                .submit_checkpoint(
-                    self.agent_execution_id,
-                    checkpoint.leaf_entry_id,
-                    &checkpoint.state,
-                    token_usage,
-                )
-                .await?;
-        }
-
-        Ok(())
+        // Delegate to the pluggable storage backend
+        self.storage
+            .commit_batch(self.agent_execution_id, batch)
+            .await
     }
 
     /// Add a command to the pending batch.
@@ -418,18 +434,17 @@ impl AgentContextImpl {
         self.current_sequence.load(Ordering::SeqCst)
     }
 
-    /// Batch fetch results for multiple tasks.
+    /// Batch fetch results for multiple tasks via the storage backend.
     ///
     /// This is an internal helper used by `join_all` and `select_ok` to efficiently
     /// check the status of multiple tasks in a single call.
     async fn get_task_results_batch(
         &self,
         task_ids: &[Uuid],
-    ) -> Result<Vec<flovyn_worker_core::client::BatchTaskResult>> {
-        let mut client = self.client.lock().await;
-        Ok(client
-            .get_task_results_batch(self.agent_execution_id, task_ids)
-            .await?)
+    ) -> Result<Vec<crate::agent::storage::TaskResult>> {
+        self.storage
+            .get_task_results(self.agent_execution_id, task_ids)
+            .await
     }
 
     /// Suspend the agent waiting for multiple tasks.
@@ -720,6 +735,8 @@ impl AgentContext for AgentContextImpl {
     }
 
     async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {
+        use crate::agent::storage::TaskStatus;
+
         if futures.is_empty() {
             return Ok(vec![]);
         }
@@ -748,11 +765,11 @@ impl AgentContext for AgentContextImpl {
                 task_status = %status.status,
                 "join_all: task status"
             );
-            match status.status.as_str() {
-                "COMPLETED" => {
+            match status.status {
+                TaskStatus::Completed => {
                     results[i] = Some(status.output.clone().unwrap_or(Value::Null));
                 }
-                "FAILED" => {
+                TaskStatus::Failed => {
                     let error = status
                         .error
                         .clone()
@@ -762,14 +779,13 @@ impl AgentContext for AgentContextImpl {
                         future.kind, future.task_id, error
                     )));
                 }
-                "CANCELLED" => {
+                TaskStatus::Cancelled => {
                     return Err(FlovynError::TaskFailed(format!(
                         "Task '{}' (id={}) was cancelled",
                         future.kind, future.task_id
                     )));
                 }
-                _ => {
-                    // PENDING or RUNNING
+                TaskStatus::Pending | TaskStatus::Running => {
                     all_complete = false;
                 }
             }
@@ -803,6 +819,7 @@ impl AgentContext for AgentContextImpl {
         futures: Vec<AgentTaskFutureRaw>,
     ) -> Result<crate::agent::combinators::SettledResult> {
         use crate::agent::combinators::SettledResult;
+        use crate::agent::storage::TaskStatus;
 
         if futures.is_empty() {
             return Ok(SettledResult::new());
@@ -820,23 +837,22 @@ impl AgentContext for AgentContextImpl {
         let mut all_terminal = true;
 
         for (future, status) in futures.iter().zip(statuses.iter()) {
-            match status.status.as_str() {
-                "COMPLETED" => {
+            match status.status {
+                TaskStatus::Completed => {
                     let output = status.output.clone().unwrap_or(Value::Null);
                     result.completed.push((future.task_id.to_string(), output));
                 }
-                "FAILED" => {
+                TaskStatus::Failed => {
                     let error = status
                         .error
                         .clone()
                         .unwrap_or_else(|| "Task failed".to_string());
                     result.failed.push((future.task_id.to_string(), error));
                 }
-                "CANCELLED" => {
+                TaskStatus::Cancelled => {
                     result.cancelled.push(future.task_id.to_string());
                 }
-                _ => {
-                    // PENDING or RUNNING - not terminal yet
+                TaskStatus::Pending | TaskStatus::Running => {
                     all_terminal = false;
                 }
             }
@@ -860,6 +876,8 @@ impl AgentContext for AgentContextImpl {
         &self,
         futures: Vec<AgentTaskFutureRaw>,
     ) -> Result<(Value, Vec<AgentTaskFutureRaw>)> {
+        use crate::agent::storage::TaskStatus;
+
         if futures.is_empty() {
             return Err(FlovynError::InvalidArgument(
                 "select_ok requires at least one future".to_string(),
@@ -878,8 +896,8 @@ impl AgentContext for AgentContextImpl {
         let mut pending_count = 0;
 
         for (i, (future, status)) in futures.iter().zip(statuses.iter()).enumerate() {
-            match status.status.as_str() {
-                "COMPLETED" => {
+            match status.status {
+                TaskStatus::Completed => {
                     // Found a successful task - return it with remaining futures
                     let result = status.output.clone().unwrap_or(Value::Null);
                     let remaining: Vec<AgentTaskFutureRaw> = futures
@@ -890,7 +908,7 @@ impl AgentContext for AgentContextImpl {
                         .collect();
                     return Ok((result, remaining));
                 }
-                "FAILED" | "CANCELLED" => {
+                TaskStatus::Failed | TaskStatus::Cancelled => {
                     // Record first error for the AllTasksFailed message
                     if first_error.is_none() {
                         let error = status
@@ -903,8 +921,7 @@ impl AgentContext for AgentContextImpl {
                         ));
                     }
                 }
-                _ => {
-                    // PENDING or RUNNING - still have hope
+                TaskStatus::Pending | TaskStatus::Running => {
                     pending_count += 1;
                 }
             }
@@ -965,16 +982,14 @@ impl AgentContext for AgentContextImpl {
         // On resume, the agent replays from the beginning and will call this again.
         // If we suspend first, the agent gets stuck in WAITING because the signal
         // was already consumed during the previous execution.
-        let signals = {
-            let mut client = self.client.lock().await;
-            client
-                .consume_signals(self.agent_execution_id, Some(signal_name))
-                .await?
-        };
 
         // If signal was already received, return it immediately
-        if let Some(signal) = signals.into_iter().next() {
-            return Ok(signal.signal_value);
+        if let Some(value) = self
+            .storage
+            .pop_signal(self.agent_execution_id, signal_name)
+            .await?
+        {
+            return Ok(value);
         }
 
         // No signal yet - checkpoint and suspend
@@ -997,18 +1012,23 @@ impl AgentContext for AgentContextImpl {
     }
 
     async fn has_signal(&self, signal_name: &str) -> Result<bool> {
-        let mut client = self.client.lock().await;
-        Ok(client
+        Ok(self
+            .storage
             .has_signal(self.agent_execution_id, signal_name)
             .await?)
     }
 
     async fn drain_signals_raw(&self, signal_name: &str) -> Result<Vec<Value>> {
-        let mut client = self.client.lock().await;
-        let signals = client
-            .consume_signals(self.agent_execution_id, Some(signal_name))
-            .await?;
-        Ok(signals.into_iter().map(|s| s.signal_value).collect())
+        // Pop signals one at a time until none remain
+        let mut values = Vec::new();
+        while let Some(value) = self
+            .storage
+            .pop_signal(self.agent_execution_id, signal_name)
+            .await?
+        {
+            values.push(value);
+        }
+        Ok(values)
     }
 
     async fn stream(&self, event: StreamEvent) -> Result<()> {
@@ -1090,6 +1110,285 @@ impl AgentContext for AgentContextImpl {
                 ))),
             }
         }
+    }
+
+    // =========================================================================
+    // Hierarchical Agent Operations
+    // =========================================================================
+
+    async fn spawn_agent(
+        &self,
+        mode: AgentMode,
+        input: Value,
+        options: SpawnOptions,
+    ) -> Result<ChildHandle> {
+        let (agent_kind, mode_str): (String, &str) = match &mode {
+            AgentMode::Remote(kind) => (kind.clone(), "REMOTE"),
+            AgentMode::Local(kind) => (kind.clone(), "LOCAL"),
+            AgentMode::External(_) => {
+                return Err(FlovynError::NotSupported(
+                    "External agent spawning not yet implemented".into(),
+                ));
+            }
+        };
+
+        // Only send an explicit queue override to the server.
+        // When no explicit queue is set, the server handles fallback:
+        //   template's default_queue → parent's queue
+        let resolved_queue = options.queue.clone();
+
+        let input_bytes = serde_json::to_vec(&input)?;
+        let max_budget_tokens = options
+            .budget
+            .as_ref()
+            .and_then(|b| b.max_tokens.map(|t| t as i64));
+
+        let child_id = self
+            .client
+            .lock()
+            .await
+            .spawn_child_agent(
+                self.org_id,
+                self.agent_execution_id,
+                &agent_kind,
+                &input_bytes,
+                resolved_queue.as_deref(),
+                mode_str,
+                max_budget_tokens,
+                options.template.as_deref(),
+            )
+            .await
+            .map_err(FlovynError::from)?;
+
+        let handle = ChildHandle {
+            child_id,
+            mode: mode.clone(),
+        };
+
+        // Track the child handle
+        self.children.write().insert(child_id, handle.clone());
+
+        Ok(handle)
+    }
+
+    async fn signal_child(&self, handle: &ChildHandle, name: &str, payload: Value) -> Result<()> {
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        self.client
+            .lock()
+            .await
+            .send_child_signal(
+                self.org_id,
+                self.agent_execution_id,
+                handle.child_id,
+                name,
+                &payload_bytes,
+            )
+            .await
+            .map_err(FlovynError::from)?;
+        Ok(())
+    }
+
+    async fn signal_parent(&self, name: &str, payload: Value) -> Result<()> {
+        let parent_id = self.parent_execution_id.ok_or_else(|| {
+            FlovynError::InvalidArgument("This agent has no parent to signal".into())
+        })?;
+        let _ = parent_id; // Used for validation only; the server resolves parent from child_id
+
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        self.client
+            .lock()
+            .await
+            .send_parent_signal(self.org_id, self.agent_execution_id, name, &payload_bytes)
+            .await
+            .map_err(FlovynError::from)?;
+        Ok(())
+    }
+
+    async fn cancel_child(&self, handle: &ChildHandle, _mode: CancellationMode) -> Result<()> {
+        // Send a "cancel" signal to the child agent
+        let payload_bytes = serde_json::to_vec(&Value::Null)?;
+        self.client
+            .lock()
+            .await
+            .send_child_signal(
+                self.org_id,
+                self.agent_execution_id,
+                handle.child_id,
+                "cancel",
+                &payload_bytes,
+            )
+            .await
+            .map_err(FlovynError::from)?;
+        Ok(())
+    }
+
+    async fn poll_child_events(&self, handles: &[ChildHandle]) -> Result<Vec<ChildEventInfo>> {
+        let child_ids: Vec<Uuid> = handles.iter().map(|h| h.child_id).collect();
+        let results = self
+            .client
+            .lock()
+            .await
+            .poll_child_events(self.org_id, self.agent_execution_id, &child_ids)
+            .await
+            .map_err(FlovynError::from)?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| {
+                let event = match r.event_type.as_str() {
+                    "completed" => ChildEvent::Completed {
+                        child_id: r.child_execution_id,
+                        output: r.output.unwrap_or(Value::Null),
+                    },
+                    "failed" => ChildEvent::Failed {
+                        child_id: r.child_execution_id,
+                        error: r.error.unwrap_or_default(),
+                    },
+                    "signal" => ChildEvent::Signal {
+                        child_id: r.child_execution_id,
+                        signal_name: r.signal_name.unwrap_or_default(),
+                        payload: r.signal_payload.unwrap_or(Value::Null),
+                    },
+                    _ => ChildEvent::Failed {
+                        child_id: r.child_execution_id,
+                        error: format!("Unknown event type: {}", r.event_type),
+                    },
+                };
+                ChildEventInfo {
+                    child_id: r.child_execution_id,
+                    event,
+                }
+            })
+            .collect())
+    }
+
+    async fn join_children(&self, handles: &[ChildHandle]) -> Result<Vec<ChildEvent>> {
+        if handles.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // First poll to see if all children are already done
+        let events = self.poll_child_events(handles).await?;
+        if events.len() == handles.len() {
+            return Ok(events.into_iter().map(|e| e.event).collect());
+        }
+
+        // Not all done yet — checkpoint and suspend waiting for all children
+        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
+        let leaf_entry_id = *self.leaf_entry_id.read();
+        let checkpoint_data = CheckpointData {
+            state: current_state.clone(),
+            leaf_entry_id,
+            token_usage: None,
+        };
+        self.commit_pending_batch(Some(checkpoint_data)).await?;
+        *self.checkpoint_state.write() = Some(current_state);
+        self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst);
+
+        let child_ids: Vec<Uuid> = handles.iter().map(|h| h.child_id).collect();
+        self.client
+            .lock()
+            .await
+            .suspend_agent_for_all_children(
+                self.agent_execution_id,
+                &child_ids,
+                Some("Waiting for all children to complete"),
+            )
+            .await
+            .map_err(FlovynError::from)?;
+
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for all children to complete".to_string(),
+        ))
+    }
+
+    async fn select_child(&self, handles: &[ChildHandle]) -> Result<ChildEvent> {
+        if handles.is_empty() {
+            return Err(FlovynError::InvalidArgument(
+                "select_child requires at least one handle".into(),
+            ));
+        }
+
+        // First poll to see if any child has an event
+        let events = self.poll_child_events(handles).await?;
+        if let Some(first) = events.into_iter().next() {
+            return Ok(first.event);
+        }
+
+        // No events yet — checkpoint and suspend waiting for any child event
+        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
+        let leaf_entry_id = *self.leaf_entry_id.read();
+        let checkpoint_data = CheckpointData {
+            state: current_state.clone(),
+            leaf_entry_id,
+            token_usage: None,
+        };
+        self.commit_pending_batch(Some(checkpoint_data)).await?;
+        *self.checkpoint_state.write() = Some(current_state);
+        self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst);
+
+        let child_ids: Vec<Uuid> = handles.iter().map(|h| h.child_id).collect();
+        self.client
+            .lock()
+            .await
+            .suspend_agent_for_child_event(
+                self.agent_execution_id,
+                &child_ids,
+                Some("Waiting for any child event"),
+            )
+            .await
+            .map_err(FlovynError::from)?;
+
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for child event".to_string(),
+        ))
+    }
+
+    async fn get_child_handle(&self, child_id: Uuid) -> Result<ChildHandle> {
+        // First check local in-memory map (populated during this execution)
+        let children = self.children.read();
+        if let Some(handle) = children.get(&child_id).cloned() {
+            return Ok(handle);
+        }
+        drop(children);
+
+        // On resume, child handles from a previous execution are not in memory.
+        // Construct a handle with Remote mode as a sensible default — the child_id
+        // is the important part for join/signal/cancel operations.
+        Ok(ChildHandle {
+            child_id,
+            mode: AgentMode::Remote(String::new()),
+        })
+    }
+
+    async fn handoff_to_agent(
+        &self,
+        mode: AgentMode,
+        input: Value,
+        options: HandoffOptions,
+    ) -> Result<Value> {
+        let spawn_opts = options.spawn.unwrap_or_default();
+        let handle = self.spawn_agent(mode, input, spawn_opts).await?;
+
+        let completion = options.completion.unwrap_or_default();
+        match completion {
+            HandoffCompletion::WaitForChild => {
+                let events = self.join_children(&[handle]).await?;
+                match events.into_iter().next() {
+                    Some(ChildEvent::Completed { output, .. }) => Ok(output),
+                    Some(ChildEvent::Failed { error, .. }) => Err(FlovynError::Other(format!(
+                        "Handoff child failed: {}",
+                        error
+                    ))),
+                    _ => Err(FlovynError::Other("Unexpected child event".into())),
+                }
+            }
+            HandoffCompletion::Immediate => Ok(Value::Null),
+        }
+    }
+
+    fn parent_execution_id(&self) -> Option<Uuid> {
+        self.parent_execution_id
     }
 }
 
