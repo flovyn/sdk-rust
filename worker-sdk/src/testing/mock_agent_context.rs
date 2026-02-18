@@ -1,5 +1,8 @@
 //! Mock agent context for unit testing agents in isolation.
 
+use crate::agent::child::{
+    AgentMode, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, SpawnOptions,
+};
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, LoadedMessage, ScheduleAgentTaskOptions,
 };
@@ -66,6 +69,13 @@ struct MockAgentContextInner {
     streamed_events: RwLock<Vec<StreamEvent>>,
     // Cancellation
     cancellation_requested: AtomicBool,
+    // Hierarchical agent support
+    parent_execution_id: Option<Uuid>,
+    spawned_children: RwLock<Vec<SpawnedChild>>,
+    child_signals: RwLock<Vec<(Uuid, String, Value)>>,
+    parent_signals: RwLock<Vec<(String, Value)>>,
+    child_results: RwLock<HashMap<Uuid, ChildEvent>>,
+    cancelled_children: RwLock<Vec<(Uuid, CancellationMode)>>,
 }
 
 impl Clone for MockAgentContext {
@@ -92,6 +102,15 @@ pub struct ScheduledAgentTask {
     pub task_kind: String,
     pub input: Value,
     pub options: ScheduleAgentTaskOptions,
+}
+
+/// A spawned child agent
+#[derive(Debug, Clone)]
+pub struct SpawnedChild {
+    pub child_id: Uuid,
+    pub mode: AgentMode,
+    pub input: Value,
+    pub options: SpawnOptions,
 }
 
 impl MockAgentContext {
@@ -163,6 +182,26 @@ impl MockAgentContext {
     fn get_task_result(&self, task_kind: &str) -> Option<Value> {
         self.inner.task_results.read().get(task_kind).cloned()
     }
+
+    /// Get all spawned children.
+    pub fn spawned_children(&self) -> Vec<SpawnedChild> {
+        self.inner.spawned_children.read().clone()
+    }
+
+    /// Get all signals sent to parent.
+    pub fn parent_signals(&self) -> Vec<(String, Value)> {
+        self.inner.parent_signals.read().clone()
+    }
+
+    /// Get all signals sent to children.
+    pub fn child_signals(&self) -> Vec<(Uuid, String, Value)> {
+        self.inner.child_signals.read().clone()
+    }
+
+    /// Get all cancelled children.
+    pub fn cancelled_children(&self) -> Vec<(Uuid, CancellationMode)> {
+        self.inner.cancelled_children.read().clone()
+    }
 }
 
 impl Default for MockAgentContext {
@@ -182,6 +221,9 @@ pub struct MockAgentContextBuilder {
     signal_queues: HashMap<String, VecDeque<Value>>,
     initial_checkpoint_state: Option<Value>,
     initial_checkpoint_seq: i32,
+    // Hierarchical agent support
+    parent_execution_id: Option<Uuid>,
+    child_results: HashMap<Uuid, ChildEvent>,
 }
 
 impl MockAgentContextBuilder {
@@ -242,6 +284,18 @@ impl MockAgentContextBuilder {
         self
     }
 
+    /// Set the parent execution ID (makes this agent a child).
+    pub fn parent_execution_id(mut self, id: Uuid) -> Self {
+        self.parent_execution_id = Some(id);
+        self
+    }
+
+    /// Configure a child result for join_children testing.
+    pub fn child_result(mut self, child_id: Uuid, event: ChildEvent) -> Self {
+        self.child_results.insert(child_id, event);
+        self
+    }
+
     /// Build the MockAgentContext.
     pub fn build(self) -> MockAgentContext {
         MockAgentContext {
@@ -258,6 +312,12 @@ impl MockAgentContextBuilder {
                 signal_queues: RwLock::new(self.signal_queues),
                 streamed_events: RwLock::new(Vec::new()),
                 cancellation_requested: AtomicBool::new(false),
+                parent_execution_id: self.parent_execution_id,
+                spawned_children: RwLock::new(Vec::new()),
+                child_signals: RwLock::new(Vec::new()),
+                parent_signals: RwLock::new(Vec::new()),
+                child_results: RwLock::new(self.child_results),
+                cancelled_children: RwLock::new(Vec::new()),
             }),
         }
     }
@@ -555,6 +615,104 @@ impl AgentContext for MockAgentContext {
         // In mock context, always return Cancelled for simplicity
         // Real tests can extend this if needed
         Ok(CancelTaskResult::Cancelled)
+    }
+
+    // =========================================================================
+    // Hierarchical Agent Operations
+    // =========================================================================
+
+    fn parent_execution_id(&self) -> Option<Uuid> {
+        self.inner.parent_execution_id
+    }
+
+    async fn spawn_agent(
+        &self,
+        mode: AgentMode,
+        input: Value,
+        options: SpawnOptions,
+    ) -> Result<ChildHandle> {
+        let child_id = Uuid::new_v4();
+        self.inner.spawned_children.write().push(SpawnedChild {
+            child_id,
+            mode: mode.clone(),
+            input,
+            options,
+        });
+        Ok(ChildHandle { child_id, mode })
+    }
+
+    async fn get_child_handle(&self, child_id: Uuid) -> Result<ChildHandle> {
+        // Check if this child was spawned
+        let children = self.inner.spawned_children.read();
+        if let Some(child) = children.iter().find(|c| c.child_id == child_id) {
+            Ok(ChildHandle {
+                child_id,
+                mode: child.mode.clone(),
+            })
+        } else {
+            // Return a default handle for pre-configured child results
+            Ok(ChildHandle {
+                child_id,
+                mode: AgentMode::Remote("mock".to_string()),
+            })
+        }
+    }
+
+    async fn join_children(&self, handles: &[ChildHandle]) -> Result<Vec<ChildEvent>> {
+        let results = self.inner.child_results.read();
+        let mut events = Vec::with_capacity(handles.len());
+        for handle in handles {
+            match results.get(&handle.child_id) {
+                Some(event) => events.push(event.clone()),
+                None => {
+                    return Err(FlovynError::AgentSuspended(
+                        "Agent suspended waiting for child results".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(events)
+    }
+
+    async fn poll_child_events(&self, _handles: &[ChildHandle]) -> Result<Vec<ChildEventInfo>> {
+        // Return empty vec (no pending events) by default
+        Ok(Vec::new())
+    }
+
+    async fn select_child(&self, handles: &[ChildHandle]) -> Result<ChildEvent> {
+        let results = self.inner.child_results.read();
+        for handle in handles {
+            if let Some(event) = results.get(&handle.child_id) {
+                return Ok(event.clone());
+            }
+        }
+        Err(FlovynError::AgentSuspended(
+            "Agent suspended waiting for child event".to_string(),
+        ))
+    }
+
+    async fn signal_child(&self, handle: &ChildHandle, name: &str, payload: Value) -> Result<()> {
+        self.inner
+            .child_signals
+            .write()
+            .push((handle.child_id, name.to_string(), payload));
+        Ok(())
+    }
+
+    async fn signal_parent(&self, name: &str, payload: Value) -> Result<()> {
+        self.inner
+            .parent_signals
+            .write()
+            .push((name.to_string(), payload));
+        Ok(())
+    }
+
+    async fn cancel_child(&self, handle: &ChildHandle, mode: CancellationMode) -> Result<()> {
+        self.inner
+            .cancelled_children
+            .write()
+            .push((handle.child_id, mode));
+        Ok(())
     }
 }
 
