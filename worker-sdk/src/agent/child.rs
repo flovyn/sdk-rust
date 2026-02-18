@@ -72,6 +72,9 @@ pub struct ChildEventInfo {
 pub struct SpawnOptions {
     /// Explicit target queue override. When set, bypasses automatic queue resolution.
     pub queue: Option<String>,
+    /// Template slug for server-side resolution (e.g. "coder", "researcher").
+    /// When set, the server resolves the template's default_queue, system_prompt, tools, etc.
+    pub template: Option<String>,
     /// Persistence mode for the child agent
     pub persistence: Option<Persistence>,
     /// Budget limits for the child agent

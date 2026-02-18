@@ -674,6 +674,9 @@ message SpawnChildAgentRequest {
 
   // Execution mode: "REMOTE", "LOCAL", "EXTERNAL"
   string mode = 10;
+
+  // Template slug for server-side resolution (e.g. "coder", "researcher")
+  optional string template_slug = 11;
 }
 
 message SpawnChildAgentResponse {

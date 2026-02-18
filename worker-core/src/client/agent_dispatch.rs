@@ -919,6 +919,7 @@ impl AgentDispatch {
         queue: Option<&str>,
         mode: &str,
         max_budget_tokens: Option<i64>,
+        template_slug: Option<&str>,
     ) -> CoreResult<Uuid> {
         let request = flovyn_v1::SpawnChildAgentRequest {
             org_id: org_id.to_string(),
@@ -931,6 +932,7 @@ impl AgentDispatch {
             tools: vec![],
             model: None,
             max_budget_tokens,
+            template_slug: template_slug.map(|s| s.to_string()),
         };
 
         let response = self.inner.spawn_child_agent(request).await?;

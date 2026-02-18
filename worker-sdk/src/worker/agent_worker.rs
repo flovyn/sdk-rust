@@ -527,12 +527,22 @@ impl AgentExecutorWorker {
                         Ok(mut ctx) => {
                             // Propagate parent_execution_id from PollAgent response
                             ctx.set_parent_execution_id(info.parent_execution_id);
-                            // Set queue context for child agent queue resolution
-                            ctx.set_queue_context(
+                            // Set queue context for child agent queue resolution.
+                            // Extract session_default_queue from metadata so remote
+                            // workers can route LOCAL children to the user's queue.
+                            let mut queue_ctx =
                                 crate::agent::queue::QueueContext::from_worker_queue(
                                     config.queue.clone(),
-                                ),
-                            );
+                                );
+                            if let Some(session_queue) = info
+                                .metadata
+                                .as_ref()
+                                .and_then(|m| m.get("session_default_queue"))
+                                .and_then(|v| v.as_str())
+                            {
+                                queue_ctx = queue_ctx.with_session_queue(session_queue.to_string());
+                            }
+                            ctx.set_queue_context(queue_ctx);
                             ctx
                         }
                         Err(e) => {

@@ -2703,6 +2703,9 @@ pub struct SpawnChildAgentRequest {
     /// Execution mode: "REMOTE", "LOCAL", "EXTERNAL"
     #[prost(string, tag = "10")]
     pub mode: ::prost::alloc::string::String,
+    /// Template slug for server-side resolution (e.g. "coder", "researcher")
+    #[prost(string, optional, tag = "11")]
+    pub template_slug: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

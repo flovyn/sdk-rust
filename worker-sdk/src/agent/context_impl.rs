@@ -1132,12 +1132,10 @@ impl AgentContext for AgentContextImpl {
             }
         };
 
-        // Resolve the target queue using queue context
-        let resolved_queue = if let Some(ref qctx) = self.queue_context {
-            Some(qctx.resolve_queue(options.queue.as_deref(), mode_str))
-        } else {
-            options.queue.clone()
-        };
+        // Only send an explicit queue override to the server.
+        // When no explicit queue is set, the server handles fallback:
+        //   template's default_queue → parent's queue
+        let resolved_queue = options.queue.clone();
 
         let input_bytes = serde_json::to_vec(&input)?;
         let max_budget_tokens = options
@@ -1157,6 +1155,7 @@ impl AgentContext for AgentContextImpl {
                 resolved_queue.as_deref(),
                 mode_str,
                 max_budget_tokens,
+                options.template.as_deref(),
             )
             .await
             .map_err(FlovynError::from)?;
