@@ -5,7 +5,6 @@ members = [
     "worker-ffi",
     "worker-napi",
     "worker-sdk",
-    "agent-worker",
     "examples/hello-world",
     "examples/ecommerce",
     "examples/data-pipeline",
