@@ -96,6 +96,7 @@ impl AgentStorage for RemoteStorage {
                     parent_id,
                     role,
                     content,
+                    turn_id,
                 } => {
                     // Map role to entry_type for the gRPC call.
                     // All conversation entries (user, assistant, system, tool_result) are
@@ -109,7 +110,7 @@ impl AgentStorage for RemoteStorage {
                             entry_type,
                             Some(role.as_str()),
                             content,
-                            None, // turn_id
+                            turn_id.as_deref(),
                             None, // token_usage
                             Some(&entry_id.to_string()),
                         )
@@ -304,6 +305,25 @@ impl AgentStorage for RemoteStorage {
             .has_signal(agent_id, signal_name)
             .await
             .map_err(FlovynError::from)
+    }
+
+    /// Drain all signals matching a glob pattern, returning (name, value) pairs.
+    async fn drain_signals_by_pattern(
+        &self,
+        agent_id: Uuid,
+        pattern: &str,
+    ) -> StorageResult<Vec<(String, Value)>> {
+        let mut client = self.client.clone();
+
+        let signals = client
+            .consume_signals_by_pattern(agent_id, pattern)
+            .await
+            .map_err(FlovynError::from)?;
+
+        Ok(signals
+            .into_iter()
+            .map(|s| (s.signal_name, s.signal_value))
+            .collect())
     }
 }
 

@@ -111,6 +111,8 @@ pub struct AgentContextImpl {
     children: RwLock<HashMap<Uuid, ChildHandle>>,
     /// Queue context for resolving target queues when spawning children
     queue_context: Option<QueueContext>,
+    /// Current turn ID for grouping entries by conversation turn
+    current_turn_id: RwLock<Option<String>>,
 }
 
 impl AgentContextImpl {
@@ -205,6 +207,7 @@ impl AgentContextImpl {
             parent_execution_id: None,
             children: RwLock::new(HashMap::new()),
             queue_context: None,
+            current_turn_id: RwLock::new(None),
         })
     }
 
@@ -285,12 +288,19 @@ impl AgentContextImpl {
             parent_execution_id: None,
             children: RwLock::new(HashMap::new()),
             queue_context: None,
+            current_turn_id: RwLock::new(None),
         }
     }
 
     /// Set the parent execution ID (called by the agent worker when creating the context)
     pub fn set_parent_execution_id(&mut self, parent_id: Option<Uuid>) {
         self.parent_execution_id = parent_id;
+    }
+
+    /// Set the current turn ID. All subsequent `append_entry` calls will include
+    /// this turn_id until it is changed again.
+    pub fn set_turn_id(&self, turn_id: Option<String>) {
+        *self.current_turn_id.write() = turn_id;
     }
 
     /// Set the queue context for resolving target queues when spawning children
@@ -503,6 +513,10 @@ impl AgentContext for AgentContextImpl {
         &self.input
     }
 
+    fn set_turn_id(&self, turn_id: Option<String>) {
+        *self.current_turn_id.write() = turn_id;
+    }
+
     async fn append_entry(&self, role: EntryRole, content: &Value) -> Result<Uuid> {
         let parent_id = *self.leaf_entry_id.read();
         // Use random UUID - agents don't need counter-based IDs because they
@@ -515,6 +529,7 @@ impl AgentContext for AgentContextImpl {
             parent_id,
             role: role.as_str().to_string(),
             content: content.clone(),
+            turn_id: self.current_turn_id.read().clone(),
         });
 
         // Update leaf entry immediately
@@ -546,6 +561,7 @@ impl AgentContext for AgentContextImpl {
             parent_id,
             role: EntryRole::Assistant.as_str().to_string(),
             content: content.clone(),
+            turn_id: self.current_turn_id.read().clone(),
         });
 
         // Update leaf entry immediately
@@ -577,6 +593,7 @@ impl AgentContext for AgentContextImpl {
             parent_id,
             role: EntryRole::ToolResult.as_str().to_string(),
             content: content.clone(),
+            turn_id: self.current_turn_id.read().clone(),
         });
 
         // Update leaf entry immediately
@@ -614,6 +631,7 @@ impl AgentContext for AgentContextImpl {
             parent_id,
             role: EntryRole::ToolResult.as_str().to_string(),
             content: content.clone(),
+            turn_id: self.current_turn_id.read().clone(),
         });
 
         // Update leaf entry immediately
@@ -1029,6 +1047,13 @@ impl AgentContext for AgentContextImpl {
             values.push(value);
         }
         Ok(values)
+    }
+
+    async fn drain_signals_by_pattern(&self, pattern: &str) -> Result<Vec<(String, Value)>> {
+        Ok(self
+            .storage
+            .drain_signals_by_pattern(self.agent_execution_id, pattern)
+            .await?)
     }
 
     async fn stream(&self, event: StreamEvent) -> Result<()> {

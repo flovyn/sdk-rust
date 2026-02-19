@@ -2495,6 +2495,11 @@ pub struct ConsumeSignalsRequest {
     /// Signal name to consume (empty = all signals)
     #[prost(string, optional, tag = "2")]
     pub signal_name: ::core::option::Option<::prost::alloc::string::String>,
+    /// Glob pattern to match signal names (e.g., "child:*")
+    /// When set, consumes all unconsumed signals whose name matches the pattern.
+    /// Takes precedence over signal_name if both are set.
+    #[prost(string, optional, tag = "3")]
+    pub signal_pattern: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

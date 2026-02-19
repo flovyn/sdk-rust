@@ -462,6 +462,11 @@ message ConsumeSignalsRequest {
 
   // Signal name to consume (empty = all signals)
   optional string signal_name = 2;
+
+  // Glob pattern to match signal names (e.g., "child:*")
+  // When set, consumes all unconsumed signals whose name matches the pattern.
+  // Takes precedence over signal_name if both are set.
+  optional string signal_pattern = 3;
 }
 
 message ConsumeSignalsResponse {

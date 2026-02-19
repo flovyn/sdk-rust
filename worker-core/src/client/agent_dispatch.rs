@@ -428,7 +428,7 @@ impl AgentDispatch {
         entry_type: &str,
         role: Option<&str>,
         content: &Value,
-        turn_id: Option<Uuid>,
+        turn_id: Option<&str>,
         token_usage: Option<TokenUsage>,
         idempotency_key: Option<&str>,
     ) -> CoreResult<AppendEntryResult> {
@@ -438,7 +438,7 @@ impl AgentDispatch {
             entry_type: entry_type.to_string(),
             role: role.map(|r| r.to_string()),
             content: serde_json::to_vec(content)?,
-            turn_id: turn_id.map(|id| id.to_string()),
+            turn_id: turn_id.map(|s| s.to_string()),
             token_usage: token_usage.map(|tu| flovyn_v1::TokenUsage {
                 input_tokens: tu.input_tokens,
                 output_tokens: tu.output_tokens,
@@ -850,6 +850,34 @@ impl AgentDispatch {
         let request = flovyn_v1::ConsumeSignalsRequest {
             agent_execution_id: agent_execution_id.to_string(),
             signal_name: signal_name.map(|s| s.to_string()),
+            signal_pattern: None,
+        };
+
+        let response = self.inner.consume_signals(request).await?;
+        let resp = response.into_inner();
+
+        Ok(resp
+            .signals
+            .into_iter()
+            .map(|s| AgentSignal {
+                id: s.id.parse().unwrap_or_default(),
+                signal_name: s.signal_name,
+                signal_value: serde_json::from_slice(&s.signal_value).unwrap_or(Value::Null),
+                created_at_ms: s.created_at_ms,
+            })
+            .collect())
+    }
+
+    /// Consume signals matching a glob pattern (e.g., "child:*")
+    pub async fn consume_signals_by_pattern(
+        &mut self,
+        agent_execution_id: Uuid,
+        pattern: &str,
+    ) -> CoreResult<Vec<AgentSignal>> {
+        let request = flovyn_v1::ConsumeSignalsRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+            signal_name: None,
+            signal_pattern: Some(pattern.to_string()),
         };
 
         let response = self.inner.consume_signals(request).await?;

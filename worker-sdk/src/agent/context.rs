@@ -197,6 +197,10 @@ pub trait AgentContext: Send + Sync {
     /// ctx.append_entry(EntryRole::User, &json!({"text": "Hello!"})).await?;
     /// ctx.append_entry(EntryRole::Assistant, &json!({"text": "Hi there!"})).await?;
     /// ```
+    /// Set the current turn ID. All subsequent entries will be tagged with this turn_id
+    /// until it is changed again. Pass `None` to clear.
+    fn set_turn_id(&self, turn_id: Option<String>);
+
     async fn append_entry(&self, role: EntryRole, content: &Value) -> Result<Uuid>;
 
     /// Append a tool call entry to the conversation.
@@ -488,6 +492,15 @@ pub trait AgentContext: Send + Sync {
     /// # Returns
     /// Vector of signal values
     async fn drain_signals_raw(&self, signal_name: &str) -> Result<Vec<Value>>;
+
+    /// Drain all pending signals matching a glob pattern.
+    ///
+    /// Glob patterns: `*` matches any sequence, `?` matches single character.
+    /// Example: `child:*` matches `child:result`, `child:progress`, etc.
+    ///
+    /// # Returns
+    /// Vector of (signal_name, signal_value) pairs
+    async fn drain_signals_by_pattern(&self, pattern: &str) -> Result<Vec<(String, Value)>>;
 
     // =========================================================================
     // Streaming

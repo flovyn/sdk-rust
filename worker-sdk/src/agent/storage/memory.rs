@@ -39,6 +39,7 @@ use super::{
     AgentCommand, AgentStorage, CommandBatch, PendingTask, SegmentState, StorageResult, TaskResult,
     TaskStatus,
 };
+use crate::agent::signals::signal_pattern_matches;
 
 /// In-memory storage backend for testing and ephemeral agents.
 ///
@@ -293,6 +294,33 @@ impl AgentStorage for InMemoryStorage {
 
         Ok(has)
     }
+
+    async fn drain_signals_by_pattern(
+        &self,
+        agent_id: Uuid,
+        pattern: &str,
+    ) -> StorageResult<Vec<(String, Value)>> {
+        let mut signals = self.signals.write().unwrap();
+        let mut result = Vec::new();
+
+        if let Some(agent_signals) = signals.get_mut(&agent_id) {
+            let matching_keys: Vec<String> = agent_signals
+                .keys()
+                .filter(|name| signal_pattern_matches(pattern, name))
+                .cloned()
+                .collect();
+
+            for key in matching_keys {
+                if let Some(queue) = agent_signals.get_mut(&key) {
+                    for value in queue.drain(..) {
+                        result.push((key.clone(), value));
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -315,6 +343,7 @@ mod tests {
                 parent_id: None,
                 role: "user".to_string(),
                 content: json!({"text": "Hello"}),
+                turn_id: None,
             }],
             checkpoint: Some(CheckpointData {
                 state: json!({"turn": 1}),
