@@ -315,6 +315,7 @@ mod tests {
                 parent_id: None,
                 role: "user".to_string(),
                 content: json!({"text": "Hello"}),
+                turn_id: None,
             }],
             checkpoint: Some(CheckpointData {
                 state: json!({"turn": 1}),

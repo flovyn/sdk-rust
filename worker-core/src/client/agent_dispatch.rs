@@ -428,7 +428,7 @@ impl AgentDispatch {
         entry_type: &str,
         role: Option<&str>,
         content: &Value,
-        turn_id: Option<Uuid>,
+        turn_id: Option<&str>,
         token_usage: Option<TokenUsage>,
         idempotency_key: Option<&str>,
     ) -> CoreResult<AppendEntryResult> {
@@ -438,7 +438,7 @@ impl AgentDispatch {
             entry_type: entry_type.to_string(),
             role: role.map(|r| r.to_string()),
             content: serde_json::to_vec(content)?,
-            turn_id: turn_id.map(|id| id.to_string()),
+            turn_id: turn_id.map(|s| s.to_string()),
             token_usage: token_usage.map(|tu| flovyn_v1::TokenUsage {
                 input_tokens: tu.input_tokens,
                 output_tokens: tu.output_tokens,

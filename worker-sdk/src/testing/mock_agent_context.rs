@@ -714,6 +714,14 @@ impl AgentContext for MockAgentContext {
             .push((handle.child_id, mode));
         Ok(())
     }
+
+    // =========================================================================
+    // Turn Tracking
+    // =========================================================================
+
+    fn set_turn_id(&self, _turn_id: Option<String>) {
+        // No-op for mock context
+    }
 }
 
 #[cfg(test)]

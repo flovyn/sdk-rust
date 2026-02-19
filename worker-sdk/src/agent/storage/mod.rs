@@ -28,6 +28,7 @@
 //!             parent_id: None,
 //!             role: "user".to_string(),
 //!             content: json!({"text": "Hello"}),
+//!             turn_id: None,
 //!         },
 //!     ],
 //!     checkpoint: Some(CheckpointData {
@@ -84,6 +85,9 @@ pub enum AgentCommand {
         role: String,
         /// Entry content as JSON
         content: Value,
+        /// Turn ID for grouping entries by conversation turn
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
     },
     /// Schedule a task for execution
     ScheduleTask {
@@ -294,6 +298,7 @@ mod tests {
                     parent_id: None,
                     role: "user".to_string(),
                     content: json!({"text": "Hello"}),
+                    turn_id: None,
                 },
                 AgentCommand::ScheduleTask {
                     task_id: Uuid::nil(),

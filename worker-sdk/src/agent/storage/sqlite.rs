@@ -123,6 +123,7 @@ impl AgentStorage for SqliteStorage {
                     parent_id,
                     role,
                     content,
+                    turn_id: _,
                 } => {
                     let entry_id_str = entry_id.to_string();
                     let parent_id_str = parent_id.map(|id| id.to_string());
@@ -467,6 +468,7 @@ mod tests {
                 parent_id: None,
                 role: "user".to_string(),
                 content: json!({"text": "Hello"}),
+                turn_id: None,
             }],
             checkpoint: Some(CheckpointData {
                 state: json!({"turn": 1}),
@@ -512,6 +514,7 @@ mod tests {
                 parent_id: None,
                 role: "assistant".to_string(),
                 content: json!({"text": "response"}),
+                turn_id: None,
             }],
             checkpoint: Some(CheckpointData {
                 state: json!({"turn": 2, "model": "gpt-4"}),

@@ -96,6 +96,7 @@ impl AgentStorage for RemoteStorage {
                     parent_id,
                     role,
                     content,
+                    turn_id,
                 } => {
                     // Map role to entry_type for the gRPC call.
                     // All conversation entries (user, assistant, system, tool_result) are
@@ -109,7 +110,7 @@ impl AgentStorage for RemoteStorage {
                             entry_type,
                             Some(role.as_str()),
                             content,
-                            None, // turn_id
+                            turn_id.as_deref(),
                             None, // token_usage
                             Some(&entry_id.to_string()),
                         )

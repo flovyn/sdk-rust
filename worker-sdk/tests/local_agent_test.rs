@@ -34,12 +34,14 @@ async fn test_local_agent_entry_roundtrip() {
                 parent_id: None,
                 role: "user".to_string(),
                 content: json!({"text": "Hello, agent!"}),
+                turn_id: None,
             },
             AgentCommand::AppendEntry {
                 entry_id: entry2,
                 parent_id: Some(entry1),
                 role: "assistant".to_string(),
                 content: json!({"text": "Hello! How can I help?"}),
+                turn_id: None,
             },
         ],
         checkpoint: Some(CheckpointData {
@@ -201,6 +203,7 @@ async fn test_local_agent_full_lifecycle() {
             parent_id: None,
             role: "system".to_string(),
             content: json!({"text": "You are a helpful assistant."}),
+            turn_id: None,
         }],
         checkpoint: Some(CheckpointData {
             state: json!({"phase": "init", "turn": 0}),
@@ -222,6 +225,7 @@ async fn test_local_agent_full_lifecycle() {
                 parent_id: Some(entry1),
                 role: "assistant".to_string(),
                 content: json!({"text": "Let me analyze that."}),
+                turn_id: None,
             },
             AgentCommand::ScheduleTask {
                 task_id,
@@ -290,12 +294,14 @@ async fn test_session_resume_preserves_state() {
                     parent_id: None,
                     role: "user".to_string(),
                     content: json!({"text": "Hello agent!"}),
+                    turn_id: None,
                 },
                 AgentCommand::AppendEntry {
                     entry_id: entry2,
                     parent_id: Some(entry1),
                     role: "assistant".to_string(),
                     content: json!({"text": "Hello! How can I help?"}),
+                    turn_id: None,
                 },
             ],
             checkpoint: Some(CheckpointData {
@@ -357,6 +363,7 @@ async fn test_session_resume_preserves_state() {
             parent_id: Some(entry2),
             role: "user".to_string(),
             content: json!({"text": "Please review the code."}),
+            turn_id: None,
         }],
         checkpoint: Some(CheckpointData {
             state: json!({"turn": 2, "context": "reviewing"}),
@@ -397,6 +404,7 @@ async fn test_entry_idempotency_on_resume() {
             parent_id: None,
             role: "user".to_string(),
             content: json!({"text": "Hello"}),
+            turn_id: None,
         }],
         checkpoint: None,
     };

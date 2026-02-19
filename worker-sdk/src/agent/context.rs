@@ -197,6 +197,10 @@ pub trait AgentContext: Send + Sync {
     /// ctx.append_entry(EntryRole::User, &json!({"text": "Hello!"})).await?;
     /// ctx.append_entry(EntryRole::Assistant, &json!({"text": "Hi there!"})).await?;
     /// ```
+    /// Set the current turn ID. All subsequent entries will be tagged with this turn_id
+    /// until it is changed again. Pass `None` to clear.
+    fn set_turn_id(&self, turn_id: Option<String>);
+
     async fn append_entry(&self, role: EntryRole, content: &Value) -> Result<Uuid>;
 
     /// Append a tool call entry to the conversation.
