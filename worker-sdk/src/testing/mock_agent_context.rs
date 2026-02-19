@@ -584,6 +584,27 @@ impl AgentContext for MockAgentContext {
             .unwrap_or_default())
     }
 
+    async fn drain_signals_by_pattern(&self, pattern: &str) -> Result<Vec<(String, Value)>> {
+        let mut queues = self.inner.signal_queues.write();
+        let mut result = Vec::new();
+
+        let matching_keys: Vec<String> = queues
+            .keys()
+            .filter(|name| crate::agent::signals::signal_pattern_matches(pattern, name))
+            .cloned()
+            .collect();
+
+        for key in matching_keys {
+            if let Some(q) = queues.get_mut(&key) {
+                for value in q.drain(..) {
+                    result.push((key.clone(), value));
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
     // =========================================================================
     // Streaming
     // =========================================================================

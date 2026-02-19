@@ -1049,6 +1049,13 @@ impl AgentContext for AgentContextImpl {
         Ok(values)
     }
 
+    async fn drain_signals_by_pattern(&self, pattern: &str) -> Result<Vec<(String, Value)>> {
+        Ok(self
+            .storage
+            .drain_signals_by_pattern(self.agent_execution_id, pattern)
+            .await?)
+    }
+
     async fn stream(&self, event: StreamEvent) -> Result<()> {
         let sequence = self.stream_sequence.fetch_add(1, Ordering::SeqCst);
         let timestamp_ms = Self::now_ms();

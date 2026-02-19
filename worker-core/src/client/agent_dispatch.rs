@@ -850,6 +850,34 @@ impl AgentDispatch {
         let request = flovyn_v1::ConsumeSignalsRequest {
             agent_execution_id: agent_execution_id.to_string(),
             signal_name: signal_name.map(|s| s.to_string()),
+            signal_pattern: None,
+        };
+
+        let response = self.inner.consume_signals(request).await?;
+        let resp = response.into_inner();
+
+        Ok(resp
+            .signals
+            .into_iter()
+            .map(|s| AgentSignal {
+                id: s.id.parse().unwrap_or_default(),
+                signal_name: s.signal_name,
+                signal_value: serde_json::from_slice(&s.signal_value).unwrap_or(Value::Null),
+                created_at_ms: s.created_at_ms,
+            })
+            .collect())
+    }
+
+    /// Consume signals matching a glob pattern (e.g., "child:*")
+    pub async fn consume_signals_by_pattern(
+        &mut self,
+        agent_execution_id: Uuid,
+        pattern: &str,
+    ) -> CoreResult<Vec<AgentSignal>> {
+        let request = flovyn_v1::ConsumeSignalsRequest {
+            agent_execution_id: agent_execution_id.to_string(),
+            signal_name: None,
+            signal_pattern: Some(pattern.to_string()),
         };
 
         let response = self.inner.consume_signals(request).await?;

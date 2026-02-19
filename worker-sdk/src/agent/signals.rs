@@ -36,6 +36,59 @@ use uuid::Uuid;
 
 use crate::error::FlovynError;
 
+/// Convert a signal glob pattern to a regex string.
+///
+/// Signal patterns use `.` as a segment delimiter:
+/// - `*` matches a single segment (any chars except `.`)
+/// - `**` matches one or more segments (any chars including `.`)
+/// - All other characters match literally
+///
+/// # Examples
+///
+/// | Pattern | Regex | Matches | Does NOT match |
+/// |---------|-------|---------|----------------|
+/// | `child.*` | `^child\.[^.]+$` | `child.result` | `child.foo.bar` |
+/// | `payment.*.processed` | `^payment\.[^.]+\.processed$` | `payment.stripe.processed` | `payment.stripe.refund.processed` |
+/// | `payment.**` | `^payment\..+$` | `payment.stripe.processed` | `user.payment` |
+/// | `child.result` | `^child\.result$` | `child.result` (exact) | `child.results` |
+pub fn signal_glob_to_regex(pattern: &str) -> String {
+    let mut result = String::from("^");
+    let mut chars = pattern.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next(); // consume second *
+                    result.push_str(".+");
+                } else {
+                    result.push_str("[^.]+");
+                }
+            }
+            '.' => result.push_str("\\."),
+            // Escape regex special characters
+            '\\' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' => {
+                result.push('\\');
+                result.push(ch);
+            }
+            _ => result.push(ch),
+        }
+    }
+
+    result.push('$');
+    result
+}
+
+/// Check if a signal name matches a signal glob pattern.
+///
+/// Uses segment-aware matching: `*` matches one segment, `**` matches multiple.
+pub fn signal_pattern_matches(pattern: &str, name: &str) -> bool {
+    let regex_str = signal_glob_to_regex(pattern);
+    regex::Regex::new(&regex_str)
+        .map(|re: regex::Regex| re.is_match(name))
+        .unwrap_or(false)
+}
+
 /// Result type for signal operations
 pub type SignalResult<T> = Result<T, FlovynError>;
 
@@ -541,6 +594,63 @@ mod tests {
         // Should have the signal
         assert!(source.has_signal(Uuid::nil(), "test").await.unwrap());
         assert!(!source.has_signal(Uuid::nil(), "other").await.unwrap());
+    }
+
+    #[test]
+    fn test_signal_glob_to_regex_single_star() {
+        assert_eq!(signal_glob_to_regex("child.*"), r"^child\.[^.]+$");
+    }
+
+    #[test]
+    fn test_signal_glob_to_regex_double_star() {
+        assert_eq!(signal_glob_to_regex("payment.**"), r"^payment\..+$");
+    }
+
+    #[test]
+    fn test_signal_glob_to_regex_exact() {
+        assert_eq!(signal_glob_to_regex("child.result"), r"^child\.result$");
+    }
+
+    #[test]
+    fn test_signal_glob_to_regex_middle_star() {
+        assert_eq!(
+            signal_glob_to_regex("payment.*.processed"),
+            r"^payment\.[^.]+\.processed$"
+        );
+    }
+
+    #[test]
+    fn test_signal_pattern_matches_single_star() {
+        assert!(signal_pattern_matches("child.*", "child.result"));
+        assert!(signal_pattern_matches("child.*", "child.needs-help"));
+        assert!(!signal_pattern_matches("child.*", "child.foo.bar"));
+        assert!(!signal_pattern_matches("child.*", "notchild.result"));
+    }
+
+    #[test]
+    fn test_signal_pattern_matches_double_star() {
+        assert!(signal_pattern_matches("payment.**", "payment.stripe.processed"));
+        assert!(signal_pattern_matches("payment.**", "payment.stripe.refund.processed"));
+        assert!(!signal_pattern_matches("payment.**", "user.payment"));
+    }
+
+    #[test]
+    fn test_signal_pattern_matches_exact() {
+        assert!(signal_pattern_matches("child.result", "child.result"));
+        assert!(!signal_pattern_matches("child.result", "child.results"));
+        assert!(!signal_pattern_matches("child.result", "child.resul"));
+    }
+
+    #[test]
+    fn test_signal_pattern_matches_middle_star() {
+        assert!(signal_pattern_matches(
+            "payment.*.processed",
+            "payment.stripe.processed"
+        ));
+        assert!(!signal_pattern_matches(
+            "payment.*.processed",
+            "payment.stripe.refund.processed"
+        ));
     }
 
     #[cfg(feature = "local")]

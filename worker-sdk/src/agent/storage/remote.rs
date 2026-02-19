@@ -306,6 +306,25 @@ impl AgentStorage for RemoteStorage {
             .await
             .map_err(FlovynError::from)
     }
+
+    /// Drain all signals matching a glob pattern, returning (name, value) pairs.
+    async fn drain_signals_by_pattern(
+        &self,
+        agent_id: Uuid,
+        pattern: &str,
+    ) -> StorageResult<Vec<(String, Value)>> {
+        let mut client = self.client.clone();
+
+        let signals = client
+            .consume_signals_by_pattern(agent_id, pattern)
+            .await
+            .map_err(FlovynError::from)?;
+
+        Ok(signals
+            .into_iter()
+            .map(|s| (s.signal_name, s.signal_value))
+            .collect())
+    }
 }
 
 #[cfg(test)]

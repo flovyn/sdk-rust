@@ -30,6 +30,7 @@ use super::{
     AgentCommand, AgentStorage, CheckpointData, CommandBatch, SegmentState, StorageResult,
     TaskResult, TaskStatus, TokenUsage,
 };
+use crate::agent::signals::signal_pattern_matches;
 use crate::error::FlovynError;
 
 /// SQLite-backed storage for local agent execution.
@@ -401,6 +402,51 @@ impl AgentStorage for SqliteStorage {
 
         let count: i64 = row.get("cnt");
         Ok(count > 0)
+    }
+
+    async fn drain_signals_by_pattern(
+        &self,
+        agent_id: Uuid,
+        pattern: &str,
+    ) -> StorageResult<Vec<(String, Value)>> {
+        let agent_id_str = agent_id.to_string();
+
+        // Fetch all signals for this agent then filter by glob in Rust,
+        // since SQLite's GLOB/LIKE semantics differ from our glob convention.
+        let rows = sqlx::query(
+            "SELECT id, signal_name, payload FROM signals
+             WHERE agent_id = ?
+             ORDER BY id ASC",
+        )
+        .bind(&agent_id_str)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| FlovynError::Other(format!("SQLite query failed: {e}")))?;
+
+        let mut result = Vec::new();
+        let mut ids_to_delete = Vec::new();
+
+        for row in rows {
+            let id: i64 = row.get("id");
+            let name: String = row.get("signal_name");
+            if signal_pattern_matches(pattern, &name) {
+                let payload_str: String = row.get("payload");
+                let payload: Value = serde_json::from_str(&payload_str).unwrap_or(Value::Null);
+                result.push((name, payload));
+                ids_to_delete.push(id);
+            }
+        }
+
+        // Delete consumed signals
+        for id in ids_to_delete {
+            sqlx::query("DELETE FROM signals WHERE id = ?")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| FlovynError::Other(format!("SQLite delete signal failed: {e}")))?;
+        }
+
+        Ok(result)
     }
 }
 

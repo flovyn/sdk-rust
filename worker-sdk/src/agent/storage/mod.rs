@@ -280,6 +280,17 @@ pub trait AgentStorage: Send + Sync {
 
     /// Check if a signal is pending without consuming it.
     async fn has_signal(&self, agent_id: Uuid, signal_name: &str) -> StorageResult<bool>;
+
+    /// Drain all signals matching a signal glob pattern, returning (name, value) pairs.
+    ///
+    /// Signal patterns use `.` as segment delimiter:
+    /// - `*` matches a single segment (e.g., `child.*` matches `child.result`)
+    /// - `**` matches one or more segments (e.g., `payment.**` matches `payment.stripe.processed`)
+    async fn drain_signals_by_pattern(
+        &self,
+        agent_id: Uuid,
+        pattern: &str,
+    ) -> StorageResult<Vec<(String, Value)>>;
 }
 
 #[cfg(test)]
