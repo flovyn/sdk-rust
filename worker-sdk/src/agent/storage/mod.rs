@@ -109,6 +109,17 @@ pub enum AgentCommand {
         /// Signal name to wait for
         signal_name: String,
     },
+    /// Schedule a workflow for execution (cross-primitive)
+    ScheduleWorkflow {
+        /// Pre-assigned workflow execution ID (deterministic)
+        workflow_execution_id: Uuid,
+        /// Workflow kind
+        kind: String,
+        /// Workflow input as JSON
+        input: Value,
+        /// Workflow scheduling options
+        options: WorkflowOptions,
+    },
 }
 
 /// Checkpoint data to persist with a batch.
@@ -134,6 +145,15 @@ pub struct TaskOptions {
     pub max_retries: Option<i32>,
     /// Task timeout in milliseconds
     pub timeout_ms: Option<i64>,
+}
+
+/// Workflow scheduling options (cross-primitive).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkflowOptions {
+    /// Queue to schedule the workflow on (None = "default")
+    pub queue: Option<String>,
+    /// Priority in seconds
+    pub priority_seconds: Option<i32>,
 }
 
 /// Token usage for cost tracking and observability.

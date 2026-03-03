@@ -142,6 +142,27 @@ impl AgentStorage for RemoteStorage {
                 AgentCommand::WaitForSignal { signal_name: _ } => {
                     // Signal waiting is recorded in checkpoint state, no gRPC call needed
                 }
+                AgentCommand::ScheduleWorkflow {
+                    workflow_execution_id,
+                    kind,
+                    input,
+                    options,
+                } => {
+                    let input_bytes =
+                        serde_json::to_vec(input).map_err(FlovynError::from)?;
+                    client
+                        .schedule_agent_workflow(
+                            agent_id,
+                            self.org_id,
+                            kind,
+                            &input_bytes,
+                            *workflow_execution_id,
+                            options.queue.as_deref(),
+                            options.priority_seconds,
+                        )
+                        .await
+                        .map_err(FlovynError::from)?;
+                }
             }
         }
 

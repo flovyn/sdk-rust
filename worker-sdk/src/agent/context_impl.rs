@@ -9,14 +9,15 @@ use crate::agent::child::{
 };
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
-    TokenUsage,
+    ScheduleWorkflowOptions, TokenUsage,
 };
 use crate::agent::executor::TaskExecutor;
-use crate::agent::future::AgentTaskFutureRaw;
+use crate::agent::future::{AgentFutureRaw, AgentTaskFutureRaw, AgentWorkflowFutureRaw};
 use crate::agent::queue::QueueContext;
 use crate::agent::signals::SignalSource;
 use crate::agent::storage::{AgentCommand, AgentStorage, CheckpointData, CommandBatch};
 use crate::error::{FlovynError, Result};
+use flovyn_worker_core::client::WorkflowResultEntry;
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
 use flovyn_worker_core::client::{AgentDispatch, AgentEntry as CoreEntry};
@@ -105,8 +106,10 @@ pub struct AgentContextImpl {
     current_segment: AtomicU64,
     /// Current sequence within segment
     current_sequence: AtomicU64,
-    /// Parent execution ID (if this agent was spawned as a child)
+    /// Parent execution ID (if this agent was spawned as a child agent)
     parent_execution_id: Option<Uuid>,
+    /// Parent workflow execution ID (if this agent was spawned by a workflow)
+    parent_workflow_execution_id: Option<Uuid>,
     /// Tracked child agent handles (child_id -> ChildHandle)
     children: RwLock<HashMap<Uuid, ChildHandle>>,
     /// Queue context for resolving target queues when spawning children
@@ -205,6 +208,7 @@ impl AgentContextImpl {
             current_segment: AtomicU64::new(segment),
             current_sequence: AtomicU64::new(0),
             parent_execution_id: None,
+            parent_workflow_execution_id: None,
             children: RwLock::new(HashMap::new()),
             queue_context: None,
             current_turn_id: RwLock::new(None),
@@ -286,6 +290,7 @@ impl AgentContextImpl {
             current_segment: AtomicU64::new(segment),
             current_sequence: AtomicU64::new(0),
             parent_execution_id: None,
+            parent_workflow_execution_id: None,
             children: RwLock::new(HashMap::new()),
             queue_context: None,
             current_turn_id: RwLock::new(None),
@@ -295,6 +300,11 @@ impl AgentContextImpl {
     /// Set the parent execution ID (called by the agent worker when creating the context)
     pub fn set_parent_execution_id(&mut self, parent_id: Option<Uuid>) {
         self.parent_execution_id = parent_id;
+    }
+
+    /// Set the parent workflow execution ID (if spawned by a workflow)
+    pub fn set_parent_workflow_execution_id(&mut self, parent_id: Option<Uuid>) {
+        self.parent_workflow_execution_id = parent_id;
     }
 
     /// Set the current turn ID. All subsequent `append_entry` calls will include
@@ -496,6 +506,54 @@ impl AgentContextImpl {
             .await?;
 
         Ok(())
+    }
+
+    /// Suspend agent waiting for workflow(s) to complete.
+    async fn suspend_for_workflows(
+        &self,
+        workflow_ids: &[Uuid],
+        mode: flovyn_worker_core::client::WaitMode,
+    ) -> Result<()> {
+        // Get current state for checkpoint
+        let current_state = self.checkpoint_state.read().clone().unwrap_or(Value::Null);
+        let leaf_entry_id = *self.leaf_entry_id.read();
+
+        // Commit pending batch with checkpoint
+        let checkpoint_data = CheckpointData {
+            state: current_state.clone(),
+            leaf_entry_id,
+            token_usage: None,
+        };
+        self.commit_pending_batch(Some(checkpoint_data)).await?;
+
+        // Update local checkpoint state
+        *self.checkpoint_state.write() = Some(current_state);
+        self.checkpoint_sequence.fetch_add(1, Ordering::SeqCst);
+
+        // Suspend waiting for workflows
+        let mut client = self.client.lock().await;
+        client
+            .suspend_agent_for_workflows(
+                self.agent_execution_id,
+                workflow_ids,
+                mode,
+                Some("Waiting for workflows"),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Fetch workflow results in batch via gRPC.
+    async fn get_workflow_results_batch(
+        &self,
+        workflow_ids: &[Uuid],
+    ) -> Result<Vec<WorkflowResultEntry>> {
+        let mut client = self.client.lock().await;
+        let results = client
+            .get_agent_workflow_results(self.agent_execution_id, self.org_id, workflow_ids)
+            .await?;
+        Ok(results)
     }
 }
 
@@ -750,6 +808,240 @@ impl AgentContext for AgentContextImpl {
 
         // Return future immediately (no RPC made yet)
         AgentTaskFutureRaw::new(task_id, task_kind.to_string(), input)
+    }
+
+    // =========================================================================
+    // Workflow Scheduling (Cross-Primitive)
+    // =========================================================================
+
+    fn schedule_workflow_raw(&self, workflow_kind: &str, input: Value) -> AgentWorkflowFutureRaw {
+        self.schedule_workflow_with_options_raw(
+            workflow_kind,
+            input,
+            ScheduleWorkflowOptions::default(),
+        )
+    }
+
+    fn schedule_workflow_with_options_raw(
+        &self,
+        workflow_kind: &str,
+        input: Value,
+        options: ScheduleWorkflowOptions,
+    ) -> AgentWorkflowFutureRaw {
+        use crate::agent::storage::WorkflowOptions;
+
+        // Generate deterministic workflow ID using same content-hash pattern as tasks
+        let idempotency_key = self.generate_task_idempotency_key(workflow_kind, &input);
+        let workflow_execution_id = self.task_id_from_idempotency_key(&idempotency_key);
+
+        // Buffer command for batch commit
+        self.add_pending_command(AgentCommand::ScheduleWorkflow {
+            workflow_execution_id,
+            kind: workflow_kind.to_string(),
+            input: input.clone(),
+            options: WorkflowOptions {
+                queue: options.queue,
+                priority_seconds: options.priority_seconds,
+            },
+        });
+
+        AgentWorkflowFutureRaw::new(workflow_execution_id, workflow_kind.to_string(), input)
+    }
+
+    async fn signal_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+        payload: Value,
+    ) -> Result<()> {
+        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+        let mut client = self.client.lock().await;
+        client
+            .signal_agent_workflow(
+                self.agent_execution_id,
+                self.org_id,
+                workflow_execution_id,
+                signal_name,
+                &payload_bytes,
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn signal_parent_workflow(&self, signal_name: &str, payload: Value) -> Result<()> {
+        let _parent_id = self
+            .parent_workflow_execution_id
+            .ok_or_else(|| FlovynError::NotSupported("Agent has no parent workflow".into()))?;
+
+        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+        let mut client = self.client.lock().await;
+        client
+            .signal_parent_workflow(self.agent_execution_id, self.org_id, signal_name, &payload_bytes)
+            .await?;
+        Ok(())
+    }
+
+    fn parent_workflow_execution_id(&self) -> Option<Uuid> {
+        self.parent_workflow_execution_id
+    }
+
+    async fn join_all_mixed(&self, futures: Vec<AgentFutureRaw>) -> Result<Vec<Value>> {
+        if futures.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Separate task and workflow futures
+        let mut task_futures = Vec::new();
+        let mut workflow_futures = Vec::new();
+        let mut order: Vec<(&str, usize)> = Vec::new(); // ("task"|"workflow", index_in_respective_vec)
+
+        for f in &futures {
+            match f {
+                AgentFutureRaw::Task(t) => {
+                    order.push(("task", task_futures.len()));
+                    task_futures.push(t.clone());
+                }
+                AgentFutureRaw::Workflow(w) => {
+                    order.push(("workflow", workflow_futures.len()));
+                    workflow_futures.push(w.clone());
+                }
+            }
+        }
+
+        // Commit pending batch (submits all pending commands including workflow schedules)
+        self.commit_pending_batch(None).await?;
+
+        // Fetch task results
+        let task_ids: Vec<Uuid> = task_futures.iter().map(|f| f.task_id).collect();
+        let task_results = if !task_ids.is_empty() {
+            self.get_task_results_batch(&task_ids).await?
+        } else {
+            Vec::new()
+        };
+
+        // Fetch workflow results
+        let wf_ids: Vec<Uuid> = workflow_futures
+            .iter()
+            .map(|f| f.workflow_execution_id)
+            .collect();
+        let wf_results = if !wf_ids.is_empty() {
+            self.get_workflow_results_batch(&wf_ids).await?
+        } else {
+            Vec::new()
+        };
+
+        // Check if all are complete
+        let all_tasks_complete = task_results.iter().all(|r| {
+            matches!(
+                r.status,
+                crate::agent::storage::TaskStatus::Completed
+                    | crate::agent::storage::TaskStatus::Failed
+                    | crate::agent::storage::TaskStatus::Cancelled
+            )
+        });
+
+        let all_workflows_complete = wf_results.iter().all(|r| {
+            matches!(
+                r.status.as_str(),
+                "COMPLETED" | "FAILED" | "CANCELLED"
+            )
+        });
+
+        if all_tasks_complete && all_workflows_complete {
+            // Reconstruct results in original order
+            let mut results = Vec::with_capacity(futures.len());
+            for (typ, idx) in &order {
+                match *typ {
+                    "task" => {
+                        let r = &task_results[*idx];
+                        match r.status {
+                            crate::agent::storage::TaskStatus::Completed => {
+                                results.push(r.output.clone().unwrap_or(Value::Null));
+                            }
+                            _ => {
+                                let error = r
+                                    .error
+                                    .clone()
+                                    .unwrap_or_else(|| "Task failed".to_string());
+                                return Err(FlovynError::TaskFailed(format!(
+                                    "Task {} failed: {}",
+                                    task_ids[*idx], error
+                                )));
+                            }
+                        }
+                    }
+                    "workflow" => {
+                        let r = &wf_results[*idx];
+                        match r.status.as_str() {
+                            "COMPLETED" => {
+                                results.push(r.output.clone().unwrap_or(Value::Null));
+                            }
+                            _ => {
+                                let error = r
+                                    .error
+                                    .clone()
+                                    .unwrap_or_else(|| "Workflow failed".to_string());
+                                return Err(FlovynError::WorkflowFailed(format!(
+                                    "Workflow {} failed: {}",
+                                    wf_ids[*idx], error
+                                )));
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Ok(results)
+        } else {
+            // Suspend with appropriate wait condition
+            // Collect all IDs that aren't complete yet
+            let mut pending_task_ids = Vec::new();
+            let mut pending_wf_ids = Vec::new();
+
+            for (i, r) in task_results.iter().enumerate() {
+                if !matches!(
+                    r.status,
+                    crate::agent::storage::TaskStatus::Completed
+                        | crate::agent::storage::TaskStatus::Failed
+                        | crate::agent::storage::TaskStatus::Cancelled
+                ) {
+                    pending_task_ids.push(task_ids[i]);
+                }
+            }
+
+            for (i, r) in wf_results.iter().enumerate() {
+                if !matches!(r.status.as_str(), "COMPLETED" | "FAILED" | "CANCELLED") {
+                    pending_wf_ids.push(wf_ids[i]);
+                }
+            }
+
+            // If only tasks pending, suspend for tasks. If only workflows, suspend for workflows.
+            // If both, suspend for workflows (tasks will be checked after resume too).
+            if pending_task_ids.is_empty() && !pending_wf_ids.is_empty() {
+                self.suspend_for_workflows(
+                    &pending_wf_ids,
+                    flovyn_worker_core::client::WaitMode::All,
+                )
+                .await?;
+            } else if !pending_task_ids.is_empty() && pending_wf_ids.is_empty() {
+                self.suspend_for_tasks(
+                    &pending_task_ids,
+                    flovyn_worker_core::client::WaitMode::All,
+                )
+                .await?;
+            } else {
+                // Both tasks and workflows pending — suspend for workflows (will re-check tasks after)
+                self.suspend_for_workflows(
+                    &pending_wf_ids,
+                    flovyn_worker_core::client::WaitMode::All,
+                )
+                .await?;
+            }
+
+            Err(FlovynError::AgentSuspended(
+                "Waiting for mixed tasks/workflows".to_string(),
+            ))
+        }
     }
 
     async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {

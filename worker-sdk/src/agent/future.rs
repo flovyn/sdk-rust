@@ -82,6 +82,82 @@ impl AgentTaskFutureRaw {
     }
 }
 
+/// Raw future representing a scheduled workflow from an agent.
+///
+/// Similar to `AgentTaskFutureRaw` but for workflows. Uses the same lazy pattern:
+/// - Does not make an RPC when created
+/// - Assigns a deterministic workflow execution ID
+/// - Only executes when collected via `ctx.join_all()` / `ctx.select_ok()`
+#[derive(Debug, Clone)]
+pub struct AgentWorkflowFutureRaw {
+    /// The deterministic workflow execution ID
+    pub workflow_execution_id: Uuid,
+    /// The workflow kind/type
+    pub kind: String,
+    /// The workflow input
+    pub input: Value,
+}
+
+impl AgentWorkflowFutureRaw {
+    /// Create a new lazy workflow future.
+    pub fn new(workflow_execution_id: Uuid, kind: String, input: Value) -> Self {
+        Self {
+            workflow_execution_id,
+            kind,
+            input,
+        }
+    }
+
+    /// Get the workflow execution ID.
+    pub fn workflow_execution_id(&self) -> Uuid {
+        self.workflow_execution_id
+    }
+
+    /// Get the workflow kind.
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// Get the workflow input.
+    pub fn input(&self) -> &Value {
+        &self.input
+    }
+}
+
+/// Unified future type for both tasks and workflows.
+///
+/// Used by combinators like `join_all_mixed()` that can operate on
+/// a heterogeneous set of task and workflow futures.
+#[derive(Debug, Clone)]
+pub enum AgentFutureRaw {
+    /// A task future
+    Task(AgentTaskFutureRaw),
+    /// A workflow future
+    Workflow(AgentWorkflowFutureRaw),
+}
+
+impl AgentFutureRaw {
+    /// Get the execution ID (task ID or workflow execution ID).
+    pub fn execution_id(&self) -> Uuid {
+        match self {
+            AgentFutureRaw::Task(f) => f.task_id,
+            AgentFutureRaw::Workflow(f) => f.workflow_execution_id,
+        }
+    }
+}
+
+impl From<AgentTaskFutureRaw> for AgentFutureRaw {
+    fn from(f: AgentTaskFutureRaw) -> Self {
+        AgentFutureRaw::Task(f)
+    }
+}
+
+impl From<AgentWorkflowFutureRaw> for AgentFutureRaw {
+    fn from(f: AgentWorkflowFutureRaw) -> Self {
+        AgentFutureRaw::Workflow(f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -71,19 +71,20 @@ pub use child::{
 };
 pub use combinators::TaskOutcome;
 pub use context::{
-    AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType, ScheduleAgentTaskOptions,
+    AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType,
+    ScheduleAgentTaskOptions, ScheduleWorkflowOptions,
 };
 pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};
 pub use executor::{ExecutorResult, RemoteTaskExecutor, TaskExecutor};
 pub use external::ExternalAgentProtocol;
-pub use future::AgentTaskFutureRaw;
+pub use future::{AgentFutureRaw, AgentTaskFutureRaw, AgentWorkflowFutureRaw};
 pub use queue::QueueContext;
 pub use registry::{AgentMetadata, AgentRegistry, RegisteredAgent};
 pub use signals::{ChannelSignalSource, RemoteSignalSource, SignalResult, SignalSource};
 pub use storage::{
     AgentCommand, AgentStorage, CheckpointData, CommandBatch, PendingTask,
     RemoteStorage as RemoteAgentStorage, SegmentState, StorageResult, TaskOptions, TaskResult,
-    TaskStatus, TokenUsage as StorageTokenUsage,
+    TaskStatus, TokenUsage as StorageTokenUsage, WorkflowOptions,
 };
 pub use tracer::{AgentTracer, CompositeTracer, NoopTracer, StdoutTracer};
