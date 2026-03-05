@@ -720,6 +720,19 @@ impl AgentContext for MockAgentContext {
         Ok(())
     }
 
+    async fn signal_workflow(
+        &self,
+        _workflow_execution_id: Uuid,
+        signal_name: &str,
+        payload: Value,
+    ) -> Result<()> {
+        self.inner
+            .parent_signals
+            .write()
+            .push((signal_name.to_string(), payload));
+        Ok(())
+    }
+
     async fn signal_parent(&self, name: &str, payload: Value) -> Result<()> {
         self.inner
             .parent_signals

@@ -73,12 +73,6 @@ service AgentDispatch {
   rpc SendParentSignal(SendParentSignalRequest) returns (SendParentSignalResponse);
   rpc SendChildSignal(SendChildSignalRequest) returns (SendChildSignalResponse);
   rpc PollChildEvents(PollChildEventsRequest) returns (PollChildEventsResponse);
-
-  // Agent→Workflow RPCs (cross-primitive)
-  rpc ScheduleAgentWorkflow(ScheduleAgentWorkflowRequest) returns (ScheduleAgentWorkflowResponse);
-  rpc GetAgentWorkflowResults(GetAgentWorkflowResultsRequest) returns (GetAgentWorkflowResultsResponse);
-  rpc SignalAgentWorkflow(SignalAgentWorkflowRequest) returns (SignalAgentWorkflowResponse);
-  rpc SignalParentWorkflow(SignalParentWorkflowRequest) returns (SignalParentWorkflowResponse);
 }
 
 // ============================================================================
@@ -393,9 +387,6 @@ message SuspendAgentRequest {
 
     // Wait for ALL children to complete
     WaitForAllChildren wait_for_all_children = 7;
-
-    // Wait for workflow(s) to complete (cross-primitive)
-    WaitForWorkflow wait_for_workflow = 8;
   }
 
   // Optional reason for suspension
@@ -779,126 +770,4 @@ message ChildEventInfo {
 
   // Signal payload (if signal event)
   optional bytes signal_payload = 6;
-}
-
-// ============================================================================
-// Agent→Workflow Cross-Primitive Messages
-// ============================================================================
-
-// Wait for workflow(s) to complete
-message WaitForWorkflow {
-  // Workflow execution IDs to wait for
-  repeated string workflow_execution_ids = 1;
-
-  // Wait mode (ALL = join_all, ANY = select_ok)
-  WaitMode mode = 2;
-}
-
-// Schedule a workflow from an agent
-message ScheduleAgentWorkflowRequest {
-  // Agent execution ID (parent)
-  string agent_execution_id = 1;
-
-  // Organization ID
-  string org_id = 2;
-
-  // Workflow kind
-  string workflow_kind = 3;
-
-  // Serialized input data
-  bytes input = 4;
-
-  // Queue for workflow routing (default: "default")
-  optional string queue = 5;
-
-  // Priority in seconds
-  optional int32 priority_seconds = 6;
-
-  // Arbitrary metadata
-  map<string, string> metadata = 7;
-
-  // Pre-assigned workflow execution ID (deterministic, for idempotency on resume)
-  string workflow_execution_id = 8;
-}
-
-message ScheduleAgentWorkflowResponse {
-  // Created or existing workflow execution ID
-  string workflow_execution_id = 1;
-
-  // Whether workflow already existed (idempotent)
-  bool already_existed = 2;
-}
-
-// Query workflow results (batch)
-message GetAgentWorkflowResultsRequest {
-  // Agent execution ID (for authorization)
-  string agent_execution_id = 1;
-
-  // Organization ID
-  string org_id = 2;
-
-  // Workflow execution IDs to query
-  repeated string workflow_execution_ids = 3;
-}
-
-message GetAgentWorkflowResultsResponse {
-  // Results for each workflow
-  repeated AgentWorkflowResult results = 1;
-}
-
-message AgentWorkflowResult {
-  // Workflow execution ID
-  string workflow_execution_id = 1;
-
-  // Workflow status: COMPLETED, FAILED, PENDING, RUNNING, WAITING
-  string status = 2;
-
-  // Output (if COMPLETED)
-  bytes output = 3;
-
-  // Error message (if FAILED)
-  string error = 4;
-}
-
-// Signal a workflow from an agent
-message SignalAgentWorkflowRequest {
-  // Agent execution ID (for authorization)
-  string agent_execution_id = 1;
-
-  // Organization ID
-  string org_id = 2;
-
-  // Workflow execution ID to signal
-  string workflow_execution_id = 3;
-
-  // Signal name
-  string signal_name = 4;
-
-  // Signal payload (serialized)
-  bytes payload = 5;
-}
-
-message SignalAgentWorkflowResponse {
-  // Whether signal was delivered
-  bool delivered = 1;
-}
-
-// Signal the parent workflow from a child agent
-message SignalParentWorkflowRequest {
-  // Agent execution ID (child)
-  string agent_execution_id = 1;
-
-  // Organization ID
-  string org_id = 2;
-
-  // Signal name
-  string signal_name = 3;
-
-  // Signal payload (serialized)
-  bytes payload = 4;
-}
-
-message SignalParentWorkflowResponse {
-  // Whether signal was delivered to parent workflow
-  bool delivered = 1;
 }

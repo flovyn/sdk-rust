@@ -4,19 +4,25 @@ use crate::client::auth::AuthInterceptor;
 use crate::error::{CoreError, CoreResult};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::agent_dispatch_client::AgentDispatchClient;
+use crate::generated::flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient;
 use serde_json::Value;
 use std::time::Duration;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
-/// Type alias for authenticated client
+/// Type alias for authenticated agent dispatch client
 type AuthClient = AgentDispatchClient<InterceptedService<Channel, AuthInterceptor>>;
+
+/// Type alias for authenticated workflow dispatch client
+type WorkflowAuthClient = WorkflowDispatchClient<InterceptedService<Channel, AuthInterceptor>>;
 
 /// Client for agent dispatch operations
 #[derive(Clone)]
 pub struct AgentDispatch {
     inner: AuthClient,
+    /// Workflow dispatch client for cross-primitive operations (e.g., signaling workflows)
+    workflow_client: WorkflowAuthClient,
 }
 
 /// Info about an agent execution returned from polling
@@ -345,9 +351,14 @@ impl BatchScheduleTaskResultEntry {
 impl AgentDispatch {
     /// Create from a channel with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = AuthInterceptor::worker_token(token);
+        let agent_interceptor = AuthInterceptor::worker_token(token);
+        let workflow_interceptor = AuthInterceptor::worker_token(token);
         Self {
-            inner: AgentDispatchClient::with_interceptor(channel, interceptor),
+            inner: AgentDispatchClient::with_interceptor(channel.clone(), agent_interceptor),
+            workflow_client: WorkflowDispatchClient::with_interceptor(
+                channel,
+                workflow_interceptor,
+            ),
         }
     }
 
@@ -1098,171 +1109,31 @@ impl AgentDispatch {
     }
 
     // =========================================================================
-    // Agent→Workflow Cross-Primitive RPCs
+    // Cross-Primitive Operations (via WorkflowDispatch service)
     // =========================================================================
 
-    /// Schedule a workflow from an agent.
-    pub async fn schedule_agent_workflow(
+    /// Signal a workflow execution using the standard WorkflowDispatch RPC.
+    pub async fn signal_workflow(
         &mut self,
-        agent_execution_id: Uuid,
-        org_id: Uuid,
-        workflow_kind: &str,
-        input: &[u8],
-        workflow_execution_id: Uuid,
-        queue: Option<&str>,
-        priority_seconds: Option<i32>,
-    ) -> CoreResult<(Uuid, bool)> {
-        let request = flovyn_v1::ScheduleAgentWorkflowRequest {
-            agent_execution_id: agent_execution_id.to_string(),
-            org_id: org_id.to_string(),
-            workflow_kind: workflow_kind.to_string(),
-            input: input.to_vec(),
-            queue: queue.map(|q| q.to_string()),
-            priority_seconds,
-            metadata: Default::default(),
-            workflow_execution_id: workflow_execution_id.to_string(),
-        };
-
-        let response = self.inner.schedule_agent_workflow(request).await?.into_inner();
-        let wf_id = response
-            .workflow_execution_id
-            .parse()
-            .map_err(|_| CoreError::Other("Invalid workflow_execution_id".into()))?;
-        Ok((wf_id, response.already_existed))
-    }
-
-    /// Get workflow results for an agent (batch).
-    pub async fn get_agent_workflow_results(
-        &mut self,
-        agent_execution_id: Uuid,
-        org_id: Uuid,
-        workflow_ids: &[Uuid],
-    ) -> CoreResult<Vec<WorkflowResultEntry>> {
-        let request = flovyn_v1::GetAgentWorkflowResultsRequest {
-            agent_execution_id: agent_execution_id.to_string(),
-            org_id: org_id.to_string(),
-            workflow_execution_ids: workflow_ids.iter().map(|id| id.to_string()).collect(),
-        };
-
-        let response = self
-            .inner
-            .get_agent_workflow_results(request)
-            .await?
-            .into_inner();
-
-        Ok(response
-            .results
-            .into_iter()
-            .map(|r| WorkflowResultEntry {
-                workflow_execution_id: r.workflow_execution_id.parse().unwrap_or_default(),
-                status: r.status,
-                output: if r.output.is_empty() {
-                    None
-                } else {
-                    serde_json::from_slice(&r.output).ok()
-                },
-                error: if r.error.is_empty() {
-                    None
-                } else {
-                    Some(r.error)
-                },
-            })
-            .collect())
-    }
-
-    /// Signal a workflow from an agent.
-    pub async fn signal_agent_workflow(
-        &mut self,
-        agent_execution_id: Uuid,
-        org_id: Uuid,
-        workflow_execution_id: Uuid,
+        org_id: &str,
+        workflow_execution_id: &str,
         signal_name: &str,
-        payload: &[u8],
-    ) -> CoreResult<bool> {
-        let request = flovyn_v1::SignalAgentWorkflowRequest {
-            agent_execution_id: agent_execution_id.to_string(),
+        signal_value: Vec<u8>,
+    ) -> CoreResult<i64> {
+        let request = flovyn_v1::SignalWorkflowRequest {
             org_id: org_id.to_string(),
             workflow_execution_id: workflow_execution_id.to_string(),
             signal_name: signal_name.to_string(),
-            payload: payload.to_vec(),
+            signal_value,
         };
 
         let response = self
-            .inner
-            .signal_agent_workflow(request)
+            .workflow_client
+            .signal_workflow(request)
             .await?
             .into_inner();
-        Ok(response.delivered)
+        Ok(response.signal_event_sequence)
     }
-
-    /// Signal the parent workflow from a child agent.
-    pub async fn signal_parent_workflow(
-        &mut self,
-        agent_execution_id: Uuid,
-        org_id: Uuid,
-        signal_name: &str,
-        payload: &[u8],
-    ) -> CoreResult<bool> {
-        let request = flovyn_v1::SignalParentWorkflowRequest {
-            agent_execution_id: agent_execution_id.to_string(),
-            org_id: org_id.to_string(),
-            signal_name: signal_name.to_string(),
-            payload: payload.to_vec(),
-        };
-
-        let response = self
-            .inner
-            .signal_parent_workflow(request)
-            .await?
-            .into_inner();
-        Ok(response.delivered)
-    }
-
-    /// Suspend agent waiting for workflow(s) to complete.
-    pub async fn suspend_agent_for_workflows(
-        &mut self,
-        agent_execution_id: Uuid,
-        workflow_ids: &[Uuid],
-        mode: WaitMode,
-        reason: Option<&str>,
-    ) -> CoreResult<()> {
-        use flovyn_v1::suspend_agent_request::WaitCondition;
-
-        let proto_mode = match mode {
-            WaitMode::All => flovyn_v1::WaitMode::All,
-            WaitMode::Any => flovyn_v1::WaitMode::Any,
-        };
-
-        let request = flovyn_v1::SuspendAgentRequest {
-            agent_execution_id: agent_execution_id.to_string(),
-            wait_condition: Some(WaitCondition::WaitForWorkflow(
-                flovyn_v1::WaitForWorkflow {
-                    workflow_execution_ids: workflow_ids
-                        .iter()
-                        .map(|id| id.to_string())
-                        .collect(),
-                    mode: proto_mode.into(),
-                },
-            )),
-            reason: reason.map(|r| r.to_string()),
-        };
-
-        self.inner.suspend_agent(request).await?;
-        Ok(())
-    }
-}
-
-/// Workflow result entry from GetAgentWorkflowResults
-#[derive(Debug, Clone)]
-pub struct WorkflowResultEntry {
-    /// Workflow execution ID
-    pub workflow_execution_id: Uuid,
-    /// Workflow status (COMPLETED, FAILED, PENDING, RUNNING, WAITING)
-    pub status: String,
-    /// Output (if completed)
-    pub output: Option<Value>,
-    /// Error (if failed)
-    pub error: Option<String>,
 }
 
 fn convert_entry(entry: flovyn_v1::AgentEntry) -> AgentEntry {

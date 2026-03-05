@@ -753,6 +753,8 @@ message WorkerRegistrationRequest {
 
   // Metadata
   bytes metadata = 10;
+
+  repeated AgentCapability agents = 11;
 }
 
 message WorkflowCapability {
@@ -785,6 +787,14 @@ message TaskCapability {
   bytes input_schema = 8;
   bytes output_schema = 9;
   bytes metadata = 10;
+}
+
+message AgentCapability {
+  string kind = 1;
+  string name = 2;
+  string description = 3;
+  bytes input_schema = 4;
+  bytes metadata = 5;
 }
 
 message WorkerRegistrationResponse {

@@ -11,7 +11,7 @@ use crate::agent::child::{
     AgentMode, Budget, CancellationMode, ChildEvent, ChildEventInfo, ChildHandle, HandoffOptions,
     SpawnOptions,
 };
-use crate::agent::future::{AgentFutureRaw, AgentTaskFutureRaw, AgentWorkflowFutureRaw};
+use crate::agent::future::AgentTaskFutureRaw;
 use crate::error::{FlovynError, Result};
 use crate::task::streaming::StreamEvent;
 use async_trait::async_trait;
@@ -121,15 +121,6 @@ impl ScheduleAgentTaskOptions {
         self.queue = Some(queue.into());
         self
     }
-}
-
-/// Options for scheduling a workflow from an agent (cross-primitive).
-#[derive(Debug, Clone, Default)]
-pub struct ScheduleWorkflowOptions {
-    /// Queue for workflow routing
-    pub queue: Option<String>,
-    /// Priority in seconds
-    pub priority_seconds: Option<i32>,
 }
 
 /// A loaded conversation message from entries
@@ -349,38 +340,16 @@ pub trait AgentContext: Send + Sync {
     ) -> AgentTaskFutureRaw;
 
     // =========================================================================
-    // Workflow Scheduling (cross-primitive)
+    // Workflow Signaling
     // =========================================================================
 
-    /// Schedule a workflow for execution. Returns a lazy future.
-    ///
-    /// The workflow is not actually created until the future is collected
-    /// via `join_all()` or `select_ok()`.
-    fn schedule_workflow_raw(&self, workflow_kind: &str, input: Value) -> AgentWorkflowFutureRaw;
-
-    /// Schedule a workflow with options. Returns a lazy future.
-    fn schedule_workflow_with_options_raw(
-        &self,
-        workflow_kind: &str,
-        input: Value,
-        options: ScheduleWorkflowOptions,
-    ) -> AgentWorkflowFutureRaw;
-
-    /// Signal a workflow that was scheduled by this agent.
+    /// Signal a workflow execution.
     async fn signal_workflow(
         &self,
         workflow_execution_id: Uuid,
         signal_name: &str,
         payload: Value,
     ) -> Result<()>;
-
-    /// Signal the parent workflow (if this agent was spawned by a workflow).
-    async fn signal_parent_workflow(&self, signal_name: &str, payload: Value) -> Result<()>;
-
-    /// Wait for all mixed futures (tasks and/or workflows) to complete.
-    ///
-    /// Like `join_all()` but accepts both task and workflow futures.
-    async fn join_all_mixed(&self, futures: Vec<AgentFutureRaw>) -> Result<Vec<Value>>;
 
     /// Wait for all task futures to complete.
     ///
@@ -690,11 +659,6 @@ pub trait AgentContext: Send + Sync {
 
     /// Get this agent's parent execution ID, if it was spawned as a child agent.
     fn parent_execution_id(&self) -> Option<Uuid> {
-        None
-    }
-
-    /// Get this agent's parent workflow execution ID, if spawned by a workflow.
-    fn parent_workflow_execution_id(&self) -> Option<Uuid> {
         None
     }
 

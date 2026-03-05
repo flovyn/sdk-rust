@@ -18,7 +18,6 @@ pub use agent_dispatch::{
     BatchScheduleTaskInput, BatchScheduleTaskResultEntry, BatchTaskResult, CancelResult,
     ChildEventResult, ScheduleTaskResult as AgentScheduleTaskResult, SignalResult,
     TaskResult as AgentTaskResult, TokenUsage as AgentTokenUsage, WaitMode,
-    WorkflowResultEntry,
 };
 pub use auth::AuthInterceptor;
 pub use task_execution::{SubmitTaskResult, TaskExecutionClient, TaskExecutionInfo};

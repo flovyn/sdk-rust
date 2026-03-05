@@ -2406,10 +2406,7 @@ pub struct SuspendAgentRequest {
     #[prost(string, optional, tag = "3")]
     pub reason: ::core::option::Option<::prost::alloc::string::String>,
     /// Wait condition - exactly one must be set
-    #[prost(
-        oneof = "suspend_agent_request::WaitCondition",
-        tags = "2, 4, 5, 6, 7, 8"
-    )]
+    #[prost(oneof = "suspend_agent_request::WaitCondition", tags = "2, 4, 5, 6, 7")]
     pub wait_condition: ::core::option::Option<suspend_agent_request::WaitCondition>,
 }
 /// Nested message and enum types in `SuspendAgentRequest`.
@@ -2433,9 +2430,6 @@ pub mod suspend_agent_request {
         /// Wait for ALL children to complete
         #[prost(message, tag = "7")]
         WaitForAllChildren(super::WaitForAllChildren),
-        /// Wait for workflow(s) to complete (cross-primitive)
-        #[prost(message, tag = "8")]
-        WaitForWorkflow(super::WaitForWorkflow),
     }
 }
 /// Wait condition for multiple tasks (parallel execution)
@@ -2821,145 +2815,6 @@ pub struct ChildEventInfo {
     /// Signal payload (if signal event)
     #[prost(bytes = "vec", optional, tag = "6")]
     pub signal_payload: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
-}
-/// Wait for workflow(s) to complete
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WaitForWorkflow {
-    /// Workflow execution IDs to wait for
-    #[prost(string, repeated, tag = "1")]
-    pub workflow_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// Wait mode (ALL = join_all, ANY = select_ok)
-    #[prost(enumeration = "WaitMode", tag = "2")]
-    pub mode: i32,
-}
-/// Schedule a workflow from an agent
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScheduleAgentWorkflowRequest {
-    /// Agent execution ID (parent)
-    #[prost(string, tag = "1")]
-    pub agent_execution_id: ::prost::alloc::string::String,
-    /// Organization ID
-    #[prost(string, tag = "2")]
-    pub org_id: ::prost::alloc::string::String,
-    /// Workflow kind
-    #[prost(string, tag = "3")]
-    pub workflow_kind: ::prost::alloc::string::String,
-    /// Serialized input data
-    #[prost(bytes = "vec", tag = "4")]
-    pub input: ::prost::alloc::vec::Vec<u8>,
-    /// Queue for workflow routing (default: "default")
-    #[prost(string, optional, tag = "5")]
-    pub queue: ::core::option::Option<::prost::alloc::string::String>,
-    /// Priority in seconds
-    #[prost(int32, optional, tag = "6")]
-    pub priority_seconds: ::core::option::Option<i32>,
-    /// Arbitrary metadata
-    #[prost(map = "string, string", tag = "7")]
-    pub metadata:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
-    /// Pre-assigned workflow execution ID (deterministic, for idempotency on resume)
-    #[prost(string, tag = "8")]
-    pub workflow_execution_id: ::prost::alloc::string::String,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScheduleAgentWorkflowResponse {
-    /// Created or existing workflow execution ID
-    #[prost(string, tag = "1")]
-    pub workflow_execution_id: ::prost::alloc::string::String,
-    /// Whether workflow already existed (idempotent)
-    #[prost(bool, tag = "2")]
-    pub already_existed: bool,
-}
-/// Query workflow results (batch)
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct GetAgentWorkflowResultsRequest {
-    /// Agent execution ID (for authorization)
-    #[prost(string, tag = "1")]
-    pub agent_execution_id: ::prost::alloc::string::String,
-    /// Organization ID
-    #[prost(string, tag = "2")]
-    pub org_id: ::prost::alloc::string::String,
-    /// Workflow execution IDs to query
-    #[prost(string, repeated, tag = "3")]
-    pub workflow_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct GetAgentWorkflowResultsResponse {
-    /// Results for each workflow
-    #[prost(message, repeated, tag = "1")]
-    pub results: ::prost::alloc::vec::Vec<AgentWorkflowResult>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AgentWorkflowResult {
-    /// Workflow execution ID
-    #[prost(string, tag = "1")]
-    pub workflow_execution_id: ::prost::alloc::string::String,
-    /// Workflow status: COMPLETED, FAILED, PENDING, RUNNING, WAITING
-    #[prost(string, tag = "2")]
-    pub status: ::prost::alloc::string::String,
-    /// Output (if COMPLETED)
-    #[prost(bytes = "vec", tag = "3")]
-    pub output: ::prost::alloc::vec::Vec<u8>,
-    /// Error message (if FAILED)
-    #[prost(string, tag = "4")]
-    pub error: ::prost::alloc::string::String,
-}
-/// Signal a workflow from an agent
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SignalAgentWorkflowRequest {
-    /// Agent execution ID (for authorization)
-    #[prost(string, tag = "1")]
-    pub agent_execution_id: ::prost::alloc::string::String,
-    /// Organization ID
-    #[prost(string, tag = "2")]
-    pub org_id: ::prost::alloc::string::String,
-    /// Workflow execution ID to signal
-    #[prost(string, tag = "3")]
-    pub workflow_execution_id: ::prost::alloc::string::String,
-    /// Signal name
-    #[prost(string, tag = "4")]
-    pub signal_name: ::prost::alloc::string::String,
-    /// Signal payload (serialized)
-    #[prost(bytes = "vec", tag = "5")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SignalAgentWorkflowResponse {
-    /// Whether signal was delivered
-    #[prost(bool, tag = "1")]
-    pub delivered: bool,
-}
-/// Signal the parent workflow from a child agent
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SignalParentWorkflowRequest {
-    /// Agent execution ID (child)
-    #[prost(string, tag = "1")]
-    pub agent_execution_id: ::prost::alloc::string::String,
-    /// Organization ID
-    #[prost(string, tag = "2")]
-    pub org_id: ::prost::alloc::string::String,
-    /// Signal name
-    #[prost(string, tag = "3")]
-    pub signal_name: ::prost::alloc::string::String,
-    /// Signal payload (serialized)
-    #[prost(bytes = "vec", tag = "4")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SignalParentWorkflowResponse {
-    /// Whether signal was delivered to parent workflow
-    #[prost(bool, tag = "1")]
-    pub delivered: bool,
 }
 /// Mode for waiting on multiple tasks
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -3576,97 +3431,6 @@ pub mod agent_dispatch_client {
             req.extensions_mut().insert(GrpcMethod::new(
                 "flovyn.v1.AgentDispatch",
                 "PollChildEvents",
-            ));
-            self.inner.unary(req, path, codec).await
-        }
-        /// Agent→Workflow RPCs (cross-primitive)
-        pub async fn schedule_agent_workflow(
-            &mut self,
-            request: impl tonic::IntoRequest<super::ScheduleAgentWorkflowRequest>,
-        ) -> std::result::Result<tonic::Response<super::ScheduleAgentWorkflowResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.AgentDispatch/ScheduleAgentWorkflow",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "flovyn.v1.AgentDispatch",
-                "ScheduleAgentWorkflow",
-            ));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn get_agent_workflow_results(
-            &mut self,
-            request: impl tonic::IntoRequest<super::GetAgentWorkflowResultsRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::GetAgentWorkflowResultsResponse>,
-            tonic::Status,
-        > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.AgentDispatch/GetAgentWorkflowResults",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "flovyn.v1.AgentDispatch",
-                "GetAgentWorkflowResults",
-            ));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn signal_agent_workflow(
-            &mut self,
-            request: impl tonic::IntoRequest<super::SignalAgentWorkflowRequest>,
-        ) -> std::result::Result<tonic::Response<super::SignalAgentWorkflowResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.AgentDispatch/SignalAgentWorkflow",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "flovyn.v1.AgentDispatch",
-                "SignalAgentWorkflow",
-            ));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn signal_parent_workflow(
-            &mut self,
-            request: impl tonic::IntoRequest<super::SignalParentWorkflowRequest>,
-        ) -> std::result::Result<tonic::Response<super::SignalParentWorkflowResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/flovyn.v1.AgentDispatch/SignalParentWorkflow",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "flovyn.v1.AgentDispatch",
-                "SignalParentWorkflow",
             ));
             self.inner.unary(req, path, codec).await
         }
