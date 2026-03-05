@@ -362,8 +362,8 @@ pub trait AgentContext: Send + Sync {
 
     /// Start a workflow execution from this agent.
     ///
-    /// Uses the standard `StartWorkflow` RPC with `parent_agent_execution_id`
-    /// set for lineage tracking. An idempotency key is auto-generated from the
+    /// Uses the standard `StartWorkflow` RPC with `watching_agent_execution_id`
+    /// set for completion notification. An idempotency key is auto-generated from the
     /// agent execution ID and checkpoint sequence to ensure crash-recovery safety.
     ///
     /// Returns the workflow execution ID. Use `wait_for_signal_raw()` with

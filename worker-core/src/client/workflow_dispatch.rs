@@ -107,7 +107,7 @@ impl WorkflowDispatch {
             workflow_version: workflow_version.map(|s| s.to_string()),
             idempotency_key: idempotency_key.map(|s| s.to_string()),
             idempotency_key_ttl_seconds: None,
-            parent_agent_execution_id: None,
+            watching_agent_execution_id: None,
         };
 
         let response = self.inner.start_workflow(request).await?;

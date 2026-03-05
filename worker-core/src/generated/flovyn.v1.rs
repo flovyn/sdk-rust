@@ -144,9 +144,9 @@ pub struct StartWorkflowRequest {
     /// Default: 86400 (1 day), Maximum: 2592000 (30 days)
     #[prost(int64, optional, tag = "11")]
     pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
-    /// Parent agent execution ID (set when an agent starts this workflow)
+    /// Agent execution ID watching this workflow for completion notification
     #[prost(string, optional, tag = "12")]
-    pub parent_agent_execution_id: ::core::option::Option<::prost::alloc::string::String>,
+    pub watching_agent_execution_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

@@ -1112,14 +1112,13 @@ impl AgentDispatch {
     // Cross-Primitive Operations (via WorkflowDispatch service)
     // =========================================================================
 
-    /// Signal a workflow execution using the standard WorkflowDispatch RPC.
-    /// Start a workflow via the standard WorkflowDispatch RPC, with parent agent tracking.
+    /// Start a workflow via the standard WorkflowDispatch RPC, with agent watch tracking.
     pub async fn start_workflow(
         &mut self,
         org_id: &str,
         workflow_kind: &str,
         input: &[u8],
-        parent_agent_execution_id: Uuid,
+        watching_agent_execution_id: Uuid,
         queue: Option<&str>,
         idempotency_key: Option<&str>,
     ) -> CoreResult<Uuid> {
@@ -1135,7 +1134,7 @@ impl AgentDispatch {
             workflow_version: None,
             idempotency_key: idempotency_key.map(|s| s.to_string()),
             idempotency_key_ttl_seconds: None,
-            parent_agent_execution_id: Some(parent_agent_execution_id.to_string()),
+            watching_agent_execution_id: Some(watching_agent_execution_id.to_string()),
         };
 
         let response = self
