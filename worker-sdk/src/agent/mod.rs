@@ -71,7 +71,8 @@ pub use child::{
 };
 pub use combinators::TaskOutcome;
 pub use context::{
-    AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType, ScheduleAgentTaskOptions,
+    AgentContext, AgentContextExt, CancelTaskResult, EntryRole, EntryType,
+    ScheduleAgentTaskOptions, StartWorkflowOptions,
 };
 pub use context_impl::AgentContextImpl;
 pub use definition::{AgentDefinition, DynamicAgent};

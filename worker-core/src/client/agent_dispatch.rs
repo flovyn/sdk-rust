@@ -1113,6 +1113,42 @@ impl AgentDispatch {
     // =========================================================================
 
     /// Signal a workflow execution using the standard WorkflowDispatch RPC.
+    /// Start a workflow via the standard WorkflowDispatch RPC, with parent agent tracking.
+    pub async fn start_workflow(
+        &mut self,
+        org_id: &str,
+        workflow_kind: &str,
+        input: &[u8],
+        parent_agent_execution_id: Uuid,
+        queue: Option<&str>,
+        idempotency_key: Option<&str>,
+    ) -> CoreResult<Uuid> {
+        let request = flovyn_v1::StartWorkflowRequest {
+            org_id: org_id.to_string(),
+            workflow_kind: workflow_kind.to_string(),
+            input: input.to_vec(),
+            metadata: Default::default(),
+            queue: queue.unwrap_or("default").to_string(),
+            priority_seconds: 0,
+            workflow_definition_id: None,
+            parent_workflow_execution_id: None,
+            workflow_version: None,
+            idempotency_key: idempotency_key.map(|s| s.to_string()),
+            idempotency_key_ttl_seconds: None,
+            parent_agent_execution_id: Some(parent_agent_execution_id.to_string()),
+        };
+
+        let response = self
+            .workflow_client
+            .start_workflow(request)
+            .await?
+            .into_inner();
+        Ok(response
+            .workflow_execution_id
+            .parse()
+            .unwrap_or_default())
+    }
+
     pub async fn signal_workflow(
         &mut self,
         org_id: &str,

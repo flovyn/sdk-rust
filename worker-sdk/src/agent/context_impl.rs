@@ -9,7 +9,7 @@ use crate::agent::child::{
 };
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
-    TokenUsage,
+    StartWorkflowOptions, TokenUsage,
 };
 use crate::agent::executor::TaskExecutor;
 use crate::agent::future::AgentTaskFutureRaw;
@@ -753,8 +753,36 @@ impl AgentContext for AgentContextImpl {
     }
 
     // =========================================================================
-    // Workflow Signaling
+    // Workflow Integration
     // =========================================================================
+
+    async fn start_workflow(
+        &self,
+        kind: &str,
+        input: Value,
+        options: Option<StartWorkflowOptions>,
+    ) -> Result<Uuid> {
+        let options = options.unwrap_or_default();
+        let input_bytes = serde_json::to_vec(&input)?;
+
+        // Auto-generate idempotency key from agent_execution_id + checkpoint sequence
+        // for crash-recovery safety (replaying after crash won't create duplicate workflows)
+        let seq = self.checkpoint_sequence.load(std::sync::atomic::Ordering::Relaxed);
+        let idempotency_key = format!("agent:{}:wf:{}:{}", self.agent_execution_id, kind, seq);
+
+        let mut client = self.client.lock().await;
+        let workflow_execution_id = client
+            .start_workflow(
+                &self.org_id.to_string(),
+                kind,
+                &input_bytes,
+                self.agent_execution_id,
+                options.queue.as_deref(),
+                Some(&idempotency_key),
+            )
+            .await?;
+        Ok(workflow_execution_id)
+    }
 
     async fn signal_workflow(
         &self,

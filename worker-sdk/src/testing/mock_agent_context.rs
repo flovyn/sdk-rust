@@ -5,6 +5,7 @@ use crate::agent::child::{
 };
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, LoadedMessage, ScheduleAgentTaskOptions,
+    StartWorkflowOptions,
 };
 use crate::agent::future::AgentTaskFutureRaw;
 use crate::error::{FlovynError, Result};
@@ -718,6 +719,15 @@ impl AgentContext for MockAgentContext {
             .write()
             .push((handle.child_id, name.to_string(), payload));
         Ok(())
+    }
+
+    async fn start_workflow(
+        &self,
+        _kind: &str,
+        _input: Value,
+        _options: Option<StartWorkflowOptions>,
+    ) -> Result<Uuid> {
+        Ok(Uuid::new_v4())
     }
 
     async fn signal_workflow(

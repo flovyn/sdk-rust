@@ -123,6 +123,23 @@ impl ScheduleAgentTaskOptions {
     }
 }
 
+/// Options for starting a workflow from an agent.
+#[derive(Debug, Clone, Default)]
+pub struct StartWorkflowOptions {
+    /// Queue to schedule the workflow on (None = "default")
+    pub queue: Option<String>,
+    /// Metadata key-value pairs
+    pub metadata: Option<std::collections::HashMap<String, String>>,
+}
+
+impl StartWorkflowOptions {
+    /// Set the queue for the workflow.
+    pub fn queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = Some(queue.into());
+        self
+    }
+}
+
 /// A loaded conversation message from entries
 #[derive(Debug, Clone)]
 pub struct LoadedMessage {
@@ -340,8 +357,23 @@ pub trait AgentContext: Send + Sync {
     ) -> AgentTaskFutureRaw;
 
     // =========================================================================
-    // Workflow Signaling
+    // Workflow Integration
     // =========================================================================
+
+    /// Start a workflow execution from this agent.
+    ///
+    /// Uses the standard `StartWorkflow` RPC with `parent_agent_execution_id`
+    /// set for lineage tracking. An idempotency key is auto-generated from the
+    /// agent execution ID and checkpoint sequence to ensure crash-recovery safety.
+    ///
+    /// Returns the workflow execution ID. Use `wait_for_signal_raw()` with
+    /// `format!("workflow:{id}:completed")` to await completion.
+    async fn start_workflow(
+        &self,
+        kind: &str,
+        input: Value,
+        options: Option<StartWorkflowOptions>,
+    ) -> Result<Uuid>;
 
     /// Signal a workflow execution.
     async fn signal_workflow(

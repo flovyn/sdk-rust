@@ -182,6 +182,9 @@ message StartWorkflowRequest {
   // Time-to-live for the idempotency key in seconds
   // Default: 86400 (1 day), Maximum: 2592000 (30 days)
   optional int64 idempotency_key_ttl_seconds = 11;
+
+  // Parent agent execution ID (set when an agent starts this workflow)
+  optional string parent_agent_execution_id = 12;
 }
 
 message StartWorkflowResponse {
