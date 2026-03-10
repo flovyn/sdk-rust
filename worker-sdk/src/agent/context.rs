@@ -375,6 +375,23 @@ pub trait AgentContext: Send + Sync {
         options: Option<StartWorkflowOptions>,
     ) -> Result<Uuid>;
 
+    /// Atomically start a workflow (if not exists) and send a signal.
+    ///
+    /// Uses `SignalWithStartWorkflow` RPC. The `workflow_id` serves as the
+    /// idempotency key for workflow creation. The signal is always delivered
+    /// regardless of whether the workflow was newly created or already existed.
+    ///
+    /// Returns (workflow_execution_id, workflow_created).
+    async fn signal_with_start_workflow(
+        &self,
+        workflow_id: &str,
+        kind: &str,
+        input: Value,
+        signal_name: &str,
+        signal_value: Value,
+        options: Option<StartWorkflowOptions>,
+    ) -> Result<(Uuid, bool)>;
+
     /// Signal a workflow execution.
     async fn signal_workflow(
         &self,

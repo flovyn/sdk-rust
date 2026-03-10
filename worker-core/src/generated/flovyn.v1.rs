@@ -608,7 +608,7 @@ pub mod workflow_command {
         #[prost(message, tag = "23")]
         RequestCancelChildWorkflow(super::RequestCancelChildWorkflowCommand),
         #[prost(message, tag = "24")]
-        StartAgent(super::StartAgentCommand),
+        SignalAgent(super::SignalAgentCommand),
     }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -760,15 +760,24 @@ pub struct RequestCancelChildWorkflowCommand {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct StartAgentCommand {
+pub struct SignalAgentCommand {
+    /// agent kind (used for create-if-not-exists)
     #[prost(string, tag = "1")]
     pub agent_kind: ::prost::alloc::string::String,
+    /// agent input (used for create-if-not-exists)
     #[prost(bytes = "vec", tag = "2")]
     pub input: ::prost::alloc::vec::Vec<u8>,
+    /// idempotency key for agent creation
     #[prost(string, tag = "3")]
-    pub agent_execution_id: ::prost::alloc::string::String,
+    pub agent_id: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "4")]
     pub queue: ::core::option::Option<::prost::alloc::string::String>,
+    /// signal to deliver
+    #[prost(string, tag = "5")]
+    pub signal_name: ::prost::alloc::string::String,
+    /// signal payload
+    #[prost(bytes = "vec", tag = "6")]
+    pub signal_value: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1069,7 +1078,7 @@ pub enum CommandType {
     StartTimer = 12,
     CancelTimer = 13,
     RequestCancelChildWorkflow = 14,
-    StartAgent = 15,
+    SignalAgent = 15,
 }
 impl CommandType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1093,7 +1102,7 @@ impl CommandType {
             CommandType::StartTimer => "START_TIMER",
             CommandType::CancelTimer => "CANCEL_TIMER",
             CommandType::RequestCancelChildWorkflow => "REQUEST_CANCEL_CHILD_WORKFLOW",
-            CommandType::StartAgent => "START_AGENT",
+            CommandType::SignalAgent => "SIGNAL_AGENT",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1114,7 +1123,7 @@ impl CommandType {
             "START_TIMER" => Some(Self::StartTimer),
             "CANCEL_TIMER" => Some(Self::CancelTimer),
             "REQUEST_CANCEL_CHILD_WORKFLOW" => Some(Self::RequestCancelChildWorkflow),
-            "START_AGENT" => Some(Self::StartAgent),
+            "SIGNAL_AGENT" => Some(Self::SignalAgent),
             _ => None,
         }
     }
@@ -2836,6 +2845,37 @@ pub struct ChildEventInfo {
     #[prost(bytes = "vec", optional, tag = "6")]
     pub signal_payload: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalWithStartAgentRequest {
+    #[prost(string, tag = "1")]
+    pub org_id: ::prost::alloc::string::String,
+    /// idempotency key for agent creation
+    #[prost(string, tag = "2")]
+    pub agent_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub agent_kind: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub agent_input: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "5")]
+    pub queue: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub signal_name: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "7")]
+    pub signal_value: ::prost::alloc::vec::Vec<u8>,
+    #[prost(int64, optional, tag = "8")]
+    pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalWithStartAgentResponse {
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub agent_created: bool,
+    #[prost(string, tag = "3")]
+    pub signal_id: ::prost::alloc::string::String,
+}
 /// Mode for waiting on multiple tasks
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -3451,6 +3491,29 @@ pub mod agent_dispatch_client {
             req.extensions_mut().insert(GrpcMethod::new(
                 "flovyn.v1.AgentDispatch",
                 "PollChildEvents",
+            ));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Signal-with-start: atomically create agent (if not exists) and deliver signal
+        pub async fn signal_with_start_agent(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SignalWithStartAgentRequest>,
+        ) -> std::result::Result<tonic::Response<super::SignalWithStartAgentResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/flovyn.v1.AgentDispatch/SignalWithStartAgent",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new(
+                "flovyn.v1.AgentDispatch",
+                "SignalWithStartAgent",
             ));
             self.inner.unary(req, path, codec).await
         }

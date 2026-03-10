@@ -5,7 +5,8 @@ use crate::task::definition::TaskDefinition;
 use crate::workflow::definition::WorkflowDefinition;
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFutureRaw, PromiseFuture,
-    PromiseFutureRaw, SignalFutureRaw, StartAgentFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+    PromiseFutureRaw, SignalAgentFutureRaw, SignalFutureRaw, TaskFuture, TaskFutureRaw,
+    TimerFuture,
 };
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -236,14 +237,24 @@ pub trait WorkflowContext: Send + Sync {
         -> ChildWorkflowFutureRaw;
 
     // =========================================================================
-    // Child Agents - Returns Future for parallel execution
+    // Signal Agent - Returns Future for parallel execution
     // =========================================================================
 
-    /// Start a child agent and return a future for its execution ID.
+    /// Signal an agent with start semantics (create if not exists + deliver signal).
     ///
-    /// The workflow does NOT wait for the agent to complete. Use signals
-    /// (`wait_for_signal_raw`) to receive results from the agent.
-    fn start_agent_raw(&self, kind: &str, input: Value) -> StartAgentFutureRaw;
+    /// If an agent with the given `agent_id` already exists, the signal is delivered
+    /// to it. If not, a new agent is created with the given `kind` and `input`,
+    /// then the signal is delivered.
+    ///
+    /// Returns a future that resolves with the agent execution ID.
+    fn signal_with_start_agent_raw(
+        &self,
+        kind: &str,
+        input: Value,
+        agent_id: &str,
+        signal_name: &str,
+        signal_value: Value,
+    ) -> SignalAgentFutureRaw;
 
     // =========================================================================
     // Side Effects - Returns Future for parallel execution

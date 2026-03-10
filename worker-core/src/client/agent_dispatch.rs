@@ -160,6 +160,17 @@ pub struct SignalResult {
     pub agent_resumed: bool,
 }
 
+/// Result of signal-with-start workflow operation.
+#[derive(Debug, Clone)]
+pub struct SignalWithStartWorkflowResult {
+    /// The workflow execution ID
+    pub workflow_execution_id: Uuid,
+    /// Whether the workflow was created (vs already existed)
+    pub workflow_created: bool,
+    /// Sequence number of the signal event
+    pub signal_event_sequence: i64,
+}
+
 /// Result of querying a task execution
 #[derive(Debug, Clone)]
 pub struct TaskResult {
@@ -1142,10 +1153,52 @@ impl AgentDispatch {
             .start_workflow(request)
             .await?
             .into_inner();
-        Ok(response
-            .workflow_execution_id
-            .parse()
-            .unwrap_or_default())
+        Ok(response.workflow_execution_id.parse().unwrap_or_default())
+    }
+
+    /// Atomically start a workflow (if not exists) and send a signal, via WorkflowDispatch.
+    ///
+    /// Delegates to `WorkflowDispatch::signal_with_start_workflow()`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn signal_with_start_workflow(
+        &mut self,
+        org_id: &str,
+        workflow_id: &str,
+        workflow_kind: &str,
+        workflow_input: Vec<u8>,
+        queue: &str,
+        signal_name: &str,
+        signal_value: Vec<u8>,
+        idempotency_key_ttl_seconds: Option<i64>,
+    ) -> CoreResult<SignalWithStartWorkflowResult> {
+        let request = flovyn_v1::SignalWithStartWorkflowRequest {
+            org_id: org_id.to_string(),
+            workflow_id: workflow_id.to_string(),
+            workflow_kind: workflow_kind.to_string(),
+            workflow_input,
+            queue: queue.to_string(),
+            signal_name: signal_name.to_string(),
+            signal_value,
+            priority_seconds: 0,
+            workflow_version: None,
+            metadata: Default::default(),
+            idempotency_key_ttl_seconds,
+        };
+
+        let response = self
+            .workflow_client
+            .signal_with_start_workflow(request)
+            .await?
+            .into_inner();
+
+        let workflow_execution_id =
+            Uuid::parse_str(&response.workflow_execution_id).unwrap_or_default();
+
+        Ok(SignalWithStartWorkflowResult {
+            workflow_execution_id,
+            workflow_created: response.workflow_created,
+            signal_event_sequence: response.signal_event_sequence,
+        })
     }
 
     pub async fn signal_workflow(

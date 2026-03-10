@@ -767,7 +767,9 @@ impl AgentContext for AgentContextImpl {
 
         // Auto-generate idempotency key from agent_execution_id + checkpoint sequence
         // for crash-recovery safety (replaying after crash won't create duplicate workflows)
-        let seq = self.checkpoint_sequence.load(std::sync::atomic::Ordering::Relaxed);
+        let seq = self
+            .checkpoint_sequence
+            .load(std::sync::atomic::Ordering::Relaxed);
         let idempotency_key = format!("agent:{}:wf:{}:{}", self.agent_execution_id, kind, seq);
 
         let mut client = self.client.lock().await;
@@ -782,6 +784,35 @@ impl AgentContext for AgentContextImpl {
             )
             .await?;
         Ok(workflow_execution_id)
+    }
+
+    async fn signal_with_start_workflow(
+        &self,
+        workflow_id: &str,
+        kind: &str,
+        input: Value,
+        signal_name: &str,
+        signal_value: Value,
+        options: Option<StartWorkflowOptions>,
+    ) -> Result<(Uuid, bool)> {
+        let options = options.unwrap_or_default();
+        let input_bytes = serde_json::to_vec(&input)?;
+        let signal_bytes = serde_json::to_vec(&signal_value)?;
+
+        let mut client = self.client.lock().await;
+        let result = client
+            .signal_with_start_workflow(
+                &self.org_id.to_string(),
+                workflow_id,
+                kind,
+                input_bytes,
+                options.queue.as_deref().unwrap_or("default"),
+                signal_name,
+                signal_bytes,
+                None,
+            )
+            .await?;
+        Ok((result.workflow_execution_id, result.workflow_created))
     }
 
     async fn signal_workflow(

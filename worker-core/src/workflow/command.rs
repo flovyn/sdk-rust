@@ -147,16 +147,20 @@ pub enum WorkflowCommand {
         child_execution_id: Uuid,
     },
 
-    /// Start a child agent
-    StartAgent {
+    /// Signal an agent with start semantics (create if not exists + deliver signal)
+    SignalAgent {
         sequence_number: i32,
         #[serde(rename = "agentKind")]
         agent_kind: String,
-        #[serde(rename = "agentExecutionId")]
-        agent_execution_id: Uuid,
         input: Value,
+        #[serde(rename = "agentId")]
+        agent_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         queue: Option<String>,
+        #[serde(rename = "signalName")]
+        signal_name: String,
+        #[serde(rename = "signalValue")]
+        signal_value: Value,
     },
 }
 
@@ -209,7 +213,7 @@ impl WorkflowCommand {
             Self::RequestCancelChildWorkflow {
                 sequence_number, ..
             } => *sequence_number,
-            Self::StartAgent {
+            Self::SignalAgent {
                 sequence_number, ..
             } => *sequence_number,
         }
@@ -263,7 +267,7 @@ impl WorkflowCommand {
             Self::RequestCancelChildWorkflow {
                 sequence_number, ..
             } => *sequence_number = seq,
-            Self::StartAgent {
+            Self::SignalAgent {
                 sequence_number, ..
             } => *sequence_number = seq,
         }
@@ -287,7 +291,7 @@ impl WorkflowCommand {
             Self::CancelTimer { .. } => "CancelTimer",
             Self::RequestCancelTask { .. } => "RequestCancelTask",
             Self::RequestCancelChildWorkflow { .. } => "RequestCancelChildWorkflow",
-            Self::StartAgent { .. } => "StartAgent",
+            Self::SignalAgent { .. } => "SignalAgent",
         }
     }
 }
@@ -542,12 +546,14 @@ mod tests {
                 sequence_number: 15,
                 child_execution_id: Uuid::nil(),
             },
-            WorkflowCommand::StartAgent {
+            WorkflowCommand::SignalAgent {
                 sequence_number: 16,
                 agent_kind: "a".to_string(),
-                agent_execution_id: Uuid::nil(),
                 input: json!(null),
+                agent_id: "agent-1".to_string(),
                 queue: None,
+                signal_name: "start".to_string(),
+                signal_value: json!(null),
             },
         ];
 

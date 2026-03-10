@@ -546,7 +546,7 @@ enum CommandType {
   START_TIMER = 12;
   CANCEL_TIMER = 13;
   REQUEST_CANCEL_CHILD_WORKFLOW = 14;
-  START_AGENT = 15;
+  SIGNAL_AGENT = 15;
 }
 
 message WorkflowCommand {
@@ -568,7 +568,7 @@ message WorkflowCommand {
     StartTimerCommand start_timer = 21;
     CancelTimerCommand cancel_timer = 22;
     RequestCancelChildWorkflowCommand request_cancel_child_workflow = 23;
-    StartAgentCommand start_agent = 24;
+    SignalAgentCommand signal_agent = 24;
   }
 }
 
@@ -661,11 +661,13 @@ message RequestCancelChildWorkflowCommand {
   string reason = 3;
 }
 
-message StartAgentCommand {
-  string agent_kind = 1;
-  bytes input = 2;
-  string agent_execution_id = 3;
+message SignalAgentCommand {
+  string agent_kind = 1;       // agent kind (used for create-if-not-exists)
+  bytes input = 2;             // agent input (used for create-if-not-exists)
+  string agent_id = 3;         // idempotency key for agent creation
   optional string queue = 4;
+  string signal_name = 5;      // signal to deliver
+  bytes signal_value = 6;      // signal payload
 }
 
 enum WorkflowStatus {

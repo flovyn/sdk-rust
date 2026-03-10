@@ -1264,18 +1264,18 @@ impl CancellableFuture for SignalFuture {
 }
 
 // ============================================================================
-// StartAgentFuture
+// SignalAgentFuture
 // ============================================================================
 
-/// Future for starting a child agent.
+/// Future for signal-with-start agent.
 ///
-/// Created by `WorkflowContext::start_agent_raw()`.
-/// Resolves with the agent execution ID (Uuid) once the server confirms creation.
-/// The workflow does NOT wait for the agent to complete — use signals for that.
+/// Created by `WorkflowContext::signal_with_start_agent_raw()`.
+/// Resolves with the agent execution ID (Uuid) once the server confirms
+/// the signal was delivered (and agent created if it didn't exist).
 #[allow(dead_code)]
-pub struct StartAgentFuture {
+pub struct SignalAgentFuture {
     /// Per-type sequence number
-    pub(crate) child_agent_seq: u32,
+    pub(crate) signal_agent_seq: u32,
     /// Agent execution ID (pre-assigned deterministically)
     pub(crate) agent_execution_id: Uuid,
     /// Agent name (for replay lookup)
@@ -1287,11 +1287,11 @@ pub struct StartAgentFuture {
 }
 
 #[allow(dead_code)]
-impl StartAgentFuture {
+impl SignalAgentFuture {
     /// Create with a result (for mock/testing)
     pub(crate) fn with_result(agent_execution_id: Uuid) -> Self {
         Self {
-            child_agent_seq: 0,
+            signal_agent_seq: 0,
             agent_execution_id,
             agent_name: String::new(),
             suspension_cell: None,
@@ -1301,15 +1301,15 @@ impl StartAgentFuture {
         }
     }
 
-    /// Create a new pending StartAgentFuture
+    /// Create a new pending SignalAgentFuture
     pub(crate) fn new_with_cell(
-        child_agent_seq: u32,
+        signal_agent_seq: u32,
         agent_execution_id: Uuid,
         agent_name: String,
         suspension_cell: SuspensionCell,
     ) -> Self {
         Self {
-            child_agent_seq,
+            signal_agent_seq,
             agent_execution_id,
             agent_name,
             suspension_cell: Some(suspension_cell),
@@ -1319,13 +1319,13 @@ impl StartAgentFuture {
 
     /// Create for replay with agent_execution_id already known
     pub(crate) fn from_replay_with_cell(
-        child_agent_seq: u32,
+        signal_agent_seq: u32,
         agent_execution_id: Uuid,
         agent_name: String,
         suspension_cell: SuspensionCell,
     ) -> Self {
         Self {
-            child_agent_seq,
+            signal_agent_seq,
             agent_execution_id,
             agent_name,
             suspension_cell: Some(suspension_cell),
@@ -1338,7 +1338,7 @@ impl StartAgentFuture {
     /// Create with an error
     pub(crate) fn with_error(error: FlovynError) -> Self {
         Self {
-            child_agent_seq: 0,
+            signal_agent_seq: 0,
             agent_execution_id: Uuid::nil(),
             agent_name: String::new(),
             suspension_cell: None,
@@ -1347,7 +1347,7 @@ impl StartAgentFuture {
     }
 }
 
-impl WorkflowFuturePoll for StartAgentFuture {
+impl WorkflowFuturePoll for SignalAgentFuture {
     type Output = Uuid;
 
     fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<Uuid>> {
@@ -1369,13 +1369,13 @@ impl WorkflowFuturePoll for StartAgentFuture {
 
         // Not ready yet - signal workflow suspension
         Poll::Ready(WorkflowOutcome::suspended(format!(
-            "Waiting for child agent {} to be created",
+            "Waiting for signal-with-start agent {} to complete",
             self.agent_name
         )))
     }
 }
 
-impl Future for StartAgentFuture {
+impl Future for SignalAgentFuture {
     type Output = Result<Uuid>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -1387,7 +1387,7 @@ impl Future for StartAgentFuture {
                 if let Some(cell) = suspension_cell {
                     cell.signal(reason);
                 } else {
-                    panic!("StartAgentFuture must have suspension cell");
+                    panic!("SignalAgentFuture requires suspension cell");
                 }
                 Poll::Pending
             }
@@ -1418,8 +1418,8 @@ pub type OperationFutureRaw = OperationFuture<Value>;
 /// Raw signal future returning Signal
 pub type SignalFutureRaw = SignalFuture;
 
-/// Start agent future returning agent execution ID
-pub type StartAgentFutureRaw = StartAgentFuture;
+/// Signal agent future returning agent execution ID
+pub type SignalAgentFutureRaw = SignalAgentFuture;
 
 #[cfg(test)]
 mod tests {

@@ -46,8 +46,8 @@ pub enum NapiEventType {
     TimerFired,
     TimerCancelled,
 
-    // Child agent events
-    ChildAgentStarted,
+    // Signal agent events
+    SignalAgentCompleted,
 
     // Signal events
     SignalReceived,
@@ -81,7 +81,7 @@ impl From<flovyn_worker_core::EventType> for NapiEventType {
             EventType::TimerStarted => NapiEventType::TimerStarted,
             EventType::TimerFired => NapiEventType::TimerFired,
             EventType::TimerCancelled => NapiEventType::TimerCancelled,
-            EventType::ChildAgentStarted => NapiEventType::ChildAgentStarted,
+            EventType::SignalAgentCompleted => NapiEventType::SignalAgentCompleted,
             EventType::SignalReceived => NapiEventType::SignalReceived,
         }
     }
@@ -115,7 +115,7 @@ impl From<NapiEventType> for flovyn_worker_core::EventType {
             NapiEventType::TimerStarted => EventType::TimerStarted,
             NapiEventType::TimerFired => EventType::TimerFired,
             NapiEventType::TimerCancelled => EventType::TimerCancelled,
-            NapiEventType::ChildAgentStarted => EventType::ChildAgentStarted,
+            NapiEventType::SignalAgentCompleted => EventType::SignalAgentCompleted,
             NapiEventType::SignalReceived => EventType::SignalReceived,
         }
     }

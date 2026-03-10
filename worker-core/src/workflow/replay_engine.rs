@@ -46,7 +46,7 @@ pub struct ReplayEngine {
     timer_events: Vec<ReplayEvent>,
     promise_events: Vec<ReplayEvent>,
     child_workflow_events: Vec<ReplayEvent>,
-    child_agent_events: Vec<ReplayEvent>,
+    signal_agent_events: Vec<ReplayEvent>,
     operation_events: Vec<ReplayEvent>,
     state_events: Vec<ReplayEvent>,
 
@@ -62,7 +62,7 @@ pub struct ReplayEngine {
     next_timer_seq: AtomicU32,
     next_promise_seq: AtomicU32,
     next_child_workflow_seq: AtomicU32,
-    next_child_agent_seq: AtomicU32,
+    next_signal_agent_seq: AtomicU32,
     next_operation_seq: AtomicU32,
     next_state_seq: AtomicU32,
 
@@ -102,9 +102,9 @@ impl ReplayEngine {
             .cloned()
             .collect();
 
-        let child_agent_events: Vec<ReplayEvent> = events
+        let signal_agent_events: Vec<ReplayEvent> = events
             .iter()
-            .filter(|e| e.event_type() == EventType::ChildAgentStarted)
+            .filter(|e| e.event_type() == EventType::SignalAgentCompleted)
             .cloned()
             .collect();
 
@@ -152,7 +152,7 @@ impl ReplayEngine {
             timer_events,
             promise_events,
             child_workflow_events,
-            child_agent_events,
+            signal_agent_events,
             operation_events,
             state_events,
             signal_queues: RwLock::new(signal_queues),
@@ -161,7 +161,7 @@ impl ReplayEngine {
             next_timer_seq: AtomicU32::new(0),
             next_promise_seq: AtomicU32::new(0),
             next_child_workflow_seq: AtomicU32::new(0),
-            next_child_agent_seq: AtomicU32::new(0),
+            next_signal_agent_seq: AtomicU32::new(0),
             next_operation_seq: AtomicU32::new(0),
             next_state_seq: AtomicU32::new(0),
             operation_cache,
@@ -193,9 +193,9 @@ impl ReplayEngine {
         self.next_child_workflow_seq.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Get next child agent sequence number and increment.
-    pub fn next_child_agent_seq(&self) -> u32 {
-        self.next_child_agent_seq.fetch_add(1, Ordering::SeqCst)
+    /// Get next signal agent sequence number and increment.
+    pub fn next_signal_agent_seq(&self) -> u32 {
+        self.next_signal_agent_seq.fetch_add(1, Ordering::SeqCst)
     }
 
     /// Get next operation sequence number and increment.
@@ -298,9 +298,9 @@ impl ReplayEngine {
         self.child_workflow_events.get(seq as usize)
     }
 
-    /// Get the child agent event at the given sequence index (if replaying).
-    pub fn get_child_agent_event(&self, seq: u32) -> Option<&ReplayEvent> {
-        self.child_agent_events.get(seq as usize)
+    /// Get the signal agent event at the given sequence index (if replaying).
+    pub fn get_signal_agent_event(&self, seq: u32) -> Option<&ReplayEvent> {
+        self.signal_agent_events.get(seq as usize)
     }
 
     /// Get the operation event at the given sequence index (if replaying).
@@ -333,9 +333,9 @@ impl ReplayEngine {
         (seq as usize) < self.child_workflow_events.len()
     }
 
-    /// Check if currently replaying for child agents.
-    pub fn is_replaying_child_agent(&self, seq: u32) -> bool {
-        (seq as usize) < self.child_agent_events.len()
+    /// Check if currently replaying for signal agents.
+    pub fn is_replaying_signal_agent(&self, seq: u32) -> bool {
+        (seq as usize) < self.signal_agent_events.len()
     }
 
     /// Check if currently replaying for operations.
@@ -429,9 +429,9 @@ impl ReplayEngine {
         self.child_workflow_events.len()
     }
 
-    /// Get the number of child agent events.
-    pub fn child_agent_event_count(&self) -> usize {
-        self.child_agent_events.len()
+    /// Get the number of signal agent events.
+    pub fn signal_agent_event_count(&self) -> usize {
+        self.signal_agent_events.len()
     }
 
     /// Get the number of operation events.

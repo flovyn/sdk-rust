@@ -17,14 +17,15 @@ pub use agent_dispatch::{
     AgentCheckpoint, AgentDispatch, AgentEntry, AgentExecutionInfo, AgentSignal, AppendEntryResult,
     BatchScheduleTaskInput, BatchScheduleTaskResultEntry, BatchTaskResult, CancelResult,
     ChildEventResult, ScheduleTaskResult as AgentScheduleTaskResult, SignalResult,
-    TaskResult as AgentTaskResult, TokenUsage as AgentTokenUsage, WaitMode,
+    SignalWithStartWorkflowResult, TaskResult as AgentTaskResult, TokenUsage as AgentTokenUsage,
+    WaitMode,
 };
 pub use auth::AuthInterceptor;
 pub use task_execution::{SubmitTaskResult, TaskExecutionClient, TaskExecutionInfo};
 pub use worker_lifecycle::{RegistrationResult, WorkerLifecycleClient, WorkerType};
 pub use workflow_dispatch::{
-    ReportExecutionSpansResult, StartWorkflowResult, WorkflowDispatch, WorkflowEvent,
-    WorkflowExecutionInfo,
+    ReportExecutionSpansResult, SignalWithStartResult, StartWorkflowResult, WorkflowDispatch,
+    WorkflowEvent, WorkflowExecutionInfo,
 };
 pub use workflow_query::WorkflowQueryClient;
 

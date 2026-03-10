@@ -73,6 +73,9 @@ service AgentDispatch {
   rpc SendParentSignal(SendParentSignalRequest) returns (SendParentSignalResponse);
   rpc SendChildSignal(SendChildSignalRequest) returns (SendChildSignalResponse);
   rpc PollChildEvents(PollChildEventsRequest) returns (PollChildEventsResponse);
+
+  // Signal-with-start: atomically create agent (if not exists) and deliver signal
+  rpc SignalWithStartAgent(SignalWithStartAgentRequest) returns (SignalWithStartAgentResponse);
 }
 
 // ============================================================================
@@ -770,4 +773,25 @@ message ChildEventInfo {
 
   // Signal payload (if signal event)
   optional bytes signal_payload = 6;
+}
+
+// ============================================================================
+// Signal-With-Start Agent Messages
+// ============================================================================
+
+message SignalWithStartAgentRequest {
+  string org_id = 1;
+  string agent_id = 2;               // idempotency key for agent creation
+  string agent_kind = 3;
+  bytes agent_input = 4;
+  string queue = 5;
+  string signal_name = 6;
+  bytes signal_value = 7;
+  optional int64 idempotency_key_ttl_seconds = 8;
+}
+
+message SignalWithStartAgentResponse {
+  string agent_execution_id = 1;
+  bool agent_created = 2;
+  string signal_id = 3;
 }

@@ -730,6 +730,18 @@ impl AgentContext for MockAgentContext {
         Ok(Uuid::new_v4())
     }
 
+    async fn signal_with_start_workflow(
+        &self,
+        _workflow_id: &str,
+        _kind: &str,
+        _input: Value,
+        _signal_name: &str,
+        _signal_value: Value,
+        _options: Option<StartWorkflowOptions>,
+    ) -> Result<(Uuid, bool)> {
+        Ok((Uuid::new_v4(), true))
+    }
+
     async fn signal_workflow(
         &self,
         _workflow_execution_id: Uuid,

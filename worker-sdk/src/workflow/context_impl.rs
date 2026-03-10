@@ -8,8 +8,8 @@ use crate::workflow::context::{
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
-    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SignalFuture,
-    SignalFutureRaw, StartAgentFuture, StartAgentFutureRaw, SuspensionContext, TaskFuture,
+    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SignalAgentFuture,
+    SignalAgentFutureRaw, SignalFuture, SignalFutureRaw, SuspensionContext, TaskFuture,
     TaskFutureContext, TaskFutureRaw, TimerFuture, TimerFutureContext,
 };
 use crate::workflow::recorder::CommandRecorder;
@@ -816,20 +816,27 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         )
     }
 
-    fn start_agent_raw(&self, kind: &str, input: Value) -> StartAgentFutureRaw {
+    fn signal_with_start_agent_raw(
+        &self,
+        kind: &str,
+        input: Value,
+        agent_id: &str,
+        signal_name: &str,
+        signal_value: Value,
+    ) -> SignalAgentFutureRaw {
         // Get per-type sequence and increment atomically.
-        let agent_seq = self.replay_engine.next_child_agent_seq();
+        let agent_seq = self.replay_engine.next_signal_agent_seq();
 
         // Look for event at this per-type index (replay case)
-        if let Some(started_event) = self.replay_engine.get_child_agent_event(agent_seq) {
+        if let Some(completed_event) = self.replay_engine.get_signal_agent_event(agent_seq) {
             // Validate agent kind matches
-            let event_kind = started_event
+            let event_kind = completed_event
                 .get_string("agentKind")
                 .unwrap_or_default()
                 .to_string();
 
             if event_kind != kind {
-                return StartAgentFuture::with_error(FlovynError::DeterminismViolation(
+                return SignalAgentFuture::with_error(FlovynError::DeterminismViolation(
                     DeterminismViolationError::ChildWorkflowMismatch {
                         sequence: agent_seq as i32,
                         field: "agentKind".to_string(),
@@ -839,17 +846,14 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
                 ));
             }
 
-            // Get agent execution ID from event
-            let agent_execution_id = started_event
+            // Get agent execution ID from event (assigned by server)
+            let agent_execution_id = completed_event
                 .get_string("agentExecutionId")
                 .map(|s| Uuid::parse_str(s).unwrap_or(Uuid::nil()))
                 .unwrap_or(Uuid::nil());
 
-            // Increment uuid_counter to stay in sync with UUIDs generated in original execution
-            let _ = self.uuid_counter.fetch_add(1, Ordering::SeqCst);
-
-            // Agent creation confirmed - return resolved future with execution ID
-            return StartAgentFuture::from_replay_with_cell(
+            // Signal-with-start confirmed - return resolved future with execution ID
+            return SignalAgentFuture::from_replay_with_cell(
                 agent_seq,
                 agent_execution_id,
                 kind.to_string(),
@@ -858,22 +862,23 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
         }
 
         // No event at this per-type index → new command
-        let agent_execution_id = self.random_uuid();
         let sequence = self.next_sequence();
-        if let Err(e) = self.record_command(WorkflowCommand::StartAgent {
+        if let Err(e) = self.record_command(WorkflowCommand::SignalAgent {
             sequence_number: sequence,
             agent_kind: kind.to_string(),
-            agent_execution_id,
             input,
+            agent_id: agent_id.to_string(),
             queue: None, // Inherit workflow's queue on server side
+            signal_name: signal_name.to_string(),
+            signal_value,
         }) {
-            return StartAgentFuture::with_error(e);
+            return SignalAgentFuture::with_error(e);
         }
 
-        // Return pending future - will suspend until server creates ChildAgentStarted event
-        StartAgentFuture::new_with_cell(
+        // Return pending future - will suspend until server creates SignalAgentCompleted event
+        SignalAgentFuture::new_with_cell(
             agent_seq,
-            agent_execution_id,
+            Uuid::nil(), // Server assigns execution ID
             kind.to_string(),
             self.suspension_cell.clone(),
         )

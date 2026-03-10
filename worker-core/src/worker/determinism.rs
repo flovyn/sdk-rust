@@ -367,8 +367,8 @@ impl DeterminismValidator {
             // Cancellation requests don't need field validation (they're fire-and-forget)
             WorkflowCommand::RequestCancelTask { .. }
             | WorkflowCommand::RequestCancelChildWorkflow { .. } => {}
-            // StartAgent validates agent kind match
-            WorkflowCommand::StartAgent { agent_kind, .. } => {
+            // SignalAgent validates agent kind match
+            WorkflowCommand::SignalAgent { agent_kind, .. } => {
                 if let Some(historical_kind) = event.get_string("agentKind") {
                     if historical_kind != agent_kind {
                         return DeterminismValidationResult::ChildWorkflowMismatch {
@@ -405,7 +405,7 @@ impl DeterminismValidator {
             // Note: These are requests that may or may not result in actual cancellation
             WorkflowCommand::RequestCancelTask { .. } => EventType::TaskCancelled,
             WorkflowCommand::RequestCancelChildWorkflow { .. } => EventType::ChildWorkflowCancelled,
-            WorkflowCommand::StartAgent { .. } => EventType::ChildAgentStarted,
+            WorkflowCommand::SignalAgent { .. } => EventType::SignalAgentCompleted,
         }
     }
 }
