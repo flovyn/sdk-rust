@@ -9,8 +9,8 @@ use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
     OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SignalFuture,
-    SignalFutureRaw, SuspensionContext, TaskFuture, TaskFutureContext, TaskFutureRaw, TimerFuture,
-    TimerFutureContext,
+    SignalFutureRaw, StartAgentFuture, StartAgentFutureRaw, SuspensionContext, TaskFuture,
+    TaskFutureContext, TaskFutureRaw, TimerFuture, TimerFutureContext,
 };
 use crate::workflow::recorder::CommandRecorder;
 use async_trait::async_trait;
@@ -812,6 +812,69 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             cw_seq,
             child_execution_id,
             name.to_string(),
+            self.suspension_cell.clone(),
+        )
+    }
+
+    fn start_agent_raw(&self, kind: &str, input: Value) -> StartAgentFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let agent_seq = self.replay_engine.next_child_agent_seq();
+
+        // Look for event at this per-type index (replay case)
+        if let Some(started_event) = self.replay_engine.get_child_agent_event(agent_seq) {
+            // Validate agent kind matches
+            let event_kind = started_event
+                .get_string("agentKind")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_kind != kind {
+                return StartAgentFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::ChildWorkflowMismatch {
+                        sequence: agent_seq as i32,
+                        field: "agentKind".to_string(),
+                        expected: event_kind,
+                        actual: kind.to_string(),
+                    },
+                ));
+            }
+
+            // Get agent execution ID from event
+            let agent_execution_id = started_event
+                .get_string("agentExecutionId")
+                .map(|s| Uuid::parse_str(s).unwrap_or(Uuid::nil()))
+                .unwrap_or(Uuid::nil());
+
+            // Increment uuid_counter to stay in sync with UUIDs generated in original execution
+            let _ = self.uuid_counter.fetch_add(1, Ordering::SeqCst);
+
+            // Agent creation confirmed - return resolved future with execution ID
+            return StartAgentFuture::from_replay_with_cell(
+                agent_seq,
+                agent_execution_id,
+                kind.to_string(),
+                self.suspension_cell.clone(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        let agent_execution_id = self.random_uuid();
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::StartAgent {
+            sequence_number: sequence,
+            agent_kind: kind.to_string(),
+            agent_execution_id,
+            input,
+            queue: None, // Inherit workflow's queue on server side
+        }) {
+            return StartAgentFuture::with_error(e);
+        }
+
+        // Return pending future - will suspend until server creates ChildAgentStarted event
+        StartAgentFuture::new_with_cell(
+            agent_seq,
+            agent_execution_id,
+            kind.to_string(),
             self.suspension_cell.clone(),
         )
     }

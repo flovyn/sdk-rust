@@ -1264,6 +1264,142 @@ impl CancellableFuture for SignalFuture {
 }
 
 // ============================================================================
+// StartAgentFuture
+// ============================================================================
+
+/// Future for starting a child agent.
+///
+/// Created by `WorkflowContext::start_agent_raw()`.
+/// Resolves with the agent execution ID (Uuid) once the server confirms creation.
+/// The workflow does NOT wait for the agent to complete — use signals for that.
+#[allow(dead_code)]
+pub struct StartAgentFuture {
+    /// Per-type sequence number
+    pub(crate) child_agent_seq: u32,
+    /// Agent execution ID (pre-assigned deterministically)
+    pub(crate) agent_execution_id: Uuid,
+    /// Agent name (for replay lookup)
+    pub(crate) agent_name: String,
+    /// Suspension cell for signaling suspension to the workflow context
+    pub(crate) suspension_cell: Option<SuspensionCell>,
+    /// Shared state
+    pub(crate) state: Arc<FutureState>,
+}
+
+#[allow(dead_code)]
+impl StartAgentFuture {
+    /// Create with a result (for mock/testing)
+    pub(crate) fn with_result(agent_execution_id: Uuid) -> Self {
+        Self {
+            child_agent_seq: 0,
+            agent_execution_id,
+            agent_name: String::new(),
+            suspension_cell: None,
+            state: Arc::new(FutureState::with_result(Ok(Value::String(
+                agent_execution_id.to_string(),
+            )))),
+        }
+    }
+
+    /// Create a new pending StartAgentFuture
+    pub(crate) fn new_with_cell(
+        child_agent_seq: u32,
+        agent_execution_id: Uuid,
+        agent_name: String,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            child_agent_seq,
+            agent_execution_id,
+            agent_name,
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::new()),
+        }
+    }
+
+    /// Create for replay with agent_execution_id already known
+    pub(crate) fn from_replay_with_cell(
+        child_agent_seq: u32,
+        agent_execution_id: Uuid,
+        agent_name: String,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            child_agent_seq,
+            agent_execution_id,
+            agent_name,
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::with_result(Ok(Value::String(
+                agent_execution_id.to_string(),
+            )))),
+        }
+    }
+
+    /// Create with an error
+    pub(crate) fn with_error(error: FlovynError) -> Self {
+        Self {
+            child_agent_seq: 0,
+            agent_execution_id: Uuid::nil(),
+            agent_name: String::new(),
+            suspension_cell: None,
+            state: Arc::new(FutureState::with_error(error)),
+        }
+    }
+}
+
+impl WorkflowFuturePoll for StartAgentFuture {
+    type Output = Uuid;
+
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<Uuid>> {
+        // Check for pre-computed error (e.g., determinism violation)
+        if let Some(error) = self.state.error.lock().take() {
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
+        }
+
+        // Check for pre-computed result (replay case)
+        if let Some(result) = self.state.result.lock().take() {
+            return Poll::Ready(match result {
+                Ok(_) => WorkflowOutcome::ok(self.agent_execution_id),
+                Err(e) => WorkflowOutcome::err(e),
+            });
+        }
+
+        // Not ready yet - signal workflow suspension
+        Poll::Ready(WorkflowOutcome::suspended(format!(
+            "Waiting for child agent {} to be created",
+            self.agent_name
+        )))
+    }
+}
+
+impl Future for StartAgentFuture {
+    type Output = Result<Uuid>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let suspension_cell = self.suspension_cell.clone();
+
+        match self.as_mut().poll_outcome(cx) {
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { reason }) => {
+                if let Some(cell) = suspension_cell {
+                    cell.signal(reason);
+                } else {
+                    panic!("StartAgentFuture must have suspension cell");
+                }
+                Poll::Pending
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+// ============================================================================
 // Type aliases for Value-typed futures (raw versions)
 // ============================================================================
 
@@ -1281,6 +1417,9 @@ pub type OperationFutureRaw = OperationFuture<Value>;
 
 /// Raw signal future returning Signal
 pub type SignalFutureRaw = SignalFuture;
+
+/// Start agent future returning agent execution ID
+pub type StartAgentFutureRaw = StartAgentFuture;
 
 #[cfg(test)]
 mod tests {

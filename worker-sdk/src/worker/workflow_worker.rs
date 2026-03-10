@@ -553,6 +553,7 @@ impl WorkflowExecutorWorker {
             "TIMER_STARTED" => EventType::TimerStarted,
             "TIMER_FIRED" => EventType::TimerFired,
             "TIMER_CANCELLED" => EventType::TimerCancelled,
+            "CHILD_AGENT_STARTED" => EventType::ChildAgentStarted,
             "SIGNAL_RECEIVED" => EventType::SignalReceived,
             _ => EventType::WorkflowStarted, // Default fallback
         }
@@ -949,6 +950,21 @@ impl WorkflowExecutorWorker {
                 // Use Unspecified with empty data - server should ignore these
                 (flovyn_v1::CommandType::Unspecified as i32, None)
             }
+            WorkflowCommand::StartAgent {
+                agent_kind,
+                agent_execution_id,
+                input,
+                queue,
+                ..
+            } => (
+                flovyn_v1::CommandType::StartAgent as i32,
+                Some(CommandData::StartAgent(flovyn_v1::StartAgentCommand {
+                    agent_kind: agent_kind.clone(),
+                    input: serde_json::to_vec(input).unwrap_or_default(),
+                    agent_execution_id: agent_execution_id.to_string(),
+                    queue: queue.clone(),
+                })),
+            ),
         };
 
         flovyn_v1::WorkflowCommand {

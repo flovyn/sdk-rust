@@ -46,6 +46,9 @@ pub enum EventType {
     TimerFired,
     TimerCancelled,
 
+    // Child agent events
+    ChildAgentStarted,
+
     // Signal events
     SignalReceived,
 }
@@ -110,6 +113,7 @@ impl EventType {
             Self::TimerStarted => "TIMER_STARTED",
             Self::TimerFired => "TIMER_FIRED",
             Self::TimerCancelled => "TIMER_CANCELLED",
+            Self::ChildAgentStarted => "CHILD_AGENT_STARTED",
             Self::SignalReceived => "SIGNAL_RECEIVED",
         }
     }
@@ -362,6 +366,7 @@ mod tests {
             EventType::TimerStarted,
             EventType::TimerFired,
             EventType::TimerCancelled,
+            EventType::ChildAgentStarted,
             EventType::SignalReceived,
         ];
 

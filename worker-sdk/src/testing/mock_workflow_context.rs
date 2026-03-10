@@ -6,8 +6,8 @@ use crate::workflow::context::{
 };
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFuture, OperationFutureRaw,
-    PromiseFuture, PromiseFutureRaw, SignalFuture, SignalFutureRaw, TaskFuture, TaskFutureRaw,
-    TimerFuture,
+    PromiseFuture, PromiseFutureRaw, SignalFuture, SignalFutureRaw, StartAgentFuture,
+    StartAgentFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
 };
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -595,6 +595,27 @@ impl WorkflowContext for MockWorkflowContext {
                 kind
             ))),
         }
+    }
+
+    fn start_agent_raw(&self, kind: &str, input: Value) -> StartAgentFutureRaw {
+        let _agent_seq = self
+            .inner
+            .next_child_workflow_seq
+            .fetch_add(1, Ordering::SeqCst);
+        let agent_execution_id = self.random_uuid();
+
+        // Record the scheduled workflow (reuse scheduled_workflows for agents too)
+        self.inner
+            .scheduled_workflows
+            .write()
+            .push(ScheduledWorkflow {
+                name: kind.to_string(),
+                kind: kind.to_string(),
+                input,
+            });
+
+        // Mock always returns the agent execution ID immediately
+        StartAgentFuture::with_result(agent_execution_id)
     }
 
     fn promise_raw(&self, name: &str) -> PromiseFutureRaw {

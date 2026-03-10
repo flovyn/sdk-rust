@@ -546,6 +546,7 @@ enum CommandType {
   START_TIMER = 12;
   CANCEL_TIMER = 13;
   REQUEST_CANCEL_CHILD_WORKFLOW = 14;
+  START_AGENT = 15;
 }
 
 message WorkflowCommand {
@@ -567,6 +568,7 @@ message WorkflowCommand {
     StartTimerCommand start_timer = 21;
     CancelTimerCommand cancel_timer = 22;
     RequestCancelChildWorkflowCommand request_cancel_child_workflow = 23;
+    StartAgentCommand start_agent = 24;
   }
 }
 
@@ -657,6 +659,13 @@ message RequestCancelChildWorkflowCommand {
   string child_execution_name = 1;
   string child_workflow_execution_id = 2;
   string reason = 3;
+}
+
+message StartAgentCommand {
+  string agent_kind = 1;
+  bytes input = 2;
+  string agent_execution_id = 3;
+  optional string queue = 4;
 }
 
 enum WorkflowStatus {

@@ -5,7 +5,7 @@ use crate::task::definition::TaskDefinition;
 use crate::workflow::definition::WorkflowDefinition;
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFutureRaw, PromiseFuture,
-    PromiseFutureRaw, SignalFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+    PromiseFutureRaw, SignalFutureRaw, StartAgentFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
 };
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -234,6 +234,16 @@ pub trait WorkflowContext: Send + Sync {
     /// Schedule a child workflow and return a future for its result.
     fn schedule_workflow_raw(&self, name: &str, kind: &str, input: Value)
         -> ChildWorkflowFutureRaw;
+
+    // =========================================================================
+    // Child Agents - Returns Future for parallel execution
+    // =========================================================================
+
+    /// Start a child agent and return a future for its execution ID.
+    ///
+    /// The workflow does NOT wait for the agent to complete. Use signals
+    /// (`wait_for_signal_raw`) to receive results from the agent.
+    fn start_agent_raw(&self, kind: &str, input: Value) -> StartAgentFutureRaw;
 
     // =========================================================================
     // Side Effects - Returns Future for parallel execution

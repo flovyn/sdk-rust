@@ -146,6 +146,18 @@ pub enum WorkflowCommand {
         #[serde(rename = "childExecutionId")]
         child_execution_id: Uuid,
     },
+
+    /// Start a child agent
+    StartAgent {
+        sequence_number: i32,
+        #[serde(rename = "agentKind")]
+        agent_kind: String,
+        #[serde(rename = "agentExecutionId")]
+        agent_execution_id: Uuid,
+        input: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        queue: Option<String>,
+    },
 }
 
 impl WorkflowCommand {
@@ -195,6 +207,9 @@ impl WorkflowCommand {
                 sequence_number, ..
             } => *sequence_number,
             Self::RequestCancelChildWorkflow {
+                sequence_number, ..
+            } => *sequence_number,
+            Self::StartAgent {
                 sequence_number, ..
             } => *sequence_number,
         }
@@ -248,6 +263,9 @@ impl WorkflowCommand {
             Self::RequestCancelChildWorkflow {
                 sequence_number, ..
             } => *sequence_number = seq,
+            Self::StartAgent {
+                sequence_number, ..
+            } => *sequence_number = seq,
         }
     }
 
@@ -269,6 +287,7 @@ impl WorkflowCommand {
             Self::CancelTimer { .. } => "CancelTimer",
             Self::RequestCancelTask { .. } => "RequestCancelTask",
             Self::RequestCancelChildWorkflow { .. } => "RequestCancelChildWorkflow",
+            Self::StartAgent { .. } => "StartAgent",
         }
     }
 }
@@ -522,6 +541,13 @@ mod tests {
             WorkflowCommand::RequestCancelChildWorkflow {
                 sequence_number: 15,
                 child_execution_id: Uuid::nil(),
+            },
+            WorkflowCommand::StartAgent {
+                sequence_number: 16,
+                agent_kind: "a".to_string(),
+                agent_execution_id: Uuid::nil(),
+                input: json!(null),
+                queue: None,
             },
         ];
 

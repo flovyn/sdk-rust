@@ -570,7 +570,7 @@ pub struct WorkflowCommand {
     pub sequence_number: i32,
     #[prost(
         oneof = "workflow_command::CommandData",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24"
     )]
     pub command_data: ::core::option::Option<workflow_command::CommandData>,
 }
@@ -607,6 +607,8 @@ pub mod workflow_command {
         CancelTimer(super::CancelTimerCommand),
         #[prost(message, tag = "23")]
         RequestCancelChildWorkflow(super::RequestCancelChildWorkflowCommand),
+        #[prost(message, tag = "24")]
+        StartAgent(super::StartAgentCommand),
     }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -755,6 +757,18 @@ pub struct RequestCancelChildWorkflowCommand {
     pub child_workflow_execution_id: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub reason: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StartAgentCommand {
+    #[prost(string, tag = "1")]
+    pub agent_kind: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub input: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "3")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "4")]
+    pub queue: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1055,6 +1069,7 @@ pub enum CommandType {
     StartTimer = 12,
     CancelTimer = 13,
     RequestCancelChildWorkflow = 14,
+    StartAgent = 15,
 }
 impl CommandType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1078,6 +1093,7 @@ impl CommandType {
             CommandType::StartTimer => "START_TIMER",
             CommandType::CancelTimer => "CANCEL_TIMER",
             CommandType::RequestCancelChildWorkflow => "REQUEST_CANCEL_CHILD_WORKFLOW",
+            CommandType::StartAgent => "START_AGENT",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1098,6 +1114,7 @@ impl CommandType {
             "START_TIMER" => Some(Self::StartTimer),
             "CANCEL_TIMER" => Some(Self::CancelTimer),
             "REQUEST_CANCEL_CHILD_WORKFLOW" => Some(Self::RequestCancelChildWorkflow),
+            "START_AGENT" => Some(Self::StartAgent),
             _ => None,
         }
     }
