@@ -821,7 +821,7 @@ impl AgentContext for AgentContextImpl {
         signal_name: &str,
         payload: Value,
     ) -> Result<()> {
-        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+        let payload_bytes = serde_json::to_vec(&payload)?;
         let mut client = self.client.lock().await;
         client
             .signal_workflow(

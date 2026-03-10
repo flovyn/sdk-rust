@@ -1201,6 +1201,7 @@ impl AgentDispatch {
         })
     }
 
+    /// Send a signal to an existing workflow execution, via WorkflowDispatch.
     pub async fn signal_workflow(
         &mut self,
         org_id: &str,

@@ -75,6 +75,7 @@ struct MockWorkflowContextInner {
     next_timer_seq: AtomicU32,
     next_child_workflow_seq: AtomicU32,
     next_promise_seq: AtomicU32,
+    next_signal_agent_seq: AtomicU32,
     next_operation_seq: AtomicU32,
     next_signal_seq: AtomicU32,
 }
@@ -335,6 +336,7 @@ impl MockWorkflowContextBuilder {
                 next_timer_seq: AtomicU32::new(0),
                 next_child_workflow_seq: AtomicU32::new(0),
                 next_promise_seq: AtomicU32::new(0),
+                next_signal_agent_seq: AtomicU32::new(0),
                 next_operation_seq: AtomicU32::new(0),
                 next_signal_seq: AtomicU32::new(0),
             }),
@@ -607,11 +609,10 @@ impl WorkflowContext for MockWorkflowContext {
     ) -> SignalAgentFutureRaw {
         let _agent_seq = self
             .inner
-            .next_child_workflow_seq
+            .next_signal_agent_seq
             .fetch_add(1, Ordering::SeqCst);
         let agent_execution_id = self.random_uuid();
 
-        // Record the scheduled workflow (reuse scheduled_workflows for agents too)
         self.inner
             .scheduled_workflows
             .write()
@@ -621,7 +622,6 @@ impl WorkflowContext for MockWorkflowContext {
                 input,
             });
 
-        // Mock always returns the agent execution ID immediately
         SignalAgentFuture::with_result(agent_execution_id)
     }
 
