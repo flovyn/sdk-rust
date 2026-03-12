@@ -129,6 +129,8 @@ pub struct AgentSignal {
     pub signal_value: Value,
     /// Creation timestamp (ms since epoch)
     pub created_at_ms: i64,
+    /// Execution ID of the sender (agent or workflow that sent this signal)
+    pub sender_execution_id: Option<Uuid>,
 }
 
 /// Result of scheduling an agent task
@@ -886,6 +888,9 @@ impl AgentDispatch {
                 signal_name: s.signal_name,
                 signal_value: serde_json::from_slice(&s.signal_value).unwrap_or(Value::Null),
                 created_at_ms: s.created_at_ms,
+                sender_execution_id: s
+                    .sender_execution_id
+                    .and_then(|id| Uuid::parse_str(&id).ok()),
             })
             .collect())
     }
@@ -913,6 +918,9 @@ impl AgentDispatch {
                 signal_name: s.signal_name,
                 signal_value: serde_json::from_slice(&s.signal_value).unwrap_or(Value::Null),
                 created_at_ms: s.created_at_ms,
+                sender_execution_id: s
+                    .sender_execution_id
+                    .and_then(|id| Uuid::parse_str(&id).ok()),
             })
             .collect())
     }
@@ -1123,39 +1131,6 @@ impl AgentDispatch {
     // Cross-Primitive Operations (via WorkflowDispatch service)
     // =========================================================================
 
-    /// Start a workflow via the standard WorkflowDispatch RPC, with agent watch tracking.
-    pub async fn start_workflow(
-        &mut self,
-        org_id: &str,
-        workflow_kind: &str,
-        input: &[u8],
-        watching_agent_execution_id: Uuid,
-        queue: Option<&str>,
-        idempotency_key: Option<&str>,
-    ) -> CoreResult<Uuid> {
-        let request = flovyn_v1::StartWorkflowRequest {
-            org_id: org_id.to_string(),
-            workflow_kind: workflow_kind.to_string(),
-            input: input.to_vec(),
-            metadata: Default::default(),
-            queue: queue.unwrap_or("default").to_string(),
-            priority_seconds: 0,
-            workflow_definition_id: None,
-            parent_workflow_execution_id: None,
-            workflow_version: None,
-            idempotency_key: idempotency_key.map(|s| s.to_string()),
-            idempotency_key_ttl_seconds: None,
-            watching_agent_execution_id: Some(watching_agent_execution_id.to_string()),
-        };
-
-        let response = self
-            .workflow_client
-            .start_workflow(request)
-            .await?
-            .into_inner();
-        Ok(response.workflow_execution_id.parse().unwrap_or_default())
-    }
-
     /// Atomically start a workflow (if not exists) and send a signal, via WorkflowDispatch.
     ///
     /// Delegates to `WorkflowDispatch::signal_with_start_workflow()`.
@@ -1170,6 +1145,7 @@ impl AgentDispatch {
         signal_name: &str,
         signal_value: Vec<u8>,
         idempotency_key_ttl_seconds: Option<i64>,
+        sender_execution_id: Option<Uuid>,
     ) -> CoreResult<SignalWithStartWorkflowResult> {
         let request = flovyn_v1::SignalWithStartWorkflowRequest {
             org_id: org_id.to_string(),
@@ -1183,6 +1159,7 @@ impl AgentDispatch {
             workflow_version: None,
             metadata: Default::default(),
             idempotency_key_ttl_seconds,
+            sender_execution_id: sender_execution_id.map(|id| id.to_string()),
         };
 
         let response = self
@@ -1208,12 +1185,14 @@ impl AgentDispatch {
         workflow_execution_id: &str,
         signal_name: &str,
         signal_value: Vec<u8>,
+        sender_execution_id: Option<Uuid>,
     ) -> CoreResult<i64> {
         let request = flovyn_v1::SignalWorkflowRequest {
             org_id: org_id.to_string(),
             workflow_execution_id: workflow_execution_id.to_string(),
             signal_name: signal_name.to_string(),
             signal_value,
+            sender_execution_id: sender_execution_id.map(|id| id.to_string()),
         };
 
         let response = self

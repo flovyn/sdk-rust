@@ -380,6 +380,22 @@ impl DeterminismValidator {
                     }
                 }
             }
+            // SignalExistingAgent validates agent execution ID match
+            WorkflowCommand::SignalExistingAgent {
+                agent_execution_id, ..
+            } => {
+                if let Some(historical_id) = event.get_string("agentExecutionId") {
+                    let actual_id = agent_execution_id.to_string();
+                    if historical_id != actual_id {
+                        return DeterminismValidationResult::ChildWorkflowMismatch {
+                            sequence,
+                            field: "agentExecutionId".to_string(),
+                            expected: historical_id.to_string(),
+                            actual: actual_id,
+                        };
+                    }
+                }
+            }
         }
 
         DeterminismValidationResult::Valid
@@ -406,6 +422,7 @@ impl DeterminismValidator {
             WorkflowCommand::RequestCancelTask { .. } => EventType::TaskCancelled,
             WorkflowCommand::RequestCancelChildWorkflow { .. } => EventType::ChildWorkflowCancelled,
             WorkflowCommand::SignalAgent { .. } => EventType::SignalAgentCompleted,
+            WorkflowCommand::SignalExistingAgent { .. } => EventType::SignalExistingAgentCompleted,
         }
     }
 }

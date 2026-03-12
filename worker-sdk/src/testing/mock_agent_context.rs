@@ -721,15 +721,6 @@ impl AgentContext for MockAgentContext {
         Ok(())
     }
 
-    async fn start_workflow(
-        &self,
-        _kind: &str,
-        _input: Value,
-        _options: Option<StartWorkflowOptions>,
-    ) -> Result<Uuid> {
-        Ok(Uuid::new_v4())
-    }
-
     async fn signal_with_start_workflow(
         &self,
         _workflow_id: &str,
@@ -753,6 +744,16 @@ impl AgentContext for MockAgentContext {
             .write()
             .push((signal_name.to_string(), payload));
         Ok(())
+    }
+
+    async fn wait_for_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+    ) -> Result<Value> {
+        // Auto-scope signal name: "{workflow_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", workflow_execution_id, signal_name);
+        self.wait_for_signal_raw(&scoped_signal_name).await
     }
 
     async fn signal_parent(&self, name: &str, payload: Value) -> Result<()> {

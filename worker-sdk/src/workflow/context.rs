@@ -5,8 +5,8 @@ use crate::task::definition::TaskDefinition;
 use crate::workflow::definition::WorkflowDefinition;
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFutureRaw, PromiseFuture,
-    PromiseFutureRaw, SignalAgentFutureRaw, SignalFutureRaw, TaskFuture, TaskFutureRaw,
-    TimerFuture,
+    PromiseFutureRaw, SignalAgentFutureRaw, SignalExistingAgentFutureRaw, SignalFutureRaw,
+    TaskFuture, TaskFutureRaw, TimerFuture,
 };
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -239,6 +239,35 @@ pub trait WorkflowContext: Send + Sync {
     // =========================================================================
     // Signal Agent - Returns Future for parallel execution
     // =========================================================================
+
+    /// Wait for a signal from a specific agent execution.
+    ///
+    /// Convenience method that waits for a signal with auto-scoped name
+    /// `"{agent_execution_id}:{signal_name}"`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let signal = ctx.wait_for_signal_raw("start").await?;
+    /// let agent_id = signal.sender_execution_id;
+    /// // ... process ...
+    /// ctx.signal_agent(agent_id, "result", output);
+    /// // Or wait for agent to send more data:
+    /// let data = ctx.wait_for_agent(agent_id, "data").await?;
+    /// ```
+    fn wait_for_agent(&self, agent_execution_id: Uuid, signal_name: &str) -> SignalFutureRaw;
+
+    /// Signal an existing agent by execution ID.
+    ///
+    /// Sends a signal to an agent that is already running. The signal name is
+    /// auto-scoped with the workflow's execution ID: `"{workflow_execution_id}:{signal_name}"`.
+    ///
+    /// Returns a future that resolves when the server confirms delivery.
+    fn signal_agent(
+        &self,
+        agent_execution_id: Uuid,
+        signal_name: &str,
+        signal_value: Value,
+    ) -> SignalExistingAgentFutureRaw;
 
     /// Signal an agent with start semantics (create if not exists + deliver signal).
     ///

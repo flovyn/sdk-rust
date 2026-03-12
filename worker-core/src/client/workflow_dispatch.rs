@@ -107,7 +107,6 @@ impl WorkflowDispatch {
             workflow_version: workflow_version.map(|s| s.to_string()),
             idempotency_key: idempotency_key.map(|s| s.to_string()),
             idempotency_key_ttl_seconds: None,
-            watching_agent_execution_id: None,
         };
 
         let response = self.inner.start_workflow(request).await?;
@@ -338,6 +337,7 @@ impl WorkflowDispatch {
             workflow_version: workflow_version.map(|s| s.to_string()),
             metadata: metadata.unwrap_or_default(),
             idempotency_key_ttl_seconds,
+            sender_execution_id: None,
         };
 
         let response = self
@@ -369,6 +369,7 @@ impl WorkflowDispatch {
             workflow_execution_id: workflow_execution_id.to_string(),
             signal_name: signal_name.to_string(),
             signal_value,
+            sender_execution_id: None,
         };
 
         let response = self.inner.signal_workflow(request).await?.into_inner();

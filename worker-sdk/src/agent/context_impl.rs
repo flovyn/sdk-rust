@@ -756,36 +756,6 @@ impl AgentContext for AgentContextImpl {
     // Workflow Integration
     // =========================================================================
 
-    async fn start_workflow(
-        &self,
-        kind: &str,
-        input: Value,
-        options: Option<StartWorkflowOptions>,
-    ) -> Result<Uuid> {
-        let options = options.unwrap_or_default();
-        let input_bytes = serde_json::to_vec(&input)?;
-
-        // Auto-generate idempotency key from agent_execution_id + checkpoint sequence
-        // for crash-recovery safety (replaying after crash won't create duplicate workflows)
-        let seq = self
-            .checkpoint_sequence
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let idempotency_key = format!("agent:{}:wf:{}:{}", self.agent_execution_id, kind, seq);
-
-        let mut client = self.client.lock().await;
-        let workflow_execution_id = client
-            .start_workflow(
-                &self.org_id.to_string(),
-                kind,
-                &input_bytes,
-                self.agent_execution_id,
-                options.queue.as_deref(),
-                Some(&idempotency_key),
-            )
-            .await?;
-        Ok(workflow_execution_id)
-    }
-
     async fn signal_with_start_workflow(
         &self,
         workflow_id: &str,
@@ -810,6 +780,7 @@ impl AgentContext for AgentContextImpl {
                 signal_name,
                 signal_bytes,
                 None,
+                Some(self.agent_execution_id),
             )
             .await?;
         Ok((result.workflow_execution_id, result.workflow_created))
@@ -821,17 +792,30 @@ impl AgentContext for AgentContextImpl {
         signal_name: &str,
         payload: Value,
     ) -> Result<()> {
+        // Auto-scope signal name: "{agent_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", self.agent_execution_id, signal_name);
         let payload_bytes = serde_json::to_vec(&payload)?;
         let mut client = self.client.lock().await;
         client
             .signal_workflow(
                 &self.org_id.to_string(),
                 &workflow_execution_id.to_string(),
-                signal_name,
+                &scoped_signal_name,
                 payload_bytes,
+                Some(self.agent_execution_id),
             )
             .await?;
         Ok(())
+    }
+
+    async fn wait_for_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+    ) -> Result<Value> {
+        // Auto-scope signal name: "{workflow_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", workflow_execution_id, signal_name);
+        self.wait_for_signal_raw(&scoped_signal_name).await
     }
 
     async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {

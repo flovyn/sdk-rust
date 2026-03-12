@@ -6,8 +6,9 @@ use crate::workflow::context::{
 };
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFuture, OperationFutureRaw,
-    PromiseFuture, PromiseFutureRaw, SignalAgentFuture, SignalAgentFutureRaw, SignalFuture,
-    SignalFutureRaw, TaskFuture, TaskFutureRaw, TimerFuture,
+    PromiseFuture, PromiseFutureRaw, SignalAgentFuture, SignalAgentFutureRaw,
+    SignalExistingAgentFuture, SignalExistingAgentFutureRaw, SignalFuture, SignalFutureRaw,
+    TaskFuture, TaskFutureRaw, TimerFuture,
 };
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -597,6 +598,25 @@ impl WorkflowContext for MockWorkflowContext {
                 kind
             ))),
         }
+    }
+
+    fn wait_for_agent(&self, agent_execution_id: Uuid, signal_name: &str) -> SignalFutureRaw {
+        // Auto-scope signal name: "{agent_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", agent_execution_id, signal_name);
+        self.wait_for_signal_raw(&scoped_signal_name)
+    }
+
+    fn signal_agent(
+        &self,
+        _agent_execution_id: Uuid,
+        _signal_name: &str,
+        _signal_value: Value,
+    ) -> SignalExistingAgentFutureRaw {
+        // Mock: just return a resolved future (signal delivered)
+        SignalExistingAgentFuture::from_replay_with_cell(
+            0,
+            crate::workflow::context_impl::SuspensionCell::new(),
+        )
     }
 
     fn signal_with_start_agent_raw(

@@ -173,6 +173,8 @@ pub struct AgentSignalValue {
     pub name: String,
     /// Signal value
     pub value: Value,
+    /// Execution ID of the sender (agent or workflow that sent this signal)
+    pub sender_execution_id: Option<Uuid>,
 }
 
 /// Context for agent execution providing entry management, checkpointing, task scheduling,
@@ -360,21 +362,6 @@ pub trait AgentContext: Send + Sync {
     // Workflow Integration
     // =========================================================================
 
-    /// Start a workflow execution from this agent.
-    ///
-    /// Uses the standard `StartWorkflow` RPC with `watching_agent_execution_id`
-    /// set for completion notification. An idempotency key is auto-generated from the
-    /// agent execution ID and checkpoint sequence to ensure crash-recovery safety.
-    ///
-    /// Returns the workflow execution ID. Use `wait_for_signal_raw()` with
-    /// `format!("workflow:{id}:completed")` to await completion.
-    async fn start_workflow(
-        &self,
-        kind: &str,
-        input: Value,
-        options: Option<StartWorkflowOptions>,
-    ) -> Result<Uuid>;
-
     /// Atomically start a workflow (if not exists) and send a signal.
     ///
     /// Uses `SignalWithStartWorkflow` RPC. The `workflow_id` serves as the
@@ -393,12 +380,30 @@ pub trait AgentContext: Send + Sync {
     ) -> Result<(Uuid, bool)>;
 
     /// Signal a workflow execution.
+    ///
+    /// The signal name is auto-scoped as `"{agent_execution_id}:{signal_name}"`.
     async fn signal_workflow(
         &self,
         workflow_execution_id: Uuid,
         signal_name: &str,
         payload: Value,
     ) -> Result<()>;
+
+    /// Wait for a signal from a specific workflow execution.
+    ///
+    /// Convenience method that waits for a signal with auto-scoped name
+    /// `"{workflow_execution_id}:{signal_name}"`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (wf_id, _) = ctx.signal_with_start_workflow("key", "echo", input, "start", data, None).await?;
+    /// let result = ctx.wait_for_workflow(wf_id, "result").await?;
+    /// ```
+    async fn wait_for_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+    ) -> Result<Value>;
 
     /// Wait for all task futures to complete.
     ///

@@ -1400,6 +1400,112 @@ impl Future for SignalAgentFuture {
 }
 
 // ============================================================================
+// SignalExistingAgentFuture
+// ============================================================================
+
+/// Future for signaling an existing agent by execution ID.
+///
+/// Created by `WorkflowContext::signal_agent()`.
+/// Resolves immediately once the server confirms the signal was delivered.
+/// This is a fire-and-forget operation.
+#[allow(dead_code)]
+pub struct SignalExistingAgentFuture {
+    /// Per-type sequence number
+    pub(crate) signal_existing_agent_seq: u32,
+    /// Suspension cell for signaling suspension to the workflow context
+    pub(crate) suspension_cell: Option<SuspensionCell>,
+    /// Shared state
+    pub(crate) state: Arc<FutureState>,
+}
+
+#[allow(dead_code)]
+impl SignalExistingAgentFuture {
+    /// Create a new pending SignalExistingAgentFuture
+    pub(crate) fn new_with_cell(
+        signal_existing_agent_seq: u32,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            signal_existing_agent_seq,
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::new()),
+        }
+    }
+
+    /// Create for replay (already confirmed)
+    pub(crate) fn from_replay_with_cell(
+        signal_existing_agent_seq: u32,
+        suspension_cell: SuspensionCell,
+    ) -> Self {
+        Self {
+            signal_existing_agent_seq,
+            suspension_cell: Some(suspension_cell),
+            state: Arc::new(FutureState::with_result(Ok(Value::Null))),
+        }
+    }
+
+    /// Create with an error
+    pub(crate) fn with_error(error: FlovynError) -> Self {
+        Self {
+            signal_existing_agent_seq: 0,
+            suspension_cell: None,
+            state: Arc::new(FutureState::with_error(error)),
+        }
+    }
+}
+
+impl WorkflowFuturePoll for SignalExistingAgentFuture {
+    type Output = ();
+
+    fn poll_outcome(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<WorkflowOutcome<()>> {
+        // Check for pre-computed error (e.g., determinism violation)
+        if let Some(error) = self.state.error.lock().take() {
+            if let FlovynError::DeterminismViolation(violation) = error {
+                return Poll::Ready(WorkflowOutcome::DeterminismViolation(violation));
+            }
+            return Poll::Ready(WorkflowOutcome::err(error));
+        }
+
+        // Check for pre-computed result (replay case)
+        if let Some(result) = self.state.result.lock().take() {
+            return Poll::Ready(match result {
+                Ok(_) => WorkflowOutcome::ok(()),
+                Err(e) => WorkflowOutcome::err(e),
+            });
+        }
+
+        // Not ready yet - signal workflow suspension
+        Poll::Ready(WorkflowOutcome::suspended(
+            "Waiting for signal-existing-agent to complete".to_string(),
+        ))
+    }
+}
+
+impl Future for SignalExistingAgentFuture {
+    type Output = Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let suspension_cell = self.suspension_cell.clone();
+
+        match self.as_mut().poll_outcome(cx) {
+            Poll::Ready(WorkflowOutcome::Ready(result)) => Poll::Ready(result),
+            Poll::Ready(WorkflowOutcome::Suspended { reason }) => {
+                if let Some(cell) = suspension_cell {
+                    cell.signal(reason);
+                } else {
+                    panic!("SignalExistingAgentFuture requires suspension cell");
+                }
+                Poll::Pending
+            }
+            Poll::Ready(WorkflowOutcome::DeterminismViolation(e)) => {
+                Poll::Ready(Err(FlovynError::DeterminismViolation(e)))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+// ============================================================================
 // Type aliases for Value-typed futures (raw versions)
 // ============================================================================
 
@@ -1420,6 +1526,9 @@ pub type SignalFutureRaw = SignalFuture;
 
 /// Signal agent future returning agent execution ID
 pub type SignalAgentFutureRaw = SignalAgentFuture;
+
+/// Signal existing agent future (fire-and-forget confirmation)
+pub type SignalExistingAgentFutureRaw = SignalExistingAgentFuture;
 
 #[cfg(test)]
 mod tests {

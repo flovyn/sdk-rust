@@ -48,6 +48,7 @@ pub enum EventType {
 
     // Signal agent events
     SignalAgentCompleted,
+    SignalExistingAgentCompleted,
 
     // Signal events
     SignalReceived,
@@ -114,6 +115,7 @@ impl EventType {
             Self::TimerFired => "TIMER_FIRED",
             Self::TimerCancelled => "TIMER_CANCELLED",
             Self::SignalAgentCompleted => "SIGNAL_AGENT_COMPLETED",
+            Self::SignalExistingAgentCompleted => "SIGNAL_EXISTING_AGENT_COMPLETED",
             Self::SignalReceived => "SIGNAL_RECEIVED",
         }
     }

@@ -492,6 +492,9 @@ message AgentSignal {
 
   // Creation timestamp (milliseconds since epoch)
   int64 created_at_ms = 4;
+
+  // Execution ID of the sender (agent or workflow that sent this signal)
+  optional string sender_execution_id = 5;
 }
 
 message HasSignalRequest {
@@ -788,6 +791,7 @@ message SignalWithStartAgentRequest {
   string signal_name = 6;
   bytes signal_value = 7;
   optional int64 idempotency_key_ttl_seconds = 8;
+  optional string sender_execution_id = 9;
 }
 
 message SignalWithStartAgentResponse {

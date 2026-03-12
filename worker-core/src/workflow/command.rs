@@ -162,6 +162,17 @@ pub enum WorkflowCommand {
         #[serde(rename = "signalValue")]
         signal_value: Value,
     },
+
+    /// Signal an existing agent by execution ID
+    SignalExistingAgent {
+        sequence_number: i32,
+        #[serde(rename = "agentExecutionId")]
+        agent_execution_id: Uuid,
+        #[serde(rename = "signalName")]
+        signal_name: String,
+        #[serde(rename = "signalValue")]
+        signal_value: Value,
+    },
 }
 
 impl WorkflowCommand {
@@ -214,6 +225,9 @@ impl WorkflowCommand {
                 sequence_number, ..
             } => *sequence_number,
             Self::SignalAgent {
+                sequence_number, ..
+            } => *sequence_number,
+            Self::SignalExistingAgent {
                 sequence_number, ..
             } => *sequence_number,
         }
@@ -270,6 +284,9 @@ impl WorkflowCommand {
             Self::SignalAgent {
                 sequence_number, ..
             } => *sequence_number = seq,
+            Self::SignalExistingAgent {
+                sequence_number, ..
+            } => *sequence_number = seq,
         }
     }
 
@@ -292,6 +309,7 @@ impl WorkflowCommand {
             Self::RequestCancelTask { .. } => "RequestCancelTask",
             Self::RequestCancelChildWorkflow { .. } => "RequestCancelChildWorkflow",
             Self::SignalAgent { .. } => "SignalAgent",
+            Self::SignalExistingAgent { .. } => "SignalExistingAgent",
         }
     }
 }

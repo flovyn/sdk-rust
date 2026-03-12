@@ -144,9 +144,6 @@ pub struct StartWorkflowRequest {
     /// Default: 86400 (1 day), Maximum: 2592000 (30 days)
     #[prost(int64, optional, tag = "11")]
     pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
-    /// Agent execution ID watching this workflow for completion notification
-    #[prost(string, optional, tag = "12")]
-    pub watching_agent_execution_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -271,6 +268,9 @@ pub struct SignalWithStartWorkflowRequest {
     /// === Options ===
     #[prost(int64, optional, tag = "11")]
     pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
+    /// === Sender Info ===
+    #[prost(string, optional, tag = "12")]
+    pub sender_execution_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -293,6 +293,8 @@ pub struct SignalWorkflowRequest {
     pub signal_name: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub signal_value: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, optional, tag = "5")]
+    pub sender_execution_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -570,7 +572,7 @@ pub struct WorkflowCommand {
     pub sequence_number: i32,
     #[prost(
         oneof = "workflow_command::CommandData",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25"
     )]
     pub command_data: ::core::option::Option<workflow_command::CommandData>,
 }
@@ -609,6 +611,8 @@ pub mod workflow_command {
         RequestCancelChildWorkflow(super::RequestCancelChildWorkflowCommand),
         #[prost(message, tag = "24")]
         SignalAgent(super::SignalAgentCommand),
+        #[prost(message, tag = "25")]
+        SignalExistingAgent(super::SignalExistingAgentCommand),
     }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -777,6 +781,17 @@ pub struct SignalAgentCommand {
     pub signal_name: ::prost::alloc::string::String,
     /// signal payload
     #[prost(bytes = "vec", tag = "6")]
+    pub signal_value: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SignalExistingAgentCommand {
+    /// UUID of existing agent
+    #[prost(string, tag = "1")]
+    pub agent_execution_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub signal_name: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "3")]
     pub signal_value: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1079,6 +1094,7 @@ pub enum CommandType {
     CancelTimer = 13,
     RequestCancelChildWorkflow = 14,
     SignalAgent = 15,
+    SignalExistingAgent = 16,
 }
 impl CommandType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1103,6 +1119,7 @@ impl CommandType {
             CommandType::CancelTimer => "CANCEL_TIMER",
             CommandType::RequestCancelChildWorkflow => "REQUEST_CANCEL_CHILD_WORKFLOW",
             CommandType::SignalAgent => "SIGNAL_AGENT",
+            CommandType::SignalExistingAgent => "SIGNAL_EXISTING_AGENT",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1124,6 +1141,7 @@ impl CommandType {
             "CANCEL_TIMER" => Some(Self::CancelTimer),
             "REQUEST_CANCEL_CHILD_WORKFLOW" => Some(Self::RequestCancelChildWorkflow),
             "SIGNAL_AGENT" => Some(Self::SignalAgent),
+            "SIGNAL_EXISTING_AGENT" => Some(Self::SignalExistingAgent),
             _ => None,
         }
     }
@@ -2555,6 +2573,9 @@ pub struct AgentSignal {
     /// Creation timestamp (milliseconds since epoch)
     #[prost(int64, tag = "4")]
     pub created_at_ms: i64,
+    /// Execution ID of the sender (agent or workflow that sent this signal)
+    #[prost(string, optional, tag = "5")]
+    pub sender_execution_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2865,6 +2886,8 @@ pub struct SignalWithStartAgentRequest {
     pub signal_value: ::prost::alloc::vec::Vec<u8>,
     #[prost(int64, optional, tag = "8")]
     pub idempotency_key_ttl_seconds: ::core::option::Option<i64>,
+    #[prost(string, optional, tag = "9")]
+    pub sender_execution_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
