@@ -5,6 +5,7 @@ use crate::agent::child::{
 };
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, LoadedMessage, ScheduleAgentTaskOptions,
+    StartWorkflowOptions,
 };
 use crate::agent::future::AgentTaskFutureRaw;
 use crate::error::{FlovynError, Result};
@@ -718,6 +719,41 @@ impl AgentContext for MockAgentContext {
             .write()
             .push((handle.child_id, name.to_string(), payload));
         Ok(())
+    }
+
+    async fn signal_with_start_workflow(
+        &self,
+        _workflow_id: &str,
+        _kind: &str,
+        _input: Value,
+        _signal_name: &str,
+        _signal_value: Value,
+        _options: Option<StartWorkflowOptions>,
+    ) -> Result<(Uuid, bool)> {
+        Ok((Uuid::new_v4(), true))
+    }
+
+    async fn signal_workflow(
+        &self,
+        _workflow_execution_id: Uuid,
+        signal_name: &str,
+        payload: Value,
+    ) -> Result<()> {
+        self.inner
+            .parent_signals
+            .write()
+            .push((signal_name.to_string(), payload));
+        Ok(())
+    }
+
+    async fn wait_for_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+    ) -> Result<Value> {
+        // Auto-scope signal name: "{workflow_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", workflow_execution_id, signal_name);
+        self.wait_for_signal_raw(&scoped_signal_name).await
     }
 
     async fn signal_parent(&self, name: &str, payload: Value) -> Result<()> {

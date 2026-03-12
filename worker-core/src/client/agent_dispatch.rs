@@ -4,19 +4,25 @@ use crate::client::auth::AuthInterceptor;
 use crate::error::{CoreError, CoreResult};
 use crate::generated::flovyn_v1;
 use crate::generated::flovyn_v1::agent_dispatch_client::AgentDispatchClient;
+use crate::generated::flovyn_v1::workflow_dispatch_client::WorkflowDispatchClient;
 use serde_json::Value;
 use std::time::Duration;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
-/// Type alias for authenticated client
+/// Type alias for authenticated agent dispatch client
 type AuthClient = AgentDispatchClient<InterceptedService<Channel, AuthInterceptor>>;
+
+/// Type alias for authenticated workflow dispatch client
+type WorkflowAuthClient = WorkflowDispatchClient<InterceptedService<Channel, AuthInterceptor>>;
 
 /// Client for agent dispatch operations
 #[derive(Clone)]
 pub struct AgentDispatch {
     inner: AuthClient,
+    /// Workflow dispatch client for cross-primitive operations (e.g., signaling workflows)
+    workflow_client: WorkflowAuthClient,
 }
 
 /// Info about an agent execution returned from polling
@@ -123,6 +129,8 @@ pub struct AgentSignal {
     pub signal_value: Value,
     /// Creation timestamp (ms since epoch)
     pub created_at_ms: i64,
+    /// Execution ID of the sender (agent or workflow that sent this signal)
+    pub sender_execution_id: Option<Uuid>,
 }
 
 /// Result of scheduling an agent task
@@ -152,6 +160,17 @@ pub struct SignalResult {
     pub signal_id: Uuid,
     /// Whether agent was resumed from WAITING
     pub agent_resumed: bool,
+}
+
+/// Result of signal-with-start workflow operation.
+#[derive(Debug, Clone)]
+pub struct SignalWithStartWorkflowResult {
+    /// The workflow execution ID
+    pub workflow_execution_id: Uuid,
+    /// Whether the workflow was created (vs already existed)
+    pub workflow_created: bool,
+    /// Sequence number of the signal event
+    pub signal_event_sequence: i64,
 }
 
 /// Result of querying a task execution
@@ -345,9 +364,14 @@ impl BatchScheduleTaskResultEntry {
 impl AgentDispatch {
     /// Create from a channel with authentication
     pub fn new(channel: Channel, token: &str) -> Self {
-        let interceptor = AuthInterceptor::worker_token(token);
+        let agent_interceptor = AuthInterceptor::worker_token(token);
+        let workflow_interceptor = AuthInterceptor::worker_token(token);
         Self {
-            inner: AgentDispatchClient::with_interceptor(channel, interceptor),
+            inner: AgentDispatchClient::with_interceptor(channel.clone(), agent_interceptor),
+            workflow_client: WorkflowDispatchClient::with_interceptor(
+                channel,
+                workflow_interceptor,
+            ),
         }
     }
 
@@ -864,6 +888,9 @@ impl AgentDispatch {
                 signal_name: s.signal_name,
                 signal_value: serde_json::from_slice(&s.signal_value).unwrap_or(Value::Null),
                 created_at_ms: s.created_at_ms,
+                sender_execution_id: s
+                    .sender_execution_id
+                    .and_then(|id| Uuid::parse_str(&id).ok()),
             })
             .collect())
     }
@@ -891,6 +918,9 @@ impl AgentDispatch {
                 signal_name: s.signal_name,
                 signal_value: serde_json::from_slice(&s.signal_value).unwrap_or(Value::Null),
                 created_at_ms: s.created_at_ms,
+                sender_execution_id: s
+                    .sender_execution_id
+                    .and_then(|id| Uuid::parse_str(&id).ok()),
             })
             .collect())
     }
@@ -1095,6 +1125,82 @@ impl AgentDispatch {
 
         self.inner.suspend_agent(request).await?;
         Ok(())
+    }
+
+    // =========================================================================
+    // Cross-Primitive Operations (via WorkflowDispatch service)
+    // =========================================================================
+
+    /// Atomically start a workflow (if not exists) and send a signal, via WorkflowDispatch.
+    ///
+    /// Delegates to `WorkflowDispatch::signal_with_start_workflow()`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn signal_with_start_workflow(
+        &mut self,
+        org_id: &str,
+        workflow_id: &str,
+        workflow_kind: &str,
+        workflow_input: Vec<u8>,
+        queue: &str,
+        signal_name: &str,
+        signal_value: Vec<u8>,
+        idempotency_key_ttl_seconds: Option<i64>,
+        sender_execution_id: Option<Uuid>,
+    ) -> CoreResult<SignalWithStartWorkflowResult> {
+        let request = flovyn_v1::SignalWithStartWorkflowRequest {
+            org_id: org_id.to_string(),
+            workflow_id: workflow_id.to_string(),
+            workflow_kind: workflow_kind.to_string(),
+            workflow_input,
+            queue: queue.to_string(),
+            signal_name: signal_name.to_string(),
+            signal_value,
+            priority_seconds: 0,
+            workflow_version: None,
+            metadata: Default::default(),
+            idempotency_key_ttl_seconds,
+            sender_execution_id: sender_execution_id.map(|id| id.to_string()),
+        };
+
+        let response = self
+            .workflow_client
+            .signal_with_start_workflow(request)
+            .await?
+            .into_inner();
+
+        let workflow_execution_id =
+            Uuid::parse_str(&response.workflow_execution_id).unwrap_or_default();
+
+        Ok(SignalWithStartWorkflowResult {
+            workflow_execution_id,
+            workflow_created: response.workflow_created,
+            signal_event_sequence: response.signal_event_sequence,
+        })
+    }
+
+    /// Send a signal to an existing workflow execution, via WorkflowDispatch.
+    pub async fn signal_workflow(
+        &mut self,
+        org_id: &str,
+        workflow_execution_id: &str,
+        signal_name: &str,
+        signal_value: Vec<u8>,
+        sender_execution_id: Option<Uuid>,
+    ) -> CoreResult<i64> {
+        let request = flovyn_v1::SignalWorkflowRequest {
+            org_id: org_id.to_string(),
+            workflow_execution_id: workflow_execution_id.to_string(),
+            signal_name: signal_name.to_string(),
+            signal_value,
+            sender_execution_id: sender_execution_id.map(|id| id.to_string()),
+        };
+
+        let response = self
+            .workflow_client
+            .signal_workflow(request)
+            .await?
+            .into_inner();
+        Ok(response.signal_event_sequence)
     }
 }
 

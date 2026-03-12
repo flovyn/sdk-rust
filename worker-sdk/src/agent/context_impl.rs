@@ -9,7 +9,7 @@ use crate::agent::child::{
 };
 use crate::agent::context::{
     AgentContext, CancelTaskResult, EntryRole, EntryType, LoadedMessage, ScheduleAgentTaskOptions,
-    TokenUsage,
+    StartWorkflowOptions, TokenUsage,
 };
 use crate::agent::executor::TaskExecutor;
 use crate::agent::future::AgentTaskFutureRaw;
@@ -105,7 +105,7 @@ pub struct AgentContextImpl {
     current_segment: AtomicU64,
     /// Current sequence within segment
     current_sequence: AtomicU64,
-    /// Parent execution ID (if this agent was spawned as a child)
+    /// Parent execution ID (if this agent was spawned as a child agent)
     parent_execution_id: Option<Uuid>,
     /// Tracked child agent handles (child_id -> ChildHandle)
     children: RwLock<HashMap<Uuid, ChildHandle>>,
@@ -750,6 +750,72 @@ impl AgentContext for AgentContextImpl {
 
         // Return future immediately (no RPC made yet)
         AgentTaskFutureRaw::new(task_id, task_kind.to_string(), input)
+    }
+
+    // =========================================================================
+    // Workflow Integration
+    // =========================================================================
+
+    async fn signal_with_start_workflow(
+        &self,
+        workflow_id: &str,
+        kind: &str,
+        input: Value,
+        signal_name: &str,
+        signal_value: Value,
+        options: Option<StartWorkflowOptions>,
+    ) -> Result<(Uuid, bool)> {
+        let options = options.unwrap_or_default();
+        let input_bytes = serde_json::to_vec(&input)?;
+        let signal_bytes = serde_json::to_vec(&signal_value)?;
+
+        let mut client = self.client.lock().await;
+        let result = client
+            .signal_with_start_workflow(
+                &self.org_id.to_string(),
+                workflow_id,
+                kind,
+                input_bytes,
+                options.queue.as_deref().unwrap_or("default"),
+                signal_name,
+                signal_bytes,
+                None,
+                Some(self.agent_execution_id),
+            )
+            .await?;
+        Ok((result.workflow_execution_id, result.workflow_created))
+    }
+
+    async fn signal_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+        payload: Value,
+    ) -> Result<()> {
+        // Auto-scope signal name: "{agent_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", self.agent_execution_id, signal_name);
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        let mut client = self.client.lock().await;
+        client
+            .signal_workflow(
+                &self.org_id.to_string(),
+                &workflow_execution_id.to_string(),
+                &scoped_signal_name,
+                payload_bytes,
+                Some(self.agent_execution_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn wait_for_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+    ) -> Result<Value> {
+        // Auto-scope signal name: "{workflow_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", workflow_execution_id, signal_name);
+        self.wait_for_signal_raw(&scoped_signal_name).await
     }
 
     async fn join_all(&self, futures: Vec<AgentTaskFutureRaw>) -> Result<Vec<Value>> {

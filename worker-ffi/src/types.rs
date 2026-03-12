@@ -46,6 +46,10 @@ pub enum FfiEventType {
     TimerFired,
     TimerCancelled,
 
+    // Signal agent events
+    SignalAgentCompleted,
+    SignalExistingAgentCompleted,
+
     // Signal events
     SignalReceived,
 }
@@ -78,6 +82,8 @@ impl From<flovyn_worker_core::EventType> for FfiEventType {
             EventType::TimerStarted => FfiEventType::TimerStarted,
             EventType::TimerFired => FfiEventType::TimerFired,
             EventType::TimerCancelled => FfiEventType::TimerCancelled,
+            EventType::SignalAgentCompleted => FfiEventType::SignalAgentCompleted,
+            EventType::SignalExistingAgentCompleted => FfiEventType::SignalExistingAgentCompleted,
             EventType::SignalReceived => FfiEventType::SignalReceived,
         }
     }
@@ -111,6 +117,8 @@ impl From<FfiEventType> for flovyn_worker_core::EventType {
             FfiEventType::TimerStarted => EventType::TimerStarted,
             FfiEventType::TimerFired => EventType::TimerFired,
             FfiEventType::TimerCancelled => EventType::TimerCancelled,
+            FfiEventType::SignalAgentCompleted => EventType::SignalAgentCompleted,
+            FfiEventType::SignalExistingAgentCompleted => EventType::SignalExistingAgentCompleted,
             FfiEventType::SignalReceived => EventType::SignalReceived,
         }
     }

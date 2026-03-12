@@ -8,7 +8,8 @@ use crate::workflow::context::{
 use crate::workflow::event::{EventType, ReplayEvent};
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureContext, ChildWorkflowFutureRaw, OperationFuture,
-    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SignalFuture,
+    OperationFutureRaw, PromiseFuture, PromiseFutureContext, PromiseFutureRaw, SignalAgentFuture,
+    SignalAgentFutureRaw, SignalExistingAgentFuture, SignalExistingAgentFutureRaw, SignalFuture,
     SignalFutureRaw, SuspensionContext, TaskFuture, TaskFutureContext, TaskFutureRaw, TimerFuture,
     TimerFutureContext,
 };
@@ -812,6 +813,134 @@ impl<R: CommandRecorder + Send + Sync> WorkflowContext for WorkflowContextImpl<R
             cw_seq,
             child_execution_id,
             name.to_string(),
+            self.suspension_cell.clone(),
+        )
+    }
+
+    fn wait_for_agent(&self, agent_execution_id: Uuid, signal_name: &str) -> SignalFutureRaw {
+        // Auto-scope signal name: "{agent_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", agent_execution_id, signal_name);
+        self.wait_for_signal_raw(&scoped_signal_name)
+    }
+
+    fn signal_agent(
+        &self,
+        agent_execution_id: Uuid,
+        signal_name: &str,
+        signal_value: Value,
+    ) -> SignalExistingAgentFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let seq = self.replay_engine.next_signal_existing_agent_seq();
+
+        // Auto-scope signal name: "{workflow_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", self.workflow_execution_id, signal_name);
+
+        // Look for event at this per-type index (replay case)
+        if let Some(completed_event) = self.replay_engine.get_signal_existing_agent_event(seq) {
+            // Validate agent execution ID matches
+            let event_agent_id = completed_event
+                .get_string("agentExecutionId")
+                .unwrap_or_default()
+                .to_string();
+            let actual_agent_id = agent_execution_id.to_string();
+
+            if event_agent_id != actual_agent_id {
+                return SignalExistingAgentFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::ChildWorkflowMismatch {
+                        sequence: seq as i32,
+                        field: "agentExecutionId".to_string(),
+                        expected: event_agent_id,
+                        actual: actual_agent_id,
+                    },
+                ));
+            }
+
+            // Signal confirmed - return resolved future
+            return SignalExistingAgentFuture::from_replay_with_cell(
+                seq,
+                self.suspension_cell.clone(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::SignalExistingAgent {
+            sequence_number: sequence,
+            agent_execution_id,
+            signal_name: scoped_signal_name,
+            signal_value,
+        }) {
+            return SignalExistingAgentFuture::with_error(e);
+        }
+
+        // Return pending future - will suspend until server creates SignalExistingAgentCompleted event
+        SignalExistingAgentFuture::new_with_cell(seq, self.suspension_cell.clone())
+    }
+
+    fn signal_with_start_agent_raw(
+        &self,
+        kind: &str,
+        input: Value,
+        agent_id: &str,
+        signal_name: &str,
+        signal_value: Value,
+    ) -> SignalAgentFutureRaw {
+        // Get per-type sequence and increment atomically.
+        let agent_seq = self.replay_engine.next_signal_agent_seq();
+
+        // Look for event at this per-type index (replay case)
+        if let Some(completed_event) = self.replay_engine.get_signal_agent_event(agent_seq) {
+            // Validate agent kind matches
+            let event_kind = completed_event
+                .get_string("agentKind")
+                .unwrap_or_default()
+                .to_string();
+
+            if event_kind != kind {
+                return SignalAgentFuture::with_error(FlovynError::DeterminismViolation(
+                    DeterminismViolationError::ChildWorkflowMismatch {
+                        sequence: agent_seq as i32,
+                        field: "agentKind".to_string(),
+                        expected: event_kind,
+                        actual: kind.to_string(),
+                    },
+                ));
+            }
+
+            // Get agent execution ID from event (assigned by server)
+            let agent_execution_id = completed_event
+                .get_string("agentExecutionId")
+                .map(|s| Uuid::parse_str(s).unwrap_or(Uuid::nil()))
+                .unwrap_or(Uuid::nil());
+
+            // Signal-with-start confirmed - return resolved future with execution ID
+            return SignalAgentFuture::from_replay_with_cell(
+                agent_seq,
+                agent_execution_id,
+                kind.to_string(),
+                self.suspension_cell.clone(),
+            );
+        }
+
+        // No event at this per-type index → new command
+        let sequence = self.next_sequence();
+        if let Err(e) = self.record_command(WorkflowCommand::SignalAgent {
+            sequence_number: sequence,
+            agent_kind: kind.to_string(),
+            input,
+            agent_id: agent_id.to_string(),
+            queue: None, // Inherit workflow's queue on server side
+            signal_name: signal_name.to_string(),
+            signal_value,
+        }) {
+            return SignalAgentFuture::with_error(e);
+        }
+
+        // Return pending future - will suspend until server creates SignalAgentCompleted event
+        SignalAgentFuture::new_with_cell(
+            agent_seq,
+            Uuid::nil(), // Server assigns execution ID
+            kind.to_string(),
             self.suspension_cell.clone(),
         )
     }

@@ -6,8 +6,9 @@ use crate::workflow::context::{
 };
 use crate::workflow::future::{
     ChildWorkflowFuture, ChildWorkflowFutureRaw, OperationFuture, OperationFutureRaw,
-    PromiseFuture, PromiseFutureRaw, SignalFuture, SignalFutureRaw, TaskFuture, TaskFutureRaw,
-    TimerFuture,
+    PromiseFuture, PromiseFutureRaw, SignalAgentFuture, SignalAgentFutureRaw,
+    SignalExistingAgentFuture, SignalExistingAgentFutureRaw, SignalFuture, SignalFutureRaw,
+    TaskFuture, TaskFutureRaw, TimerFuture,
 };
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -75,6 +76,7 @@ struct MockWorkflowContextInner {
     next_timer_seq: AtomicU32,
     next_child_workflow_seq: AtomicU32,
     next_promise_seq: AtomicU32,
+    next_signal_agent_seq: AtomicU32,
     next_operation_seq: AtomicU32,
     next_signal_seq: AtomicU32,
 }
@@ -335,6 +337,7 @@ impl MockWorkflowContextBuilder {
                 next_timer_seq: AtomicU32::new(0),
                 next_child_workflow_seq: AtomicU32::new(0),
                 next_promise_seq: AtomicU32::new(0),
+                next_signal_agent_seq: AtomicU32::new(0),
                 next_operation_seq: AtomicU32::new(0),
                 next_signal_seq: AtomicU32::new(0),
             }),
@@ -595,6 +598,51 @@ impl WorkflowContext for MockWorkflowContext {
                 kind
             ))),
         }
+    }
+
+    fn wait_for_agent(&self, agent_execution_id: Uuid, signal_name: &str) -> SignalFutureRaw {
+        // Auto-scope signal name: "{agent_execution_id}:{signal_name}"
+        let scoped_signal_name = format!("{}:{}", agent_execution_id, signal_name);
+        self.wait_for_signal_raw(&scoped_signal_name)
+    }
+
+    fn signal_agent(
+        &self,
+        _agent_execution_id: Uuid,
+        _signal_name: &str,
+        _signal_value: Value,
+    ) -> SignalExistingAgentFutureRaw {
+        // Mock: just return a resolved future (signal delivered)
+        SignalExistingAgentFuture::from_replay_with_cell(
+            0,
+            crate::workflow::context_impl::SuspensionCell::new(),
+        )
+    }
+
+    fn signal_with_start_agent_raw(
+        &self,
+        kind: &str,
+        input: Value,
+        _agent_id: &str,
+        _signal_name: &str,
+        _signal_value: Value,
+    ) -> SignalAgentFutureRaw {
+        let _agent_seq = self
+            .inner
+            .next_signal_agent_seq
+            .fetch_add(1, Ordering::SeqCst);
+        let agent_execution_id = self.random_uuid();
+
+        self.inner
+            .scheduled_workflows
+            .write()
+            .push(ScheduledWorkflow {
+                name: kind.to_string(),
+                kind: kind.to_string(),
+                input,
+            });
+
+        SignalAgentFuture::with_result(agent_execution_id)
     }
 
     fn promise_raw(&self, name: &str) -> PromiseFutureRaw {

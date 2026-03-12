@@ -123,6 +123,23 @@ impl ScheduleAgentTaskOptions {
     }
 }
 
+/// Options for starting a workflow from an agent.
+#[derive(Debug, Clone, Default)]
+pub struct StartWorkflowOptions {
+    /// Queue to schedule the workflow on (None = "default")
+    pub queue: Option<String>,
+    /// Metadata key-value pairs
+    pub metadata: Option<std::collections::HashMap<String, String>>,
+}
+
+impl StartWorkflowOptions {
+    /// Set the queue for the workflow.
+    pub fn queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = Some(queue.into());
+        self
+    }
+}
+
 /// A loaded conversation message from entries
 #[derive(Debug, Clone)]
 pub struct LoadedMessage {
@@ -156,6 +173,8 @@ pub struct AgentSignalValue {
     pub name: String,
     /// Signal value
     pub value: Value,
+    /// Execution ID of the sender (agent or workflow that sent this signal)
+    pub sender_execution_id: Option<Uuid>,
 }
 
 /// Context for agent execution providing entry management, checkpointing, task scheduling,
@@ -338,6 +357,53 @@ pub trait AgentContext: Send + Sync {
         input: Value,
         options: ScheduleAgentTaskOptions,
     ) -> AgentTaskFutureRaw;
+
+    // =========================================================================
+    // Workflow Integration
+    // =========================================================================
+
+    /// Atomically start a workflow (if not exists) and send a signal.
+    ///
+    /// Uses `SignalWithStartWorkflow` RPC. The `workflow_id` serves as the
+    /// idempotency key for workflow creation. The signal is always delivered
+    /// regardless of whether the workflow was newly created or already existed.
+    ///
+    /// Returns (workflow_execution_id, workflow_created).
+    async fn signal_with_start_workflow(
+        &self,
+        workflow_id: &str,
+        kind: &str,
+        input: Value,
+        signal_name: &str,
+        signal_value: Value,
+        options: Option<StartWorkflowOptions>,
+    ) -> Result<(Uuid, bool)>;
+
+    /// Signal a workflow execution.
+    ///
+    /// The signal name is auto-scoped as `"{agent_execution_id}:{signal_name}"`.
+    async fn signal_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+        payload: Value,
+    ) -> Result<()>;
+
+    /// Wait for a signal from a specific workflow execution.
+    ///
+    /// Convenience method that waits for a signal with auto-scoped name
+    /// `"{workflow_execution_id}:{signal_name}"`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (wf_id, _) = ctx.signal_with_start_workflow("key", "echo", input, "start", data, None).await?;
+    /// let result = ctx.wait_for_workflow(wf_id, "result").await?;
+    /// ```
+    async fn wait_for_workflow(
+        &self,
+        workflow_execution_id: Uuid,
+        signal_name: &str,
+    ) -> Result<Value>;
 
     /// Wait for all task futures to complete.
     ///
@@ -645,7 +711,7 @@ pub trait AgentContext: Send + Sync {
         ))
     }
 
-    /// Get this agent's parent execution ID, if it was spawned as a child.
+    /// Get this agent's parent execution ID, if it was spawned as a child agent.
     fn parent_execution_id(&self) -> Option<Uuid> {
         None
     }

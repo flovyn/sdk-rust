@@ -629,8 +629,14 @@ mod tests {
 
     #[test]
     fn test_signal_pattern_matches_double_star() {
-        assert!(signal_pattern_matches("payment.**", "payment.stripe.processed"));
-        assert!(signal_pattern_matches("payment.**", "payment.stripe.refund.processed"));
+        assert!(signal_pattern_matches(
+            "payment.**",
+            "payment.stripe.processed"
+        ));
+        assert!(signal_pattern_matches(
+            "payment.**",
+            "payment.stripe.refund.processed"
+        ));
         assert!(!signal_pattern_matches("payment.**", "user.payment"));
     }
 
